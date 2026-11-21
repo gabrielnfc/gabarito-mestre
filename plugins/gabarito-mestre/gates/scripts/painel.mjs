@@ -44,7 +44,7 @@ import { lerX } from '../dist/pouso.js';
 import { sessoesDeRetomada } from '../dist/pouso-pendente.js';
 import { encerramentoDe, idDaBranch, trilhaDe } from '../dist/trilha.js';
 import { proximaEntrega } from '../dist/depende.js';
-import { planoMdDoCard, projetarProjeto, worktreesDe } from '../dist/projeto.js';
+import { cardDe, planoMdDoCard, projetarProjeto, worktreesDe } from '../dist/projeto.js';
 import { temOnboarding } from './cartao-sessao.mjs';
 import { carregarPlano, checkoutDaSessao, configDoLote, contexto, lerDiarioEstrito, lerSpec, lerSpecs, medicaoDoPouso } from './loop.mjs';
 import { decisaoDe, pausado, prepararLeitura } from './entrega.mjs';
@@ -333,6 +333,31 @@ function lerArvoreDoProjeto(caminho, fl1, idRe) {
 }
 const existsFile = (c) => { try { return lstatSync(c).isFile(); } catch { return false; } };
 
+const ID_EPIC = /^[A-Za-z][A-Za-z0-9_-]*$/;
+
+/**
+ * Títulos dos Epics (REQ-PRJ-3 b): o 1º `# ` de cada card de `fluxo.mapeamento.FL2`, na árvore atual, por `id`. Ausente (chave sem valor ou pasta que não existe)
+ * ⇒ `{}` sem aviso (o cabeçalho leva só o ID); ilegível (caminho inválido, pasta ou card que não abre) ⇒ aviso, nunca título inventado.
+ */
+function titulosDosEpics(raiz, fl2Bruto, avisos) {
+  if (fl2Bruto === undefined || fl2Bruto === null) return {};
+  const fl2 = relativoSeguro(fl2Bruto);
+  if (fl2 === null) { avisos.push('fluxo.mapeamento.FL2 inválido: os Epics saem só com o ID'); return {}; }
+  let nomes;
+  try { nomes = readdirSync(join(raiz, fl2)).filter((n) => n.endsWith('.md')).sort(); } catch (e) {
+    if (e?.code !== 'ENOENT') avisos.push(`fluxo.mapeamento.FL2 ilegível (${e?.code ?? 'erro'}): os Epics saem só com o ID`);
+    return {};
+  }
+  const titulos = {};
+  for (const arquivo of nomes) {
+    const texto = lerTextoSeguro(join(raiz, fl2, arquivo));
+    if (texto === null) { avisos.push(`Epic ${arquivo} ilegível: sai só com o ID`); continue; }
+    const c = cardDe(arquivo, texto, ID_EPIC, null);
+    if (c !== null && c.titulo !== null && c.titulo !== '') titulos[c.id] = c.titulo;
+  }
+  return titulos;
+}
+
 /**
  * Visão de projeto (REQ-ENT-2 emenda 4): lê TODAS as worktrees de `git worktree list` (a atual primeiro; falha do git ⇒ só a atual + aviso) e entrega a
  * `projetarProjeto` (núcleo puro, T31). Só LÊ. `deps.worktreeList(atual)` troca o `git` (testes).
@@ -345,7 +370,16 @@ export function projetoDoRepo({ atual, cfg, idPadrao, agoraMs, fuso, deps = {} }
   const wt = worktreesDe((deps.worktreeList ?? worktreeListDoGit)(atual), real(atual));
   const caminhos = [...new Set(wt.caminhos.map(real))];
   const arvores = caminhos.map((c) => lerArvoreDoProjeto(c, fl1, idRe));
-  return projetarProjeto(arvores, { agoraMs, fuso, idPadrao: idRe, avisos: wt.aviso === null ? [] : [wt.aviso] });
+  const avisos = wt.aviso === null ? [] : [wt.aviso];
+  // GM-16 T4: o que a config diz chega ao núcleo (que nunca lê config, D-G27). Ausente cai no padrão; ilegível avisa e cai no padrão, nunca "ok".
+  let statusFl1 = cfg?.fluxo?.status?.FL1;
+  if (statusFl1 !== undefined && (typeof statusFl1 !== 'object' || statusFl1 === null || Array.isArray(statusFl1))) {
+    avisos.push('fluxo.status.FL1 ilegível: vale o quadro padrão');
+    statusFl1 = undefined;
+  }
+  const vinculo = cfg?.fluxo?.vinculoPbiEpic;
+  const titulosEpic = vinculo?.tipo === 'frontmatter' ? titulosDosEpics(atual, cfg?.fluxo?.mapeamento?.FL2, avisos) : {};
+  return projetarProjeto(arvores, { agoraMs, fuso, idPadrao: idRe, avisos, statusFl1, opcoesComoContagem: cfg?.painel?.projeto?.opcoesComoContagem === true, vinculo, titulosEpic });
 }
 
 // ─────────────────────────────────────────────────────────────── pacote de nomes

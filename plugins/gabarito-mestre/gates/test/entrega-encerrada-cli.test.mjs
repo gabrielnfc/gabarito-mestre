@@ -238,7 +238,10 @@ test('seguir-oferece-proxima: spec com PBI sem encerramento mais nova ⇒ ideias
   assert.equal(ls[0], '◆ GABARITO · GM-32 entregue · próxima: GM-35 Painel novo com tema');
   assert.equal(ls.filter((l) => /^(◆ )?GABARITO/.test(l)).length, 1);
   assert.match(ls[1], /^PROJETO {2}2 de 2 PBIs feitos/);
-  assert.deepEqual(ls.slice(3).map((l) => l.trim().split(/\s+/).slice(0, 2).join(' ')), ['✓ GM-32', '✓ GM-33']);
+  // GM-16 T4 (REQ-PRJ-3 a): os 2 PBIs feitos saem do desenho e entra "✓ 2 feitos" logo depois dos totais (ls[1..2], sem a linha de estimada); nenhuma linha de GM-32/GM-33 sobra
+  assert.match(ls[2], /^ {2}previsão /);
+  assert.deepEqual(ls.slice(3), ['  ✓ 2 feitos']);
+  assert.ok(ls.every((l, i) => i === 0 || !/GM-3[23]/.test(l)), ls.join('\n'));
 });
 
 test('linha-entregue-sem-regex-tecnica: a linha de entregue não tem comando, crase, evento, snake_case nem caminho', () => {

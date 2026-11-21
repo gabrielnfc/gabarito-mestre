@@ -37,7 +37,7 @@ import { readFileSync, existsSync, readdirSync, mkdirSync, writeFileSync, rename
 import { join, relative, sep, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ehEntrypoint } from '../lib/cli.mjs';
-import { lerGuarda, lerConfigOrigin, DENY_GUARDA, CHAVES_MORTAS, ORDEM_MODELO, PERFIS_MODELO, resolverPerfil } from '../lib/config.mjs';
+import { lerGuarda, lerConfigOrigin, lerBaseDaEntrega, idPadraoDe, DENY_GUARDA, CHAVES_MORTAS, ORDEM_MODELO, PERFIS_MODELO, resolverPerfil } from '../lib/config.mjs';
 import { diasEntre } from '../lib/datas.mjs';
 import { execFileSync } from 'node:child_process';
 import { checar, validarBranch, DEFAULTS as VERSIONAMENTO_DEFAULTS } from './versionamento-check.mjs';
@@ -59,6 +59,31 @@ try {
   };
 } catch (e) {
   nucleoErro = e instanceof Error ? e.message : 'erro desconhecido';
+}
+
+/**
+ * `dist/projeto.js` (predicados do quadro FL1: `ehColunaFl1`, `ehFeito`, `cardDe`) e `dist/entrega.js` (`resolverBaseEntrega`, a regra da base da entrega),
+ * cada um num import dinâmico PRÓPRIO, fora do `Promise.all` do núcleo (GM-16 T5, REQ-DCT-1 d): a falha deles deixa só os 2 checks de fluxo em
+ * "não conferido" e o aprendizado segue lendo o núcleo. A regra mora no `dist/`, importada, nunca copiada aqui (aprendizado 172).
+ */
+const textoDoErro = (e) => (e instanceof Error ? e.message : 'erro desconhecido').replace(/\s+/g, ' ').slice(0, 120);
+let projeto = null;
+let projetoErro = '';
+try {
+  const m = await import('../dist/projeto.js');
+  if (typeof m.ehColunaFl1 !== 'function' || typeof m.ehFeito !== 'function' || typeof m.cardDe !== 'function') throw new Error('exports ausentes');
+  projeto = { ehColunaFl1: m.ehColunaFl1, ehFeito: m.ehFeito, cardDe: m.cardDe };
+} catch (e) {
+  projetoErro = textoDoErro(e);
+}
+let baseEntrega = null;
+let baseEntregaErro = '';
+try {
+  const m = await import('../dist/entrega.js');
+  if (typeof m.resolverBaseEntrega !== 'function' || typeof m.lerConfigEntrega !== 'function') throw new Error('exports ausentes');
+  baseEntrega = { resolverBaseEntrega: m.resolverBaseEntrega, lerConfigEntrega: m.lerConfigEntrega };
+} catch (e) {
+  baseEntregaErro = textoDoErro(e);
 }
 import { validarDb } from './db-template.mjs';
 
@@ -211,6 +236,7 @@ function createIndex(root, cfg, rel0 = arquivosVisiveis(root)) {
 
   return {
     root,
+    gitIlegivel: rel0.ilegivel === true,
     files: rel,
     read,
     has: (r) => visiveis.has(r),
@@ -339,6 +365,98 @@ function branchPadraoNaoEhRegex(cfg) {
   } catch {
     return true;
   }
+}
+
+// ───────────────────────────────────────── fluxo FL1 × quadro e commits (GM-16 T5, REQ-DCT-1)
+
+const FL1_TETO_CARD = 1024 * 1024;
+const TIPOS_PBI = VERSIONAMENTO_DEFAULTS.tiposComEscopoDePbi;
+/** `tipo(escopo)!: ` de um título de commit; o escopo não tem parêntese nem quebra de linha e o título é cortado antes da regex. */
+const COMMIT_COM_ESCOPO = /^([a-z]+)\(([^()\r\n]{1,100})\)!?: /;
+
+/** Texto de dado externo (status de card, nome de arquivo) para a linha de evidência: sem controle, uma linha, curto. */
+const limpa = (s, n = 40) => String(s).replace(/[\u0000-\u001f\u007f-\u009f]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, n);
+
+/** `fluxo.mapeamento.FL1` como caminho relativo seguro (sem barra inicial, sem `..`, sem vazio), sem barra final; senão `null`. */
+function pastaFl1De(valor) {
+  if (typeof valor !== 'string' || valor === '' || valor.length > 300 || valor.startsWith('/') || valor.includes('\0')) return null;
+  const limpo = valor.replace(/\/+$/, '');
+  return limpo === '' || limpo.split('/').includes('..') ? null : limpo;
+}
+
+/**
+ * Cards da pasta FL1 como `{ id, status }`. `estado`: `na` (não se aplica: sem fluxo por arquivos ou pasta ausente) · `erro` (não conferido, com o motivo)
+ * · `ok` (`cards`; `ilegiveis`, os arquivos que não deu para ler ou que passam do teto de FL1_TETO_CARD; `quebrados`, os de nome de ID válido
+ * cujo frontmatter não dá `id`, REQ-DCT-1 f). Ausente e ilegível são casos distintos.
+ */
+function lerCardsFl1(ix, cfg) {
+  const root = ix.root;
+  if (ix.gitIlegivel) return { estado: 'erro', motivo: 'git ilegível: a config e os cards não valem como evidência' };
+  if (cfg.configInvalido) return { estado: 'erro', motivo: 'harness.config.json inválido' };
+  const fluxo = cfg.fluxo;
+  if (fluxo === null || typeof fluxo !== 'object' || Array.isArray(fluxo)) return { estado: 'na', motivo: 'sem fluxo configurado' };
+  if (fluxo.ferramenta !== undefined && fluxo.ferramenta !== 'arquivos') return { estado: 'na', motivo: `fluxo.ferramenta é ${limpa(fluxo.ferramenta)}, não arquivos` };
+  const map = fluxo.mapeamento;
+  if (map === null || typeof map !== 'object' || map.FL1 === undefined) return { estado: 'na', motivo: 'sem fluxo.mapeamento.FL1' };
+  const pasta = pastaFl1De(map.FL1);
+  if (pasta === null) return { estado: 'erro', motivo: 'fluxo.mapeamento.FL1 inválido' };
+  let nomes;
+  try {
+    nomes = readdirSync(join(root, pasta)).filter((n) => n.endsWith('.md')).sort();
+  } catch (e) {
+    return e?.code === 'ENOENT' ? { estado: 'na', motivo: `pasta ${limpa(pasta, 80)} ausente` } : { estado: 'erro', motivo: `pasta ${limpa(pasta, 80)} ilegível (${limpa(e?.code ?? 'erro')})` };
+  }
+  if (projeto === null) return { estado: 'erro', motivo: `dist/projeto.js não carregou: ${projetoErro}; reconstrua o dist/ do plugin` };
+  let idRe;
+  try { idRe = new RegExp(idPadraoDe(root)); } catch { idRe = new RegExp(VERSIONAMENTO_DEFAULTS.idPadrao); }
+  const cards = [];
+  const ilegiveis = [];
+  const quebrados = [];
+  for (const nome of nomes) {
+    const arquivo = join(root, pasta, nome);
+    let texto = null;
+    try {
+      const st = lstatSync(arquivo);
+      if (st.isFile() && st.size <= FL1_TETO_CARD) texto = readFileSync(arquivo, 'utf8');
+    } catch { texto = null; }
+    if (texto === null) { ilegiveis.push(limpa(nome, 60)); continue; }
+    const c = projeto.cardDe(nome, texto, idRe, null);
+    if (c !== null) cards.push({ id: limpa(c.id), status: c.status });
+    else if (idRe.test(nome.replace(/\.md$/, ''))) quebrados.push(limpa(nome, 60));
+  }
+  return { estado: 'ok', cards, ilegiveis, quebrados, statusCfg: fluxo.status?.FL1 };
+}
+
+/** REQ-DCT-1 f: card de nome de ID válido e frontmatter sem id aparece, nunca some; o resto do aviso segue conferido. */
+const linhaQuebrados = (l) => (l.quebrados.length === 0 ? [] : [`${l.quebrados.length} cards ilegíveis; 3 primeiros: ${l.quebrados.slice(0, 3).join(', ')}`]);
+const linhaIlegiveis = (l) => (l.ilegiveis.length === 0 ? [] : [`não conferido (${l.ilegiveis.length} card(s) ilegível(is) ou acima de 1 MB: ${l.ilegiveis.slice(0, 3).join(', ')})`]);
+const tres = (itens) => `${itens.slice(0, 3).join(', ')}${itens.length > 3 ? `, +${itens.length - 3}` : ''}`;
+
+/** Existência EXATA de uma ref: `sim` · `nao` (o git respondeu que não há) · `erro` (git ilegível, ausente ou estourou o prazo). Nunca chuta. */
+function refExiste(root, ref) {
+  try {
+    execFileSync('git', ['show-ref', '--verify', '--quiet', ref], { cwd: root, env: envGit(), stdio: 'ignore', timeout: 15_000 });
+    return 'sim';
+  } catch (e) {
+    return e?.status === 1 ? 'nao' : 'erro';
+  }
+}
+
+/** Escopos de PBI dos títulos de commit do 1º pai de `ref`, lidos por inteiro (sem teto de commits, I1); `null` se o git não leu. */
+function escoposDePbiNoLog(root, ref) {
+  let saida;
+  try {
+    saida = execFileSync('git', ['log', ref, '--first-parent', '--format=%s', '--'], { cwd: root, env: envGit(), encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 120_000, maxBuffer: 1024 * 1024 * 1024 });
+  } catch {
+    return null;
+  }
+  const linhas = saida.split('\n');
+  const escopos = new Set();
+  for (const s of linhas) {
+    const m = COMMIT_COM_ESCOPO.exec(s.slice(0, 200));
+    if (m !== null && TIPOS_PBI.includes(m[1])) escopos.add(m[2]);
+  }
+  return { escopos, linhas };
 }
 
 export const CHECKS = [
@@ -791,6 +909,82 @@ export const CHECKS = [
       }
       if (nd.length === 0) return { found: true, evidence: 'todos os itens detectados ou respondidos' };
       return { found: false, evidence: nd.map((item) => `${item}: gabarito-instalar (trocar ${item})${item === 'versionamento' && branchPadraoNaoEhRegex(cfg) ? ` — ${MOTIVO_BRANCHPADRAO}` : ''}`).join('\n') };
+    },
+  },
+  {
+    id: 'fluxo-status-fl1',
+    rule: 'REQ-DCT-1',
+    level: 'warn',
+    kind: 'scan',
+    label: 'cards do quadro FL1 com status que não é coluna do quadro',
+    fix: 'ajuste o status do card para uma coluna de fluxo.status.FL1 — é aviso: não muda o nível nem quebra o CI',
+    detect: (ix, cfg) => {
+      const l = lerCardsFl1(ix, cfg);
+      if (l.estado === 'na') return { found: true, evidence: `não se aplica: ${l.motivo}` };
+      if (l.estado === 'erro') return { found: false, evidence: `não conferido (${l.motivo})` };
+      const fora = l.cards.filter((c) => c.status !== null && !projeto.ehColunaFl1(c.status, l.statusCfg));
+      const linhas = [];
+      if (fora.length > 0) {
+        const dica = cfg.painel?.projeto?.opcoesComoContagem === true ? '' : ' — com `painel.projeto.opcoesComoContagem: true` eles viram "N opções" no painel';
+        linhas.push(`${fora.length} cards; 3 primeiros: ${fora.slice(0, 3).map((c) => `${c.id} (${limpa(c.status)})`).join(', ')}${dica}`);
+      }
+      linhas.push(...linhaIlegiveis(l), ...linhaQuebrados(l));
+      return linhas.length === 0
+        ? { found: true, evidence: `${l.cards.length} cards, todos com status do quadro ou sem status` }
+        : { found: false, evidence: linhas.join('\n') };
+    },
+  },
+  {
+    id: 'pbi-mergeado-aberto',
+    rule: 'REQ-DCT-1',
+    level: 'warn',
+    kind: 'scan',
+    label: 'PBI em aberto no quadro que já tem commit de PBI na base da entrega',
+    fix: 'confira o card: um PBI com commit de PBI no 1º pai da base normalmente já foi entregue, então mova o card para concluído — é aviso: não muda o nível nem quebra o CI',
+    detect: (ix, cfg) => {
+      const l = lerCardsFl1(ix, cfg);
+      if (l.estado === 'na') return { found: true, evidence: `não se aplica: ${l.motivo}` };
+      if (l.estado === 'erro') return { found: false, evidence: `não conferido (${l.motivo})` };
+      const abertos = l.cards.filter((c) => !projeto.ehFeito(c.status, l.statusCfg));
+      const ilegiveis = [...linhaIlegiveis(l), ...linhaQuebrados(l)];
+      let baseUsada = '';
+      const fecha = (linhas) => (linhas.length === 0 ? { found: true, evidence: `${abertos.length} PBI(s) em aberto, nenhum com commit de PBI na base${baseUsada}` } : { found: false, evidence: linhas.join('\n') });
+      if (abertos.length === 0) return fecha(ilegiveis);
+      if (baseEntrega === null) return { found: false, evidence: `não conferido (dist/entrega.js não carregou: ${baseEntregaErro}; reconstrua o dist/ do plugin)` };
+      // A base é a da ENTREGA, pela mesma função da entrega (nunca `versionamento.branchPadrao`, que é a regex das branches de feature).
+      const raiz = ix.root;
+      let resolvida;
+      try {
+        // A MESMA função da entrega; o sinal de "inválida" de origin e os erros da base não somem: viram "não conferido", nunca a `main` calada.
+        const lida = lerBaseDaEntrega(raiz, baseEntrega);
+        const errosBase = lida.config.erros.filter((e) => /^(entrega\.base|entrega:|config:)/.test(e));
+        if (lida.origin.invalida || errosBase.length > 0) {
+          return { found: false, evidence: [`não conferido (config de origin inválida: ${lida.origin.invalida ? lida.origin.motivo : errosBase.join('; ')})`, ...ilegiveis].join('\n') };
+        }
+        resolvida = lida.resolvida;
+      } catch (e) {
+        return { found: false, evidence: [`não conferido (base da entrega ilegível: ${textoDoErro(e)})`, ...ilegiveis].join('\n') };
+      }
+      const base = resolvida.base;
+      const origem = resolvida.aviso ?? 'entrega.base de origin/HEAD';
+      if (typeof base !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._\/-]*$/.test(base) || base.includes('..')) {
+        return { found: false, evidence: [`não conferido (base da entrega inválida; declare \`entrega.base\`)`, ...ilegiveis].join('\n') };
+      }
+      const existe = { remota: refExiste(raiz, `refs/remotes/origin/${base}`), local: 'nao' };
+      if (existe.remota === 'nao') existe.local = refExiste(raiz, `refs/heads/${base}`);
+      if (existe.remota === 'erro' || existe.local === 'erro') {
+        return { found: false, evidence: [`não conferido (git ilegível ao procurar a base \`${base}\`)`, ...ilegiveis].join('\n') };
+      }
+      if (existe.remota === 'nao' && existe.local === 'nao') {
+        return { found: false, evidence: [`não conferido (base \`${base}\` não existe; declare \`entrega.base\`) — ${origem}`, ...ilegiveis].join('\n') };
+      }
+      const ref = existe.remota === 'sim' ? `refs/remotes/origin/${base}` : `refs/heads/${base}`;
+      baseUsada = ` \`${base}\` (${origem})`;
+      const lido = escoposDePbiNoLog(raiz, ref);
+      if (lido === null) return { found: false, evidence: [`não conferido (git ilegível ao ler o log de ${ref})`, ...ilegiveis].join('\n') };
+      const mergeados = abertos.filter((c) => lido.escopos.has(c.id));
+      const linhas = mergeados.length === 0 ? [] : [`${mergeados.length} PBI(s) em aberto já têm commit de PBI no 1º pai da base \`${base}\` (${origem}): ${tres(mergeados.map((c) => `${c.id} (${c.status === null ? 'sem status' : limpa(c.status)})`))}`];
+      return fecha([...linhas, ...ilegiveis]);
     },
   },
   {

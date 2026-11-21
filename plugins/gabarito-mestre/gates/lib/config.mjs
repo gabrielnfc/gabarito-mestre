@@ -155,6 +155,36 @@ export function lerConfigOrigin(raiz) {
 }
 
 /**
+ * `harness.config.json` COMMITADO no HEAD (objeto do git, nunca a worktree); `null` se ausente, ilegível ou não objeto. Fonte única (GM-16 T5, emenda
+ * r4.1): a entrega e o doctor leem a base da entrega por aqui, ambos entregues a `resolverBaseEntrega`; nenhuma das duas camadas tem cópia.
+ */
+export function lerConfigHead(cwd) {
+  try {
+    const raw = JSON.parse(gitSeguro(['show', 'HEAD:harness.config.json'], cwd));
+    return raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * A regra da base da entrega, num lugar só (GM-16 T5, r2): a entrega e o doctor chamam esta função, nenhuma tem cópia. Lê origin/HEAD e o HEAD,
+ * valida `entrega` e resolve a base por `entrega` (`{ lerConfigEntrega, resolverBaseEntrega }` de dist/entrega.js, passadas por quem importa o dist).
+ * `avisos`: config de origin inválida (com o motivo), os `erros` de `entrega` e o aviso do resolvedor, nessa ordem. Nunca lança por config ruim.
+ */
+export function lerBaseDaEntrega(raiz, entrega) {
+  const origin = lerConfigOrigin(raiz);
+  const config = entrega.lerConfigEntrega(origin.cfg);
+  const avisos = [];
+  if (origin.invalida) avisos.push(`config de origin inválida: ${origin.motivo}`);
+  avisos.push(...config.erros);
+  const origemDeclarou = origin.cfg?.entrega?.base !== undefined;
+  const resolvida = entrega.resolverBaseEntrega(config, origemDeclarou, lerConfigHead(raiz));
+  if (resolvida.aviso !== undefined) avisos.push(resolvida.aviso);
+  return { origin, config, resolvida, avisos };
+}
+
+/**
  * `fluxo.idPadrao` de `origin/HEAD`, a chave que a guarda, o painel, o loop e o cartão leem (GM-14 T15, REQ-TRI-1; GM-15 hotfix: movida de
  * `loop.mjs` para ser a fonte única): ausente, não texto, longo ou regex inválida ⇒ o padrão de `lib/git.mjs`. Nunca lança.
  */

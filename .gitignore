@@ -42,3 +42,6 @@ plugins/gabarito-mestre/gates/test/e2e/observador/tsconfig.json
 .harness/painel-medir.json
 .harness/entregas/_onboarding/
 .harness/doctor-cache.json
+
+# GM-16: saída local do revisor deste repositório, nunca viaja pelo git
+.tmp-gabarito/

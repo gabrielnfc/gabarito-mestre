@@ -35,15 +35,17 @@ const ID_PADRAO = /^[A-Z]+-\d+$/;
                                                                                                                                                                        
   
 
-                                                                                                                                     
+                                                                                                                                                                                                                                         
 /** `integradas` = medidas no diário; `estimadas` = de PBI concluído sem registro no diário (emenda 18 p.2): nunca somam às medidas. */
                                                                                                                    
                             
              
                         
                         
-                                                                               
+                                                                                                            
                  
+                                                                                         
+                      
                               
                                                                                 
                     
@@ -73,9 +75,13 @@ const ID_PADRAO = /^[A-Z]+-\d+$/;
                                                                                                                                 
                         
   
+/** Grupo de PBIs ABERTOS do mesmo Epic (REQ-PRJ-3 c). `epic: null` = "sem Epic"; `titulo` vem de `opcoes.titulosEpic`. */
+                                                                                                       
                              
                          
-                                                                                                                                                                                                                        
+                                                                                                                                     
+                      
+                                                                                                                                                                                                                                        
                    
   
 
@@ -107,26 +113,41 @@ export function planoMdDoCard(texto        )                {
 }
 
 /** Card FL1: frontmatter `id` (casa `idPadrao`; senão `null`, ex. `PBI-EXEMPLO`), `status`, `atualizadoEm`; título = 1º `# `. */
-export function cardDe(_arquivo        , texto        , idPadrao         = ID_PADRAO)              {
+export function cardDe(_arquivo        , texto        , idPadrao         = ID_PADRAO, chaveEpic                = 'epic')              {
   const linhas = String(texto).split('\n');
   if (linhas[0]?.trim() !== '---') return null;
   const fim = linhas.indexOf('---', 1);
   if (fim < 0) return null;
   const fm = new Map                ();
   for (const l of linhas.slice(1, fim)) {
-    const m = /^([A-Za-z]+):\s*(.*)$/.exec(l);
+    const m = /^([A-Za-z][A-Za-z0-9_-]*):\s*(.*)$/.exec(l);
     if (m !== null) fm.set(m[1], m[2].trim().replace(/^"(.*)"$/, '$1'));
   }
   const id = fm.get('id');
   if (id === undefined || !idPadrao.test(id)) return null;
   const tit = linhas.slice(fim + 1).find((l) => l.startsWith('# '));
-  return { id, status: fm.get('status') || null, titulo: tit === undefined ? null : tit.slice(2).trim(), atualizadoEm: fm.get('atualizadoEm') || null, planoMd: planoMdDoCard(texto) };
+  return { id, status: fm.get('status') || null, titulo: tit === undefined ? null : tit.slice(2).trim(), atualizadoEm: fm.get('atualizadoEm') || null, planoMd: planoMdDoCard(texto), epic: chaveEpic === null ? null : fm.get(chaveEpic) || null };
 }
 
-/** Tasks do plano .md: só `### Task N:` no começo da linha, como `TN`. */
+/**
+ * Cabeçalho de task do plano .md (REQ-PRJ-1): `##`/`###` + (`Task` id [anotação] | `T`id) + separador.
+ * Id `\d+[a-z]?`; anotação = 1 grupo entre parênteses (com `_`/`*` em volta), só na forma `Task`; separador = `:`/`—`/`–` com espaço opcional antes, ou ` - `.
+ */
+const CABECALHO_TASK = /^#{2,3} (?:Task (\d+[a-z]?)(?: [_*]?\([^()]*\)[_*]?)?|T(\d+[a-z]?))(?: ?[:—–]| - )/;
+
+/** Tasks do plano .md como `T<id>`, fora de bloco cercado (a cerca abre e fecha com o mesmo caractere); repetição conta 1 vez (a 1ª). */
 export function tasksDoPlanoMd(texto        )           {
   const ids           = [];
-  for (const m of String(texto).matchAll(/^### Task (\d+):/gm)) if (!ids.includes(`T${m[1]}`)) ids.push(`T${m[1]}`);
+  let cerca                = null;
+  for (const linha of String(texto).split('\n')) {
+    const c = /^(```|~~~)/.exec(linha);
+    if (c !== null) { if (cerca === null) cerca = c[1][0]; else if (cerca === c[1][0]) cerca = null; continue; }
+    if (cerca !== null) continue;
+    const m = CABECALHO_TASK.exec(linha);
+    if (m === null) continue;
+    const id = `T${m[1] ?? m[2]}`;
+    if (!ids.includes(id)) ids.push(id);
+  }
   return ids;
 }
 
@@ -166,16 +187,67 @@ function encerrada(eventos          )          {
   return ultimo === 'entrega.encerrada';
 }
 
+/** Colunas do quadro FL1 sem `fluxo.status.FL1` legível (F6): nomes e chaves. */
+const COLUNAS_FL1_PADRAO = ['Preparado', 'Em execução', 'Revisão e teste', 'Pronto para liberar', 'Concluído', 'preparado', 'em_execucao', 'revisao', 'pronto', 'concluido'];
+
+/**
+ * Colunas do quadro FL1 (REQ-PRJ-2 a): as chaves e os valores de `fluxo.status.FL1` (`statusCfg`), normalizados (sem acento, caixa e espaço nas
+ * pontas). Sem objeto legível (ausente, não objeto, vazio, sem valor texto) ⇒ os 5 nomes e as 5 chaves padrão.
+ */
+export function colunasFl1(statusCfg         )              {
+  const cols = new Set        ();
+  if (typeof statusCfg === 'object' && statusCfg !== null && !Array.isArray(statusCfg)) {
+    for (const [k, v] of Object.entries(statusCfg                           )) {
+      if (typeof v !== 'string' || semAcento(v) === '') continue;
+      cols.add(semAcento(k));
+      cols.add(semAcento(v));
+    }
+  }
+  return cols.size > 0 ? cols : new Set(COLUNAS_FL1_PADRAO.map(semAcento));
+}
+
+/** Predicado único (REQ-PRJ-2 a; o doctor o importa do `dist/`): `status` é coluna do quadro FL1? */
+export function ehColunaFl1(status        , statusCfg          )          {
+  return colunasFl1(statusCfg).has(semAcento(status));
+}
+
+/**
+ * Regra única de "feito" (REQ-PRJ-3 f; o doctor a importa do `dist/`): `status` = o `concluido` de `fluxo.status.FL1` (`statusCfg`) OU o
+ * `concluido` fixo (F4), sem acento, caixa nem espaço nas pontas. `entrega.encerrada` é do diário e fica em `projetarProjeto`.
+ */
+export function ehFeito(status               , statusCfg          )          {
+  if (status === null || semAcento(status) === '') return false;
+  const s = semAcento(status);
+  if (s === 'concluido') return true;
+  if (typeof statusCfg !== 'object' || statusCfg === null || Array.isArray(statusCfg)) return false;
+  const c = (statusCfg                           ).concluido;
+  return typeof c === 'string' && semAcento(c) !== '' && semAcento(c) === s;
+}
+
+const CHAVE_EPIC = /^[A-Za-z][A-Za-z0-9_-]*$/;
+
+/** `fluxo.vinculoPbiEpic`: só `tipo` = `frontmatter` agrupa; a chave é `nome` (válido) ou `epic`. Outro vínculo (MCP) ou ilegível ⇒ `null`. */
+function chaveEpicDe(vinculo         )                {
+  if (typeof vinculo !== 'object' || vinculo === null || Array.isArray(vinculo)) return null;
+  const v = vinculo                           ;
+  if (v.tipo !== 'frontmatter') return null;
+  return typeof v.nome === 'string' && CHAVE_EPIC.test(v.nome) ? v.nome : 'epic';
+}
+
                                               
 
-export function projetarProjeto(arvores              , opcoes                                                                         )                {
+export function projetarProjeto(arvores              , opcoes                                                                                                                                                                                     )                {
+  // D-G27: só o booleano `true` liga; a borda lê a config, o núcleo nunca
+  const opcoesLigadas = opcoes.opcoesComoContagem === true;
+  let nOpcoes = 0;
   const idPadrao = opcoes.idPadrao ?? ID_PADRAO;
+  const chaveEpic = chaveEpicDe(opcoes.vinculo);
   const avisos = [...(opcoes.avisos ?? [])];
   const cards = new Map                                                          ();
   const entregas = new Map                                                       ();
   arvores.forEach((a, idx) => {
     for (const c of a.cards ?? []) {
-      const card = cardDe(c.arquivo, c.texto, idPadrao);
+      const card = cardDe(c.arquivo, c.texto, idPadrao, chaveEpic);
       if (card !== null) cards.set(card.id, [...(cards.get(card.id) ?? []), { ...card, idx, caminho: a.caminho, textoMd: c.planoMd }]);
     }
     for (const e of a.entregas ?? []) {
@@ -197,8 +269,11 @@ export function projetarProjeto(arvores              , opcoes                   
       for (const ev of e.eventos) { const k = chaveEv(ev); if (!vistos.has(k)) { vistos.add(k); eventos.push(ev); } }
     }
     eventos.sort((a, b) => msDe(a) - msDe(b) || cmp(String(a.sessao), String(b.sessao)) || a.seq - b.seq);
+    // REQ-PRJ-2 (b, c): com a chave ligada, card COM status fora do quadro FL1 é opção (não vira linha); a medição vence o card; diário ilegível conta como medição (nunca ausência)
+    const medido = ents.some((e) => e.plano !== null) || ents.some((e) => e.eventos === null) || eventos.some((ev) => TIPOS_DE_TASK.includes(ev.tipo));
+    if (opcoesLigadas && card !== null && card.status !== null && !ehColunaFl1(card.status, opcoes.statusFl1) && !medido) { nOpcoes++; continue; }
     if (eventos.length > 0) diarios.push({ id, eventos });
-    const feito = (card !== null && semAcento(card.status ?? '') === 'concluido') || encerrada(eventos);
+    const feito = (card !== null && ehFeito(card.status, opcoes.statusFl1)) || encerrada(eventos);
     // plano: inválido ⇒ "?" (nunca o .md nem plano velho); sem plano.json, o .md do card
     const comJson = escolherPlanoJson(ents);
     let plano                        = null;
@@ -221,7 +296,7 @@ export function projetarProjeto(arvores              , opcoes                   
     }
     let tasks                    = null;
     if (taskIds !== null) {
-      const norm = (t         )                => (typeof t !== 'string' ? null : plano === 'md' && /^\d+$/.test(t) ? `T${t}` : t);
+      const norm = (t         )                => (typeof t !== 'string' ? null : plano === 'md' && /^\d+[a-z]?$/.test(t) ? `T${t}` : t);
       let integradas = 0, fora = 0;
       for (const t of taskIds) {
         const doTask = eventos.filter((ev) => TIPOS_DE_TASK.includes(ev.tipo) && norm((ev.dados ?? {}).task) === t);
@@ -244,7 +319,7 @@ export function projetarProjeto(arvores              , opcoes                   
         : feito ? (tasks.estimadas > 0 ? `feito (${tasks.estimadas} tasks estimadas)` : 'feito')
           : pct === null ? '? sem task no plano' : `${pct} % (${tasks.integradas} de ${tasks.total})`;
     linhas.push({
-      id, titulo: card?.titulo ?? null, status: card?.status ?? null, feito, plano, semPlano, tasks, pct, pctComEstimadas, texto, motivo,
+      id, titulo: card?.titulo ?? null, status: card?.status ?? null, feito, epic: card?.epic ?? null, plano, semPlano, tasks, pct, pctComEstimadas, texto, motivo,
       fase: plano === 'json' ? null : ROTULO_FASE_NAO_MEDIDA, origem,
     });
   }
@@ -260,14 +335,24 @@ export function projetarProjeto(arvores              , opcoes                   
   const foraDaConta = linhas.filter((l) => l.semPlano).length;
   return {
     linhas,
+    grupos: gruposDe(linhas, opcoes.titulosEpic),
     totais: {
-      pbis: linhas.length, feitos: linhas.filter((l) => l.feito).length, foraDaConta, tasks, integradas, estimadas, restantes,
+      pbis: linhas.length, opcoes: nOpcoes, feitos: linhas.filter((l) => l.feito).length, foraDaConta, tasks, integradas, estimadas, restantes,
       pct: tasks > 0 ? Math.round((integradas / tasks) * 100) : null,
       pctComEstimadas: tasks > 0 ? Math.round(((integradas + estimadas) / tasks) * 100) : null,
       previsao: previsaoDoProjeto(linhas, diarios, restantes, opcoes.agoraMs, opcoes.fuso),
     },
     avisos,
   };
+}
+
+/** REQ-PRJ-3 (c): só os PBIs abertos; 2 grupos ou mais ("sem Epic" conta) ⇒ grupos, na ordem do menor ID aberto, "sem Epic" por último. */
+function gruposDe(linhas                , titulos                                    )              {
+  const porEpic = new Map                         ();
+  for (const l of linhas) if (!l.feito) porEpic.set(l.epic, [...(porEpic.get(l.epic) ?? []), l.id]);
+  if (porEpic.size < 2) return [];
+  const grupos = [...porEpic].map(([epic, ids]) => ({ epic, titulo: epic === null ? null : (titulos?.[epic] ?? null), abertos: ids.length, ids }));
+  return [...grupos.filter((g) => g.epic !== null), ...grupos.filter((g) => g.epic === null)];
 }
 
 /** Item 3: o mesmo ritmo medido da T30 (relógio por task integrada), sobre todas as entregas do projeto. Sem ritmo ⇒ `?` com motivo. */

@@ -1,0 +1,190 @@
+{
+  "entrega": "GM-16",
+  "spec": "docs/superpowers/specs/2026-11-19-gm16-painel-projeto-design.md",
+  "tasks": [
+    {
+      "id": "T0",
+      "titulo": "Spikes S1 S2 no repo de referência",
+      "deps": [],
+      "arquivos": [
+        ".superpowers/sdd/2026-11-19-gm16/t0-relatorio.md"
+      ],
+      "reqs": [
+        "REQ-PRJ-1",
+        "REQ-PRJ-2",
+        "REQ-PRJ-3",
+        "REQ-DCT-1"
+      ]
+    },
+    {
+      "id": "T1",
+      "titulo": "Plano .md: cabeçalhos usuais",
+      "deps": [
+        "T0"
+      ],
+      "arquivos": [
+        "plugins/gabarito-mestre/gates/src/projeto.ts",
+        "plugins/gabarito-mestre/gates/dist/projeto.js",
+        "plugins/gabarito-mestre/gates/test/projeto.test.ts"
+      ],
+      "reqs": [
+        "REQ-PRJ-1"
+      ],
+      "teste_afetado": "cd plugins/gabarito-mestre/gates && node --test test/projeto.test.ts",
+      "mutacoes": ".harness/entregas/GM-16/mutacoes/T1.json"
+    },
+    {
+      "id": "T2",
+      "titulo": "Status fora do quadro FL1 é opção",
+      "deps": [
+        "T1"
+      ],
+      "arquivos": [
+        "plugins/gabarito-mestre/gates/src/projeto.ts",
+        "plugins/gabarito-mestre/gates/dist/projeto.js",
+        "plugins/gabarito-mestre/gates/test/projeto.test.ts"
+      ],
+      "reqs": [
+        "REQ-PRJ-2"
+      ],
+      "teste_afetado": "cd plugins/gabarito-mestre/gates && node --test test/projeto.test.ts",
+      "mutacoes": ".harness/entregas/GM-16/mutacoes/T2.json"
+    },
+    {
+      "id": "T3",
+      "titulo": "Núcleo: feitos recolhidos e Epic",
+      "deps": [
+        "T2"
+      ],
+      "arquivos": [
+        "plugins/gabarito-mestre/gates/src/projeto.ts",
+        "plugins/gabarito-mestre/gates/dist/projeto.js",
+        "plugins/gabarito-mestre/gates/test/projeto.test.ts"
+      ],
+      "reqs": [
+        "REQ-PRJ-3"
+      ],
+      "teste_afetado": "cd plugins/gabarito-mestre/gates && node --test test/projeto.test.ts",
+      "mutacoes": ".superpowers/sdd/2026-11-19-gm16/mutacoes/T3.json"
+    },
+    {
+      "id": "T4",
+      "titulo": "Render e borda do projeto",
+      "deps": [
+        "T3"
+      ],
+      "arquivos": [
+        "plugins/gabarito-mestre/gates/src/painel-esquadrao.ts",
+        "plugins/gabarito-mestre/gates/dist/painel-esquadrao.js",
+        "plugins/gabarito-mestre/gates/scripts/painel.mjs",
+        "plugins/gabarito-mestre/gates/test/painel-projeto.test.ts"
+      ],
+      "reqs": [
+        "REQ-PRJ-2",
+        "REQ-PRJ-3"
+      ],
+      "teste_afetado": "cd plugins/gabarito-mestre/gates && node --test test/painel-projeto.test.ts",
+      "mutacoes": ".superpowers/sdd/2026-11-19-gm16/mutacoes/T4.json"
+    },
+    {
+      "id": "T5",
+      "titulo": "Doctor: status FL1 e PBI mergeado",
+      "deps": [
+        "T2"
+      ],
+      "arquivos": [
+        "plugins/gabarito-mestre/gates/scripts/harness-doctor.mjs",
+        "plugins/gabarito-mestre/gates/test/harness-doctor-fluxo.test.mjs",
+        "plugins/gabarito-mestre/gates/lib/config.mjs",
+        "plugins/gabarito-mestre/gates/scripts/entrega.mjs"
+      ],
+      "reqs": [
+        "REQ-DCT-1"
+      ],
+      "teste_afetado": "cd plugins/gabarito-mestre/gates && node --test test/harness-doctor-fluxo.test.mjs",
+      "mutacoes": ".superpowers/sdd/2026-11-19-gm16/mutacoes/T5.json"
+    },
+    {
+      "id": "T6",
+      "titulo": "Aceite: repositório grande",
+      "deps": [
+        "T4",
+        "T5"
+      ],
+      "arquivos": [
+        "plugins/gabarito-mestre/gates/test/aceite-gm16.test.mjs",
+        "plugins/gabarito-mestre/gates/test/fixtures/gm16-repo-grande/"
+      ],
+      "reqs": [
+        "REQ-PRJ-1",
+        "REQ-PRJ-2",
+        "REQ-PRJ-3",
+        "REQ-DCT-1"
+      ],
+      "teste_afetado": "cd plugins/gabarito-mestre/gates && node --test test/aceite-gm16.test.mjs"
+    },
+    {
+      "id": "T7",
+      "titulo": "Referência do fluxo e do doctor",
+      "deps": [
+        "T4",
+        "T5"
+      ],
+      "arquivos": [
+        "plugins/gabarito-mestre/reference/fluxo.md",
+        "plugins/gabarito-mestre/commands/gabarito-doctor.md"
+      ],
+      "reqs": [
+        "REQ-PRJ-2",
+        "REQ-DCT-1"
+      ]
+    },
+    {
+      "id": "T8",
+      "titulo": "Virada 2.2.0",
+      "deps": [
+        "T0",
+        "T1",
+        "T2",
+        "T3",
+        "T4",
+        "T5",
+        "T6",
+        "T7"
+      ],
+      "arquivos": [
+        "plugins/gabarito-mestre/.claude-plugin/plugin.json",
+        ".claude-plugin/marketplace.json",
+        "plugins/gabarito-mestre/gates/package.json",
+        "plugins/gabarito-mestre/gates/test/package.test.mjs",
+        "plugins/gabarito-mestre/scripts/test/texto.test.sh",
+        "CHANGELOG.md"
+      ],
+      "reqs": [
+        "REQ-PRJ-1",
+        "REQ-PRJ-2",
+        "REQ-PRJ-3",
+        "REQ-DCT-1"
+      ]
+    },
+    {
+      "id": "T9",
+      "titulo": "Doctor: card FL1 ilegível listado",
+      "deps": [
+        "T8"
+      ],
+      "arquivos": [
+        "plugins/gabarito-mestre/gates/scripts/harness-doctor.mjs",
+        "plugins/gabarito-mestre/gates/test/harness-doctor-fluxo.test.mjs",
+        "plugins/gabarito-mestre/commands/gabarito-doctor.md",
+        "CHANGELOG.md",
+        "docs/backlog.md"
+      ],
+      "reqs": [
+        "REQ-DCT-1"
+      ],
+      "teste_afetado": "cd plugins/gabarito-mestre/gates && node --test test/harness-doctor-fluxo.test.mjs",
+      "mutacoes": ".superpowers/sdd/2026-11-19-gm16/mutacoes/T9.json"
+    }
+  ]
+}
