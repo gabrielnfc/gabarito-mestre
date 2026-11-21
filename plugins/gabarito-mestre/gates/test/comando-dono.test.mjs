@@ -350,6 +350,7 @@ function todos(dir) {
 const encerrar = (amb, args, gh = ghFalso(), extra = {}) => hook(stdinTui(amb.dir, 'encerrar', args, extra), { env: gh.env });
 const encerradas = (p) => p.eventos().filter((e) => e.tipo === 'entrega.encerrada');
 import { encerramentoDe } from '../dist/trilha.js';
+import { encerrarEntrega } from '../scripts/comando-dono.mjs';
 
 test('encerrar-so-pelo-hook: grava entrega.encerrada via dono com o mergedAt do gh, lida campo a campo; entregaPublicada e o painel passam a "entregue" com a versão', () => {
   const amb = amb18();
@@ -670,4 +671,62 @@ test('aceite-gm18-encerrar: GM-13 (plano, diário sem task) e GM-14 (tasks e PR 
   assert.equal(estado(['--entrega', 'GM-14']).entregue.versao, null);
   assert.equal(encerradas(g13).length, 1);
   assert.equal(encerradas(g14).length, 2);
+});
+
+// ── GM-18 T2 correção r1: a releitura de REQ-ENC-2 v (2ª barreira da DS6) tem 1 teste por condição, com o executor `gh` injetado mudando o diário DURANTE a conferência
+// (a simulação já passou sobre a foto antiga; só a releitura vê a corrida). Condições de `encerrarEntrega`: `via !== 'dono'`, `pr !== pedido`, `!entregaPublicada`.
+// `!entregaPublicada` NÃO é redundante com `encerramentoDe`: `entregaPublicada` também recusa `events.*.jsonl` que não é arquivo regular (symlink), que `lerEstrito` lê.
+// MUTAÇÕES r1: tirar `enc.primeira.via !== 'dono'` ⇒ releitura-recusa-via-diferente · tirar `enc.primeira.pr !== pr` ⇒ releitura-recusa-pr-diferente · tirar `!entregaPublicada(...)` ⇒ releitura-recusa-diario-nao-publicado.
+const GH_OK = (n) => ({ status: 0, stdout: JSON.stringify({ number: n, state: 'MERGED', mergedAt: MERGED_AT }), stderr: '' });
+/** `gh` injetado que roda `corrida()` (muda o diário) antes de responder MERGED. */
+const ghComCorrida = (corrida) => (n) => { corrida(); return GH_OK(n); };
+
+async function corridaNaReleitura(corrida) {
+  const amb = amb18();
+  const g13 = pasta(amb, 'GM-13', planoDe('GM-13', 'T1'));
+  const r = await encerrarEntrega(amb.dir, 'GM-13 16', 'S-dono', { gh: ghComCorrida(() => corrida(g13, amb)) });
+  return { r, g13 };
+}
+
+test('releitura-controle: com o executor injetado sem corrida, encerrarEntrega grava via dono e devolve ok (o molde das 3 recusas abaixo funciona)', async () => {
+  const { r, g13 } = await corridaNaReleitura(() => {});
+  assert.deepEqual(r, { ok: true, entrega: 'GM-13', pr: 16 });
+  assert.equal(encerramentoDe(g13.eventos(), 'GM-13').primeira.via, 'dono');
+});
+
+test('releitura-recusa-via-diferente: o medir encerra o MESMO PR via head durante o gh; a releitura recusa encerramento_sem_efeito (o evento do dono foi gravado, mas não vale)', async () => {
+  const { r, g13 } = await corridaNaReleitura((p) => p.semear([['entrega.encerrada', { entrega: 'GM-13', pr: 16, via: 'head', mergeado_em: MERGED_AT }]], 'loop', new Date(Date.now() - 1000).toISOString()));
+  assert.equal(r.ok, false, JSON.stringify(r));
+  assert.equal(r.erro, 'encerramento_sem_efeito');
+  assert.match(r.mensagem, /foi gravado/);
+  assert.equal(encerradas(g13).length, 2, 'o evento do dono foi gravado depois da corrida');
+  assert.equal(encerramentoDe(g13.eventos(), 'GM-13').primeira.via, 'head');
+});
+
+test('releitura-recusa-pr-diferente: um encerramento via dono de OUTRO PR entra durante o gh; a releitura recusa encerramento_sem_efeito', async () => {
+  const { r, g13 } = await corridaNaReleitura((p) => p.semear([['entrega.encerrada', { entrega: 'GM-13', pr: 17, via: 'dono', mergeado_em: MERGED_AT }]], 'loop', new Date(Date.now() - 1000).toISOString()));
+  assert.equal(r.ok, false, JSON.stringify(r));
+  assert.equal(r.erro, 'encerramento_sem_efeito');
+  assert.match(r.mensagem, /foi gravado/);
+  const enc = encerramentoDe(g13.eventos(), 'GM-13');
+  assert.equal(enc.primeira.via, 'dono');
+  assert.equal(enc.primeira.pr, 17, 'a vigente é a do outro PR');
+});
+
+test('releitura-recusa-diario-nao-publicado: um events.*.jsonl que é symlink aparece durante o gh; encerramentoDe dá encerrada via dono do PR pedido, mas entregaPublicada não afirma, e a releitura recusa', async () => {
+  const { r, g13 } = await corridaNaReleitura((p) => {
+    const fora = realpathSync(mkdtempSync(join(tmpdir(), 'diario-fora-')));
+    limpar.push(fora);
+    const w = diario.append(fora, 'zz', { ts: new Date(Date.now() - 1000).toISOString(), autor: 't@t', sessao: 'zz', agente: 'orquestrador', tipo: 'sombra.consulta', dados: { pergunta_hash: HASH, req: 'REQ-X-1' } });
+    assert.ok(w.ok, JSON.stringify(w));
+    symlinkSync(join(fora, 'events.zz.jsonl'), join(p.entregas, 'events.zz.jsonl'));
+  });
+  const enc = encerramentoDe(g13.eventos(), 'GM-13');
+  assert.equal(enc.encerrada, true, 'o diário relido dá a entrega por encerrada pelo dono');
+  assert.equal(enc.primeira.via, 'dono');
+  assert.equal(enc.primeira.pr, 16);
+  assert.equal(g13.publicada(), false, 'mas entregaPublicada não afirma com um events.* que não é arquivo regular');
+  assert.equal(r.ok, false, JSON.stringify(r));
+  assert.equal(r.erro, 'encerramento_sem_efeito');
+  assert.match(r.mensagem, /foi gravado/);
 });
