@@ -8,6 +8,7 @@
  *  M3d ligação por sessão vencendo `entrega.encerrada` ⇒ resposta-pos-merge-nao-reabre
  *  M3e re-encerrar pelo PR antigo                    ⇒ reaberta-nao-reencerra-pelo-mesmo-pr
  *  M3f comparar com o `ts` de medição, não `mergeado_em` ⇒ reaberta-pr-antigo-medido-depois-nao-reencerra
+ * GM-18 T1 (REQ-ENC-1 iv, v): M1e ⇒ dono-reencerra-apos-reabrir · M1f ⇒ automatico-segue-exigindo-pr-novo · M1g ⇒ medir-nao-encerra-sobre-dono
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -18,6 +19,7 @@ import { join } from 'node:path';
 import { encerramentoDe, podeEncerrar, trilhaDe } from '../src/trilha.ts';
 import type { FatosTrilha } from '../src/trilha.ts';
 import { entregaPublicada, SESSAO_QUALQUER } from '../src/guarda.ts';
+import { entregueDe } from '../src/painel.ts';
 import type { Evento, TipoEvento } from '../src/tipos.ts';
 
 type Ev = { tipo: TipoEvento; dados: Record<string, unknown>; ts: string; sessao?: string };
@@ -178,4 +180,40 @@ test('reaberta-pr-mergeado-antes-nao-reencerra-em-encerramentoDe: encerrada pós
   const es = evs([reaberta(T(20)), encerrada(23, T(15), T(25))]);
   assert.equal(encerramentoDe(es, ID).encerrada, false);
   assert.equal(encerramentoDe(evs([reaberta(T(20)), encerrada(23, T(22), T(25))]), ID).encerrada, true, 'controle: mergeado_em posterior encerra');
+});
+
+// ── GM-18 T1 (REQ-ENC-1 iv, v): encerramento do dono ──────────────────────────────────────────────────────────────────────────
+
+const doDono = (pr: number, mergeado_em: string, ts: string, extra: Record<string, unknown> = {}, id = ID): Ev =>
+  ({ tipo: 'entrega.encerrada', ts, dados: { entrega: id, pr, via: 'dono', mergeado_em, ...extra } });
+
+test('dono-reencerra-apos-reabrir: o dono encerra de novo pelo mesmo PR, com mergeado_em anterior à reabertura', () => {
+  const r = encerramentoDe(evs([doDono(26, T(5), T(6)), reaberta(T(20)), doDono(26, T(5), T(25))]), ID);
+  assert.equal(r.encerrada, true);
+  assert.equal(r.primeira?.via, 'dono');
+  assert.equal(r.primeira?.pr, 26);
+});
+
+test('automatico-segue-exigindo-pr-novo: a 2ª encerrada via titulo, mesmo cenário, não vale', () => {
+  const dois: Ev = { tipo: 'entrega.encerrada', ts: T(25), dados: { entrega: ID, pr: 26, via: 'titulo', mergeado_em: T(5) } };
+  assert.equal(encerramentoDe(evs([doDono(26, T(5), T(6)), reaberta(T(20)), dois]), ID).encerrada, false);
+  const head: Ev = { tipo: 'entrega.encerrada', ts: T(25), dados: { entrega: ID, pr: 26, via: 'head', mergeado_em: T(5) } };
+  assert.equal(encerramentoDe(evs([doDono(26, T(5), T(6)), reaberta(T(20)), head]), ID).encerrada, false);
+});
+
+test('dono-antes-da-reabertura-nao-vale: encerrada do dono anterior à reabertura não encerra', () => {
+  const r = encerramentoDe(evs([doDono(26, T(5), T(6)), reaberta(T(20))]), ID);
+  assert.equal(r.encerrada, false);
+  assert.equal(r.reabertaEm, T(20));
+});
+
+test('medir-nao-encerra-sobre-dono: podeEncerrar nunca por cima de encerrada do dono nem com via dono', () => {
+  assert.equal(podeEncerrar(evs([doDono(26, T(5), T(6))]), ID, mergeado(27, T(10))), false);
+  assert.equal(podeEncerrar([], ID, mergeado(27, T(10), { via: 'dono' })), false);
+  assert.equal(podeEncerrar([], ID, mergeado(27, T(10))), true, 'controle: head sem encerrada encerra');
+});
+
+test('entregue-mostra-versao-do-dono: o painel lê a versão da encerrada do dono', () => {
+  const es = evs([doDono(16, T(5), T(6), { versao: '2.0.0' }, 'GM-13')]);
+  assert.deepEqual(entregueDe(es, 'GM-13'), { id: 'GM-13', versao: '2.0.0' });
 });
