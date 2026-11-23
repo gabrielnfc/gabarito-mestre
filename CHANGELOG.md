@@ -3,6 +3,21 @@
 Formato: [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/). Versionamento: [SemVer](https://semver.org/lang/pt-BR/).
 Usuários do plugin só recebem atualização quando `version` muda.
 
+## [2.2.2] — 2026-11-23
+
+Patch interno (GM-19, D-G40): testes mais rápidos e sem repetição. Nada muda no comportamento do plugin para quem usa.
+
+### Mudado
+
+- **Suíte local de ~490 s para 264 s de mediana** (3 rodadas: 271, 263, 264 s) e job `gates` da CI de 701 s para 549 s de mediana. O arquivo `loop-cli` foi dividido em 5 partes com helpers comuns (`_loop-cli-helpers.mjs`).
+- **Mesma cobertura, 5783 testes.** Entraram 3 que fecham furos (cabeçalho do mod-test de outra pasta, `texto-nom` no `texto.test.sh`, globs). Saíram 3 repetidos, cada corte provado por mutação.
+- **Ruleset da `main` exige 10 checks** (antes 8): `mod` e `dist em dia` passaram a ser obrigatórios (D-G37).
+
+### Limites declarados
+
+- Teste rodado numa worktree ainda grava no diário do checkout principal (`.harness/entregas`): está no backlog como prioridade alta.
+- O golden `s6-gabarito-zero-errado: separatrue` segue vermelho na base; os gates locais rodam com `S6_REPOS_DIR` vazio.
+
 ## [2.2.1] — 2026-11-21
 
 Patch sobre a 2.2.0 (GM-18, D-G30): o dono encerra por comando a entrega já publicada e passa a apontar a entrega em cortar, adiar e reabrir. Tag, release e o PR `next` para `main` só o dono publica.
