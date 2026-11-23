@@ -125,6 +125,9 @@ describe('gates/package.json 1.1.0', () => {
     assert.equal(roda(`${gabaritoOk}\n\nmod/test/chat.test.ts:\n${naoCarrega}`), 1, 'chat do mod sem carregar, depois do gabarito');
     assert.equal(roda(`${gabaritoOk}\n${naoCarrega}`), 1, 'falha de carga sem cabeçalho de arquivo nunca é de gates');
     assert.equal(roda(`${naoCarrega}\n${gabaritoOk}`), 1, 'falha de carga na 1ª linha, sem cabeçalho');
+    assert.equal(roda(`${gatesTs}\n\nhooks/test/x.test.ts:\n${naoCarrega}\n\n${gabaritoOk}`), 1, 'cabeçalho de outra pasta (hooks/test), depois dos gates: reprova (MF-P4)');
+    assert.equal(roda(`${gabaritoOk}\n\nhooks/test/x.test.ts:\n${naoCarrega}`), 1, 'cabeçalho de outra pasta, sozinho depois do gabarito');
+    assert.equal(roda(`${gabaritoOk}\n\nmod/novo.test.ts:\n${naoCarrega}`), 1, 'pedaço novo do mod (spec:116) que não carrega');
     assert.equal(roda(`${gatesTs}\n\n${gabaritoOk}`), 0, 'só os de gates/test sem carregar segue verde');
   });
   test('texto-nom-e-chamado-pelo-texto: texto.test.sh roda texto-nom.test.sh sem argumento e propaga o rc (REQ-FURO-2)', { skip: fora }, () => {

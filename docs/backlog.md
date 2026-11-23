@@ -94,3 +94,5 @@ Item sai daqui quando entra num plano ou a decisão de descarte é registrada. I
 | Outras esperas fixas, helpers copiados, tmp sem limpeza e `concurrency` sem efeito em `entrega-cli`: não decidem o relógio | spec GM-19, "Fora de escopo", 2026-11-23 — dono: Gabriel | o arquivo virar o mais lento, ou disco cheio |
 | Suíte repetida nas skills de review e loop: contradiz P16, muda produto, custo não medido | spec GM-19, "Fora de escopo", 2026-11-23 — dono: Gabriel | 1 revisão medida com suíte inteira por mutação |
 | `instalar.test.sh` só roda na CI (é job exigido, F14) | spec GM-19, "Fora de escopo", 2026-11-23 — dono: Gabriel | falha que só apareceu na CI |
+| `mod-test.sh` não casa cabeçalho `.test.tsx` (o runner descobre .tsx; falso verde se um .tsx não carregar) | review r1 T2 GM-19, MINOR-1, 2026-11-23 — dono: Gabriel | primeiro `.test.tsx` no plugin |
+| `texto-nom.test.sh` deixa pastas temporárias a cada execução (~160 KB por caso, ~5 MB por rodada, via texto.test.sh) | review r1 T2 GM-19, MINOR-2, 2026-11-23 — dono: Gabriel | disco cheio ou TMPDIR acima de 500 MB |
