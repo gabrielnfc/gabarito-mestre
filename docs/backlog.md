@@ -96,3 +96,4 @@ Item sai daqui quando entra num plano ou a decisão de descarte é registrada. I
 | `instalar.test.sh` só roda na CI (é job exigido, F14) | spec GM-19, "Fora de escopo", 2026-11-23 — dono: Gabriel | falha que só apareceu na CI |
 | `mod-test.sh` não casa cabeçalho `.test.tsx` (o runner descobre .tsx; falso verde se um .tsx não carregar) | review r1 T2 GM-19, MINOR-1, 2026-11-23 — dono: Gabriel | primeiro `.test.tsx` no plugin |
 | `texto-nom.test.sh` deixa pastas temporárias a cada execução (~160 KB por caso, ~5 MB por rodada, via texto.test.sh) | review r1 T2 GM-19, MINOR-2, 2026-11-23 — dono: Gabriel | disco cheio ou TMPDIR acima de 500 MB |
+| MINOR do review r2 da T2 (GM-19): nenhum teste fixa a âncora `^` de `arq !~ /^gates\/test\//` em `plugins/gabarito-mestre/scripts/test/mod-test.sh:24`; um cabeçalho `mod/gates/test/x.test.ts:` que não carrega passaria verde (hoje essa pasta não existe) | Gabriel | 1ª pasta `gates/test` aninhada fora da raiz do plugin |

@@ -14,3 +14,5 @@ Numeração contínua com a GM-18 (`2026-11-21-gm18-decisoes-dono.md`, última D
 - **D-G38 (Q3, versão):** "Junto da próxima release (Recomendado)": sem versão nem virada própria; fica em `next` e vai à `main` com a próxima release.
 - **D-G39 (Q4, vínculo):** "Sem vínculo (Recomendado)": Iniciativa e Epic não vinculados, como na D-G33.
 - DS9, DS10 e DS11 aprovadas pela Sombra (`decisao.sombra`, hash 8fe49b6d…, 2026-11-23).
+- **D-G37 executada (2026-11-23, autorização literal do dono "pode ajustar o ruleset"):** ruleset 23998269 da `main` passou de 8 para 10 checks exigidos (`mod — claude plugin test (só o teste do mod conta)` e `dist em dia (gates/dist == build de gates/src, Node 22)`), conferidos verdes em a43ea2e3 antes da troca; demais regras iguais. Cópia de antes e depois em `.claude-tmp/gm19/ruleset-23998269-{antes,depois}.json`.
+- **Quarentena autorizada (2026-11-23, AskUserQuestion "Pode mover"):** 5 arquivos de fixture gravados por teste no diário real da GM-19 movidos para `.claude-tmp/gm19/quarentena/GM-19` (sha256 em `sha256.txt`); o defeito foi ao backlog como prioridade alta ("Backlog prioritário").
