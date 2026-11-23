@@ -5,7 +5,7 @@
  * Contrato de falha: ausente (diário sem eventos, árvore sem a pasta) ≠ corrompido (linha torta, cadeia quebrada).
  *
  * MUTAÇÕES PRESCRITAS (task-8-mut.json): M-APR1b pula `ls-files` · M-T8a canário depois do `gravar` · M-T8b sem `--literal-pathspecs`
- * · M-T8c `nada` aceita evento existente · M-APR3a (em loop-cli.test.mjs) M no brief · M-APR1c (formas) D sem evidência.
+ * · M-T8c `nada` aceita evento existente · M-APR3a (em loop-cli-3.test.mjs) M no brief · M-APR1c (formas) D sem evidência.
  */
 import { test, describe, after } from 'node:test';
 import assert from 'node:assert/strict';
