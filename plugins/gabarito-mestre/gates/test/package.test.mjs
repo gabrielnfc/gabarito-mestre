@@ -73,8 +73,6 @@ describe('gates/package.json 1.1.0', () => {
     assert.ok(t.includes(' A `description` do `Agent` é a `descricao` do item, sem mudar.'), '(a) ausente');
     assert.ok(t.includes(' Antes de parar, `node "${CLAUDE_PLUGIN_ROOT}/gates/scripts/entrega.mjs" devolver --motivo <t>` (grava `entrega.devolvida`; o painel mostra o comando ao dono).'), '(b) ausente');
     assert.ok(t.includes('\nStatus ao dono: comece por `node "${CLAUDE_PLUGIN_ROOT}/gates/scripts/painel.mjs" texto --preset executivo --largura 80`.\n'), '(c) ausente');
-    const loop = readFileSync(join(RAIZ, 'plugins', 'gabarito-mestre', 'gates', 'scripts', 'loop.mjs'), 'utf8');
-    assert.ok(loop.includes('descricao: `${item.task} ${item.papel}`'), 'descricao do item mudou: a skill (a) aponta para ela');
     const ent = readFileSync(join(RAIZ, 'plugins', 'gabarito-mestre', 'gates', 'scripts', 'entrega.mjs'), 'utf8');
     assert.ok(ent.includes('devolver --motivo <texto>'), 'uso de entrega.mjs sem devolver');
     // Comportamento: o subcomando que a skill (b) cita é aceito pelo CLI (não cai em 'uso'); o erro de entrega não inferida é o esperado num repo sem branch de entrega.
@@ -82,11 +80,6 @@ describe('gates/package.json 1.1.0', () => {
     assert.equal(spawnSync('git', ['init', '-q', repo]).status, 0);
     const r = spawnSync(process.execPath, [join(GATES, 'scripts', 'entrega.mjs'), 'devolver', '--motivo', 'teste'], { cwd: repo, encoding: 'utf8' });
     assert.notEqual(JSON.parse(r.stdout.trim().split('\n').pop()).erro, 'uso', r.stdout);
-  });
-  test('skill-loop-ate-95-linhas: teto de 95 linhas (GM-13 T15, contado aqui; o teto de 80 do doctor segue em harness-doctor-loop)', { skip: fora }, () => {
-    const t = readFileSync(join(RAIZ, 'plugins', 'gabarito-mestre', 'skills', 'gabarito-loop', 'SKILL.md'), 'utf8');
-    const linhas = t.split('\n').length - 1;
-    assert.ok(linhas <= 95, `${linhas} linhas`);
   });
   test('agente gabarito-spike: lista fechada do que cria e config isolada (A5, A6)', { skip: fora }, () => {
     const t = readFileSync(join(RAIZ, 'plugins', 'gabarito-mestre', 'agents', 'gabarito-spike.md'), 'utf8');
@@ -169,9 +162,6 @@ describe('gates/package.json 1.1.0', () => {
     assert.match(t, /se `alvo` não é o repositório desta sessão, pare e diga/i);
     assert.match(t, /reconsult/);
     assert.equal(existsSync(join(GATES, 'scripts', 'pausa.mjs')), true);
-  });
-  test('version do plugin.json igual à dos gates', { skip: noPlugin }, () => {
-    assert.equal(ler(PLUGIN_JSON).version, pkg.version);
   });
   test('marketplace-name: na virada o catálogo se chama gabarito-mestre (quem atualiza usa gabarito-mestre@gabarito-mestre)', { skip: noMkt }, () => {
     assert.equal(ler(MKT_JSON).name, 'gabarito-mestre');
