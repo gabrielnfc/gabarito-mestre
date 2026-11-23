@@ -1,0 +1,58 @@
+{
+  "entrega": "GM-19",
+  "spec": "docs/superpowers/specs/2026-11-22-gm19-velocidade-testes-design.md",
+  "tasks": [
+    {
+      "id": "T1",
+      "titulo": "Dividir loop-cli e medir",
+      "deps": [],
+      "arquivos": [
+        "plugins/gabarito-mestre/gates/test/loop-cli.test.mjs",
+        "plugins/gabarito-mestre/gates/test/loop-cli-2.test.mjs",
+        "plugins/gabarito-mestre/gates/test/loop-cli-3.test.mjs",
+        "plugins/gabarito-mestre/gates/test/loop-cli-4.test.mjs",
+        "plugins/gabarito-mestre/gates/test/loop-cli-5.test.mjs",
+        "plugins/gabarito-mestre/gates/test/_loop-cli-helpers.mjs",
+        "plugins/gabarito-mestre/gates/test/loop-aprendizado.test.mjs"
+      ],
+      "reqs": [
+        "REQ-SEG-1",
+        "REQ-VEL-1",
+        "REQ-VEL-3"
+      ]
+    },
+    {
+      "id": "T2",
+      "titulo": "Fechar furos dos testes",
+      "deps": [
+        "T1"
+      ],
+      "arquivos": [
+        "plugins/gabarito-mestre/scripts/test/mod-test.sh",
+        "plugins/gabarito-mestre/scripts/test/texto.test.sh",
+        "plugins/gabarito-mestre/gates/test/package.test.mjs",
+        "docs/backlog.md"
+      ],
+      "reqs": [
+        "REQ-FURO-1",
+        "REQ-FURO-2",
+        "REQ-FURO-3"
+      ]
+    },
+    {
+      "id": "T3",
+      "titulo": "Cortar testes repetidos",
+      "deps": [
+        "T2"
+      ],
+      "arquivos": [
+        "plugins/gabarito-mestre/mod/test/gabarito.test.ts",
+        "plugins/gabarito-mestre/gates/test/autonomia-processo.test.mjs",
+        "plugins/gabarito-mestre/gates/test/package.test.mjs"
+      ],
+      "reqs": [
+        "REQ-RED-1"
+      ]
+    }
+  ]
+}

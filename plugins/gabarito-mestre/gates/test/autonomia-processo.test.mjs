@@ -101,11 +101,6 @@ describe('autonomia: processo real', () => {
     assert.equal(rodar(repo, 'Write', { file_path: alvo, content: '{}' }, SUB, com(repo, h)).decisao, 'deny');
   });
 
-  test('sem-arquivo-ask-continua-ask', () => {
-    const repo = montarLigado();
-    assert.equal(rodar(repo, 'Bash', ASK, {}, com(repo, home())).decisao, 'ask');
-  });
-
   test('arquivo-invalido-ask-continua-ask', () => {
     const repo = montarLigado();
     assert.equal(rodar(repo, 'Bash', ASK, {}, com(repo, home('{"orquestrador":"true"}'))).decisao, 'ask');

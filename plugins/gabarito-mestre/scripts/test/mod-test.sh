@@ -20,4 +20,6 @@ if [ "$rc" -eq 124 ]; then printf '%s\n' "$out"; exit 1; fi
 printf '%s\n' "$out" | grep -q '^(pass)' || exit 1
 printf '%s\n' "$out" | grep -q 'mod/test/gabarito.test.ts: cannot' && exit 1
 printf '%s\n' "$out" | grep -E '^\(fail\)' | grep -qv 'the file did not load' && exit 1
+# GM-19 REQ-FURO-1 (F11): "did not load" só é esperado nos *.test.ts de gates/test. O runner imprime `<caminho>.test.ts:` antes da falha; fora de gates/test, ou sem cabeçalho, reprova.
+printf '%s\n' "$out" | awk '/^[^ (].*\.test\.[cm]?[jt]s:$/{arq=$0} /^\(fail\) the file did not load/ && arq !~ /^gates\/test\//{ruim=1} END{exit ruim}' || exit 1
 exit 0

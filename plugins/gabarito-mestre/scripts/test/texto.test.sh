@@ -25,6 +25,7 @@
 #  A4 r1: voltar a citar --gates-substituir como opção, ou `test -f …/.instalado.json` na skill
 #  A3 r1: renomear o job instalador do ci.yml ⇒ nome exato do ruleset; doctor-self deixar de exigir configurada
 #  renomear no ci.yml um dos 4 checks exigidos pelo ruleset de main, ou tirar ubuntu-latest/macos-latest da matriz de hooks
+#  GM-19 MF2-a apagar o `check` de texto-nom.test.sh · MF2-b engolir o rc dele (`|| true`) · MF2-c inverter 1 caso de texto-nom.test.sh (este script sai 1)
 #  nomes da 1.0.1 (4 skills · 3 agents · 1 command · 2+3 hooks · 7 gates + 4 scripts · R1–R18 · G1–G9 · I1–I12)
 set -u
 AQUI="$(cd "$(dirname "$0")" && pwd)"
@@ -434,6 +435,9 @@ local_sozinho() {
 LOCAL_SOZINHO=$(local_sozinho)
 check "texto-local-nos-dois: nenhuma linha diz 'ao lado' ou 'acima da linha de digitar' sozinho (skills, comando, nota 2.1.0)" '[ -f "$V21" ] && [ -z "$LOCAL_SOZINHO" ]' "local sozinho: $(printf '%s' "$LOCAL_SOZINHO" | cut -c1-140 | tr '\n' ' ')"
 check "nota da 2.1.0: cita /reload-plugins, o foco reversível e a herança só na 2.2; não cita o nome antigo do fluxo" '[ -f "$V21" ] && grep -qF "/reload-plugins" "$V21" && grep -qF "viewMode" "$V21" && grep -qF "chega na 2.2" "$V21" && ! grep -q "$NOME_ANTIGO" "$V21"' "nota da 2.1.0 sem /reload-plugins, sem o foco reversível, sem a herança na 2.2 ou com o nome antigo"
+
+# GM-19 REQ-FURO-2 (F12): os casos de NOM-1 de texto-nom.test.sh só rodavam à mão. Sem argumento, o filho roda `--nom` e sai antes; sem recursão.
+check "texto-nom: os casos de NOM-1 de texto-nom.test.sh passam (rc 0)" 'bash "$P/scripts/test/texto-nom.test.sh" >/dev/null 2>&1' "texto-nom.test.sh falhou: rode-o sozinho"
 
 echo "── $falhas falha(s)"
 [ "$falhas" -eq 0 ]
