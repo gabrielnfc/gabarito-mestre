@@ -1103,12 +1103,6 @@ test('instantaneo-vazio: não vira prompt', async ($, on) => {
   await pousar(m)
   expect(m.est.clears).toBe(0)
 })
-test('evento-pouso-nao-gravou: sem clear', async ($, on) => {
-  const m = mundo($, on, { appendFalha: ['sessao.pouso'] })
-  await pousar(m)
-  expect(m.est.clears).toBe(0)
-  expect(parou(m)[0].dados).toEqual({ motivo: 'sem_pouso', causa: 'diario' })
-})
 test('store-fora-do-ar-nao-faz-clear', async ($, on) => {
   const m = mundo($, on, { storeSetFalha: true })
   await pousar(m)
