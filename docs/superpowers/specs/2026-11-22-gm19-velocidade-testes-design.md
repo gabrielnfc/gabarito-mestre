@@ -1,9 +1,9 @@
 # GM-19: velocidade e qualidade dos testes
 
-Iniciativa: não vinculado (pendente do dono, Q4) · Epic: não vinculado (pendente do dono, Q4) · PBI: GM-19 (Enabler) · Versão: sem versão nova (recomendação, pendente do dono, Q3) · Data: 2026-11-22 · Base: `enabler/GM-19-velocidade-testes` bfa322ad
+Iniciativa: não vinculado (D-G39) · Epic: não vinculado (D-G39) · PBI: GM-19 (Enabler) · Versão: sem versão nova (D-G38) · Data: 2026-11-22 · Base: `enabler/GM-19-velocidade-testes` bfa322ad
 PBIs conhecidos, na ordem da D-G30: GM-18 (Enabler, entregue na 2.2.1) · **GM-19** (Enabler, esta entrega) · GM-17 (promoção de aprendizado, reservada pela D-G25).
 
-**STATUS: ~~r1~~ r2, para conformidade. Não aprovada.**
+**STATUS: ~~r1~~ r2, conforme; Q1 a Q4 respondidas (D-G36 a D-G39). Aguarda `/gabarito-mestre:aprovar`.**
 - **O que o sistema faz hoje:** a suíte de `gates` leva ~490 s nesta máquina e 701 s de mediana na CI. Há 3 furos de proteção (F11 a F13) e 5 repetições confirmadas por leitura (F16).
 - **O que está escrito que fará:** tudo a partir de "Decisões". Nada disso foi executado.
 - A D-G35 só autoriza abrir. Spec, merge em `main` e release dependem do dono.
@@ -56,9 +56,9 @@ Para a CI não há previsão em segundos: o modelo não reproduz a mediana medid
 - **DS6 `texto.test.sh` chama `texto-nom.test.sh`.** Rejeitado: job ou suíte nova, porque mexe em CI, config e nome de job.
 - **DS7 O mod só tolera "did not load" sob cabeçalho `gates/test/`.** Rejeitado: listar arquivos pelo nome, porque o próximo repete o furo.
 - **DS8 Dividir, fechar furo e cortar são 3 tasks em sequência. Só sai o que a mutação provar coberto.** O item de F17 fica. Rejeitado: cortar junto da divisão, porque a prova de igualdade deixaria de valer. Rejeitado: ampliar `package.test.mjs` para poder cortar o de F17, porque é trocar um teste por outro.
-- **DS9 Testes históricos ficam na suíte de toda task** (a confirmar pela Sombra). (M, calculado) Depois da divisão, tirar `conversa-pontos` poupa ~1 s e tirar `avaliar-*`, ~1 s. (a, medido) `avaliar-*` somam 10,4 s, em paralelo com o resto. Rejeitado: tirar, porque perde 221 e 64 testes por task sem ganho de relógio.
-- **DS10 Sem gate por impacto no `integrar`** (a confirmar pela Sombra). (M, calculado) Depois da divisão pouparia no máximo ~4 min por task. Rejeitado: criar, porque exige seleção de testes e o gate inteiro já pegou defeito de junção (processo, E4 onda 1).
-- **DS11 A CI segue rodando no push de `next` e no PR** (a confirmar pela Sombra). (a, medido) 4 shas das últimas 100 execuções rodaram 2 vezes, em paralelo e em repositório público. Rejeitado: cortar um dos 2, porque o PR testa o resultado do merge.
+- **DS9 Testes históricos ficam na suíte de toda task** (aprovada pela Sombra, 8fe49b6d). (M, calculado) Depois da divisão, tirar `conversa-pontos` poupa ~1 s e tirar `avaliar-*`, ~1 s. (a, medido) `avaliar-*` somam 10,4 s, em paralelo com o resto. Rejeitado: tirar, porque perde 221 e 64 testes por task sem ganho de relógio.
+- **DS10 Sem gate por impacto no `integrar`** (aprovada pela Sombra, 8fe49b6d). (M, calculado) Depois da divisão pouparia no máximo ~4 min por task. Rejeitado: criar, porque exige seleção de testes e o gate inteiro já pegou defeito de junção (processo, E4 onda 1).
+- **DS11 A CI segue rodando no push de `next` e no PR** (aprovada pela Sombra, 8fe49b6d). (a, medido) 4 shas das últimas 100 execuções rodaram 2 vezes, em paralelo e em repositório público. Rejeitado: cortar um dos 2, porque o PR testa o resultado do merge.
 
 ADRs: nenhuma. Não há exceção a regra.
 
@@ -94,7 +94,7 @@ cabecalho && diff <(esperado) <(novo)
 - Mutações, cada uma com quem a derruba: MS-a apagar 1 teste ⇒ A · MS-b `test.skip` em 1 teste ⇒ A · MS-c tirar uma parte do glob ⇒ A · MS-d trocar 1 asserção ⇒ B · MS-e `throw` numa parte ⇒ rc da suíte · MS-f trocar de lugar 1 linha entre 2 testes ⇒ B · MS-g código executável antes do marcador ⇒ B.
 - (a, medido) B provada em `.claude-tmp/gm19/prova-linhas/`: intacto rc 0; MS-f na mesma parte e entre partes rc 1; MS-g rc 1; nos cortes reais, sem executar teste, intacto rc 0 e MS-f rc 1.
 
-**REQ-VEL-1 `loop-cli` em 5 partes; meta local de mediana ≤ 300 s (recomendação, pendente do dono, Q1).** _(Emenda 2026-11-22, r2, F-5.)_
+**REQ-VEL-1 `loop-cli` em 5 partes; meta local de mediana ≤ 300 s (D-G36).** _(Emenda 2026-11-22, r2, F-5.)_
 - Corte, por linha de bfa322ad: helper = `26-195` + `3163-3231` · 1 = `196-1587` · 2 = `1588-2834` · 3 = `2835-3162` + `3232-4815` · 4 = `4816-5635` · 5 = `5636-6925`. (a, medido, run 3) 105, 100, 95, 91 e 46 s de testes.
 - Dado o corte com REQ-SEG-1 verde, Quando medido na condição, Então a mediana cai de ~490 para **≤ 300 s**, com 0 vermelho novo. (M, calculado) Esperado ~241 s. 3 min não é prometido.
 - Dado o resultado, Quando o orquestrador decide, Então:
@@ -160,7 +160,7 @@ Permissão: nenhum REQ cria comando, evento ou caminho de escrita. A guarda e os
 Não cortar (auditoria §4): corpus núcleo × adaptador real e matriz de modo, anel, kill-switch, autonomia (salvo R2, corpo idêntico), guarda-adaptador, hash chain, pares núcleo × CLI, entrypoint-guard, fumaças sem LLM (P9), matriz ubuntu/macOS.
 Aprendizados D para spec: GM-14 seq 143 (fumaça pelo adaptador real fica; furo do mod tem prova real) e seq 139 (tasks com teste comum em sequência) tratados. Seq 140, 141, 142 e 387 não se aplicam: não há render, estado novo nem aceite de clareza.
 
-## Perguntas ao dono (4, pendentes; a recomendação vale só se ele aprovar)
+## Perguntas ao dono (4, respondidas em 2026-11-23: a recomendação em todas, D-G36 a D-G39)
 - **Q1 Meta e escopo de velocidade.** Recomendo só `loop-cli`, com mediana local ≤ 300 s (esperado ~241) e CI sem piora. (M, calculado) Nas 5 integrações de uma GM-18 são ~21 min a menos de 121. Se não: dividir também fumaça e conversa-pontos dá ~202 s calculado (mais ~3 min por entrega dessas), com mais disputa de CPU e 1 task a mais.
 - **Q2 Jobs exigidos na `main`.** Recomendo exigir `mod` e `dist em dia` (8 ⇒ 10 de 11) e deixar `versao-medida` como aviso. Os 2 já rodam em paralelo e medem 92 e 7 s de mediana. É ato do dono no ruleset. Se não: PR com esses 2 vermelhos segue podendo mergear.
 - **Q3 Versão.** Recomendo sem versão e sem virada própria: fica em `next` e chega à `main` com a próxima release, para a `main` não ter conteúdo novo na mesma 2.2.1. (a, lido, `gates/src/trilha.ts:174-178`) Consequência: a GM-19 só encerra sozinha se o PR daquela release casar o ID; senão, por `/gabarito-mestre:encerrar`. Se não: task de virada 2.2.2 por emenda, com PR e release por ordem do dono.

@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking. O loop é o `gabarito-loop` sobre `.harness/entregas/GM-19/plano.json` (rascunho em `.claude-tmp/gm19/plano-rascunho.json`, 3 tasks).
 
-PBI: GM-19 · Epic: não vinculado (pendente do dono, Q4) · Iniciativa: não vinculado (pendente do dono, Q4).
+PBI: GM-19 · Epic: não vinculado (D-G39) · Iniciativa: não vinculado (D-G39).
 
 _(Emenda 2026-11-22, r2, conformidade r1: ~~T2 dividir fumaça e conversa-pontos~~ sai (F-5); fechar furos passa de ~~T3~~ a T2; T3 nova corta os repetidos (F-3); a T1 ganha a prova B (F-4); sai a previsão da CI (F-2) e os números vêm do JUnit (F-1).)_
 
@@ -12,7 +12,7 @@ _(Emenda 2026-11-22, r2, conformidade r1: ~~T2 dividir fumaça e conversa-pontos
 
 **Tech Stack:** `node --test` (Node ≥ 22.18), reporter JUnit do próprio Node, bash, `python3 -I` só na prova local. Nenhuma dependência nova.
 
-**Spec:** `docs/superpowers/specs/2026-11-22-gm19-velocidade-testes-design.md` (r2, não aprovada). Decisão do dono: D-G35. Q1 a Q4 (`spec:163-167`) pendentes do dono. DS9 a DS11 a confirmar pela Sombra.
+**Spec:** `docs/superpowers/specs/2026-11-22-gm19-velocidade-testes-design.md` (r2, não aprovada). Decisão do dono: D-G35. Q1 a Q4 (`spec:163-167`) respondidas: D-G36 a D-G39. DS9 a DS11 aprovadas pela Sombra.
 
 ## Pré-condições (antes da 1ª linha de código)
 
