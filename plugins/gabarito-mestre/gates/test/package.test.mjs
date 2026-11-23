@@ -5,11 +5,14 @@
  *  M1  voltar `version` a 1.0.0
  *  M2  apontar um `bin` para arquivo inexistente
  *  M3  acrescentar uma dependência (zero dependência é contrato)
+ *  MF1-a remover a regra do cabeçalho em mod-test.sh · MF1-b aceitar qualquer `/test/` · MF1-c aceitar falha sem cabeçalho (GM-19: caem em mod-test-outro-arquivo-nao-carrega)
+ *  MF2-a apagar a chamada de texto-nom em texto.test.sh · MF2-b engolir o rc (GM-19: caem em texto-nom-e-chamado-pelo-texto)
+ *  MF3-a tirar o glob `.ts` · MF3-b plantar test/sub/x.test.mjs · MF3-c plantar teste em e2e/ (GM-19: caem em npm-test-cobre-todo-arquivo-de-teste)
  */
 
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, existsSync, mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
+import { readFileSync, readdirSync, existsSync, mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -101,11 +104,50 @@ describe('gates/package.json 1.1.0', () => {
       return spawnSync('bash', [script], { cwd: bin, encoding: 'utf8', env: { ...process.env, PATH: `${bin}:${process.env.PATH}` } }).status;
     };
     const naoCarrega = '(fail) the file did not load';
-    assert.equal(roda(`(pass) x [1ms]\n${naoCarrega}\n${naoCarrega}`), 0, 'só os *.test.ts de gates/ não carregam: é o esperado');
+    const gatesTs = `gates/test/aprendizado.test.ts:\n${naoCarrega}\n  gates/test/aprendizado.test.ts: cannot import node:test\n\ngates/test/depende.test.ts:\n${naoCarrega}`;
+    assert.equal(roda(`(pass) x [1ms]\n${gatesTs}`), 0, 'só os *.test.ts de gates/test não carregam: é o esperado');
     assert.equal(roda(naoCarrega), 1, 'zero teste carregado nunca é verde');
     assert.equal(roda(''), 1, 'saída vazia nunca é verde');
     assert.equal(roda(`(pass) x [1ms]\nmod/test/gabarito.test.ts: cannot load`), 1, 'o arquivo do mod não carregou');
     assert.equal(roda(`(pass) x [1ms]\n(fail) y [2ms]`), 1, 'teste do mod falhando');
+  });
+  test('mod-test-outro-arquivo-nao-carrega: arquivo do mod que não carrega, ou falha sem cabeçalho, reprova (REQ-FURO-1)', { skip: fora }, () => {
+    const script = join(RAIZ, 'plugins', 'gabarito-mestre', 'scripts', 'test', 'mod-test.sh');
+    const roda = (saida) => {
+      const bin = mkdtempSync(join(tmpdir(), 'mod-test-bin-'));
+      writeFileSync(join(bin, 'claude'), `#!/bin/bash\ncat <<'FIM'\n${saida}\nFIM\nexit 1\n`, { mode: 0o755 });
+      return spawnSync('bash', [script], { cwd: bin, encoding: 'utf8', env: { ...process.env, PATH: `${bin}:${process.env.PATH}` } }).status;
+    };
+    const naoCarrega = '(fail) the file did not load';
+    const gatesTs = `gates/test/depende.test.ts:\n${naoCarrega}\n  gates/test/depende.test.ts: cannot import node:test`;
+    const gabaritoOk = 'mod/test/gabarito.test.ts:\n(pass) x [1ms]';
+    assert.equal(roda(`${gatesTs}\n\nmod/test/chat.test.ts:\n${naoCarrega}\n  mod/test/chat.test.ts: cannot import "../x.mjs"\n\n${gabaritoOk}`), 1, 'chat do mod sem carregar, depois dos gates (formato real de F11)');
+    assert.equal(roda(`${gabaritoOk}\n\nmod/test/chat.test.ts:\n${naoCarrega}`), 1, 'chat do mod sem carregar, depois do gabarito');
+    assert.equal(roda(`${gabaritoOk}\n${naoCarrega}`), 1, 'falha de carga sem cabeçalho de arquivo nunca é de gates');
+    assert.equal(roda(`${naoCarrega}\n${gabaritoOk}`), 1, 'falha de carga na 1ª linha, sem cabeçalho');
+    assert.equal(roda(`${gatesTs}\n\n${gabaritoOk}`), 0, 'só os de gates/test sem carregar segue verde');
+  });
+  test('texto-nom-e-chamado-pelo-texto: texto.test.sh roda texto-nom.test.sh sem argumento e propaga o rc (REQ-FURO-2)', { skip: fora }, () => {
+    const t = readFileSync(join(RAIZ, 'plugins', 'gabarito-mestre', 'scripts', 'test', 'texto.test.sh'), 'utf8');
+    const linhas = t.split('\n');
+    const chamada = linhas.filter((l) => l.includes('texto-nom.test.sh') && l.startsWith('check '));
+    assert.deepEqual(chamada, [`check "texto-nom: os casos de NOM-1 de texto-nom.test.sh passam (rc 0)" 'bash "$P/scripts/test/texto-nom.test.sh" >/dev/null 2>&1' "texto-nom.test.sh falhou: rode-o sozinho"`], 'uma só linha check, com a chamada e o rc, sem engolir');
+    const resumo = linhas.findIndex((l) => l.startsWith('echo "── $falhas falha(s)"'));
+    assert.ok(resumo > 0 && linhas.indexOf(chamada[0]) < resumo, 'a chamada vem antes do resumo final');
+    assert.ok(linhas.indexOf(chamada[0]) > linhas.findIndex((l) => l.includes('"${1:-}" = "--fase"')), 'depois dos retornos antecipados de --nom e --fase: sem recursão');
+  });
+  test('npm-test-cobre-todo-arquivo-de-teste: scripts.test é o de hoje e nenhuma subpasta tem teste fora dos globs (REQ-FURO-3)', () => {
+    assert.equal(pkg.scripts.test, 'node --experimental-strip-types --test test/*.test.mjs test/*.test.ts');
+    const achados = [];
+    const anda = (dir, rel) => {
+      for (const e of readdirSync(dir, { withFileTypes: true })) {
+        const r = rel ? `${rel}/${e.name}` : e.name;
+        if (e.isDirectory()) anda(join(dir, e.name), r);
+        else if (rel && /\.test\.(mjs|ts)$/.test(e.name)) achados.push(r);
+      }
+    };
+    anda(join(GATES, 'test'), '');
+    assert.deepEqual(achados, ['e2e/repo-exemplo/test/base.test.mjs'], 'só a fixture de F13 fica numa subpasta; o resto não roda no npm test');
   });
   test('commands/gabarito.md: pausar|retomar sem mod, avisa que a guarda pergunta, sem hatch', { skip: fora }, () => {
     const t = readFileSync(join(RAIZ, 'plugins', 'gabarito-mestre', 'commands', 'gabarito.md'), 'utf8');
