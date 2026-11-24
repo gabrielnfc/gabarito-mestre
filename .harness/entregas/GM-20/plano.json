@@ -138,14 +138,17 @@
       "id": "T8",
       "titulo": "Agente fantasma sai da equipe",
       "deps": [
-        "T3"
+        "T3",
+        "T5"
       ],
       "arquivos": [
         "plugins/gabarito-mestre/gates/src/painel-equipe.ts",
         "plugins/gabarito-mestre/gates/scripts/painel.mjs",
         "plugins/gabarito-mestre/gates/dist/painel-equipe.js",
         "plugins/gabarito-mestre/gates/test/painel-equipe.test.ts",
-        "plugins/gabarito-mestre/gates/test/painel-cli.test.mjs"
+        "plugins/gabarito-mestre/gates/test/painel-cli.test.mjs",
+        "plugins/gabarito-mestre/gates/test/painel.test.ts",
+        "plugins/gabarito-mestre/gates/test/painel-projeto.test.ts"
       ],
       "reqs": [
         "REQ-FAN-1",
@@ -211,7 +214,8 @@
       "titulo": "Card desatualizado: avisa sem escrever",
       "deps": [
         "T5",
-        "T10"
+        "T10",
+        "T8"
       ],
       "arquivos": [
         "plugins/gabarito-mestre/gates/src/projeto.ts",
