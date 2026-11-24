@@ -81,7 +81,7 @@ export type EstadoProjeto = {
   linhas: LinhaProjeto[];
   /** Só com os PBIs abertos em 2 grupos ou mais (contando "sem Epic"); senão `[]`. Ordem: menor ID aberto; "sem Epic" por último. */
   grupos: GrupoEpic[];
-  totais: { pbis: number; feitos: number; foraDaConta: number; opcoes: number; tasks: number; integradas: number; estimadas: number; restantes: number; pct: number | null; pctComEstimadas: number | null; previsao: PrevisaoProjeto };
+  totais: { pbis: number; feitos: number; foraDaConta: number; opcoes: number; /** cards em status terminal sem medição (DT5): fora de linhas, pbis, % e previsão. */ terminais: number; tasks: number; integradas: number; estimadas: number; restantes: number; pct: number | null; pctComEstimadas: number | null; previsao: PrevisaoProjeto };
   avisos: string[];
 };
 
@@ -224,6 +224,27 @@ export function ehFeito(status: string | null, statusCfg?: unknown): boolean {
   return typeof c === 'string' && semAcento(c) !== '' && semAcento(c) === s;
 }
 
+/** DT5 (GM-20): status terminal padrão (card encerrado sem entrega); `fluxo.status.terminais` na config substitui a lista. */
+export const TERMINAIS_PADRAO: readonly string[] = ['Superado', 'Cancelado', 'Descartado'];
+
+/** `fluxo.status.terminais` válido ⇒ a lista (de textos não vazios; `[]` vale e não deixa nada terminal); ausente ⇒ o padrão; qualquer outra forma ⇒ `null` (o chamador avisa e usa o padrão). */
+export function terminaisValidos(cfg: unknown): string[] | null {
+  if (!Array.isArray(cfg)) return null;
+  return cfg.every((x) => typeof x === 'string' && semAcento(x) !== '') ? (cfg as string[]) : null;
+}
+
+/**
+ * Regra única de "terminal" (DT5): o 1º termo do status (até ` — `, ` – `, ` - `, `:` ou `(`), sem acento, caixa nem espaço nas pontas, é um dos terminais.
+ * `terminais` ausente ou inválido ⇒ o padrão. Igualdade do 1º termo inteiro: `Superadoria` não casa `Superado`.
+ */
+export function ehTerminal(status: string | null, terminais?: unknown): boolean {
+  if (status === null) return false;
+  const primeiro = semAcento(status.split(/ [—–-] |:|\(/)[0] ?? '');
+  if (primeiro === '') return false;
+  const lista = terminais === undefined ? TERMINAIS_PADRAO : (terminaisValidos(terminais) ?? TERMINAIS_PADRAO);
+  return lista.some((t) => semAcento(t) === primeiro);
+}
+
 const CHAVE_EPIC = /^[A-Za-z][A-Za-z0-9_-]*$/;
 
 /** `fluxo.vinculoPbiEpic`: só `tipo` = `frontmatter` agrupa; a chave é `nome` (válido) ou `epic`. Outro vínculo (MCP) ou ilegível ⇒ `null`. */
@@ -236,10 +257,11 @@ function chaveEpicDe(vinculo: unknown): string | null {
 
 type Fonte = { idx: number; caminho: string };
 
-export function projetarProjeto(arvores: ArvoreLida[], opcoes: { agoraMs: number; fuso: string; idPadrao?: RegExp; avisos?: string[]; statusFl1?: unknown; opcoesComoContagem?: boolean; vinculo?: unknown; titulosEpic?: Record<string, string> }): EstadoProjeto {
+export function projetarProjeto(arvores: ArvoreLida[], opcoes: { agoraMs: number; fuso: string; idPadrao?: RegExp; avisos?: string[]; statusFl1?: unknown; terminais?: unknown; opcoesComoContagem?: boolean; vinculo?: unknown; titulosEpic?: Record<string, string> }): EstadoProjeto {
   // D-G27: só o booleano `true` liga; a borda lê a config, o núcleo nunca
   const opcoesLigadas = opcoes.opcoesComoContagem === true;
   let nOpcoes = 0;
+  let nTerminais = 0;
   const idPadrao = opcoes.idPadrao ?? ID_PADRAO;
   const chaveEpic = chaveEpicDe(opcoes.vinculo);
   const avisos = [...(opcoes.avisos ?? [])];
@@ -271,6 +293,11 @@ export function projetarProjeto(arvores: ArvoreLida[], opcoes: { agoraMs: number
     eventos.sort((a, b) => msDe(a) - msDe(b) || cmp(String(a.sessao), String(b.sessao)) || a.seq - b.seq);
     // REQ-PRJ-2 (b, c): com a chave ligada, card COM status fora do quadro FL1 é opção (não vira linha); a medição vence o card; diário ilegível conta como medição (nunca ausência)
     const medido = ents.some((e) => e.plano !== null) || ents.some((e) => e.eventos === null) || eventos.some((ev) => TIPOS_DE_TASK.includes(ev.tipo));
+    // GM-20 DT5: terminal ANTES da opção (e vale com a chave ligada ou não); a medição vence, como na opção, e avisa
+    if (card !== null && ehTerminal(card.status, opcoes.terminais)) {
+      if (!medido) { nTerminais++; continue; }
+      avisos.push(`${id}: status terminal com trabalho medido`);
+    }
     if (opcoesLigadas && card !== null && card.status !== null && !ehColunaFl1(card.status, opcoes.statusFl1) && !medido) { nOpcoes++; continue; }
     if (eventos.length > 0) diarios.push({ id, eventos });
     const feito = (card !== null && ehFeito(card.status, opcoes.statusFl1)) || encerrada(eventos);
@@ -337,7 +364,7 @@ export function projetarProjeto(arvores: ArvoreLida[], opcoes: { agoraMs: number
     linhas,
     grupos: gruposDe(linhas, opcoes.titulosEpic),
     totais: {
-      pbis: linhas.length, opcoes: nOpcoes, feitos: linhas.filter((l) => l.feito).length, foraDaConta, tasks, integradas, estimadas, restantes,
+      pbis: linhas.length, opcoes: nOpcoes, terminais: nTerminais, feitos: linhas.filter((l) => l.feito).length, foraDaConta, tasks, integradas, estimadas, restantes,
       pct: tasks > 0 ? Math.round((integradas / tasks) * 100) : null,
       pctComEstimadas: tasks > 0 ? Math.round(((integradas + estimadas) / tasks) * 100) : null,
       previsao: previsaoDoProjeto(linhas, diarios, restantes, opcoes.agoraMs, opcoes.fuso),

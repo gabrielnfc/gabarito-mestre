@@ -396,6 +396,9 @@ function linhasDoProjeto(p               , w        , mot                       
   const med = tt.previsao?.medida ?? null;
   const est = tt.previsao?.estimada ?? null;
   const opcoes = inteiroNaoNeg(tt.opcoes) ?? 0;
+  // GM-20 DT5: cards terminais (Superado, Cancelado…) só aparecem como contagem; ausente (render antigo) ⇒ nada
+  const nEnc = inteiroNaoNeg(tt.terminais) ?? 0;
+  const enc = nEnc > 0 ? ` · ${nEnc} ${nEnc === 1 ? 'encerrado' : 'encerrados'} sem entrega` : '';
   if (w < 44) return { totais: [[seg(`PBIs ${feitos}/${total} · ${pct}`)]], corpo: [] };
   if (w < LARGURA_PROJETO_LINHAS) {
     const prev = est !== null ? `~${t(est.hora)} estimada` : med !== null ? `${t(med.hora)} medida` : '?';
@@ -403,7 +406,7 @@ function linhasDoProjeto(p               , w        , mot                       
     const curta = `PROJETO ${feitos}/${total} PBIs · ${pct} · ${prev}`;
     const opc = opcoes > 0 ? ` · ${textoOpcoes(opcoes)}` : '';
     const semPlano = fora > 0 ? ` · ${fora} sem plano` : '';
-    const vs = [`${curta}${semPlano}${opc}`, `${curta}${opc}`, curta];
+    const vs = [`${curta}${semPlano}${opc}${enc}`, `${curta}${semPlano}${opc}`, `${curta}${opc}`, curta];
     return { totais: [[seg(vs.find((v) => colunas(v) <= w) ?? vs[vs.length - 1])]], corpo: [] };
   }
   // linha 1: contagens (o número nunca é cortado: o que não cabe em `w` sai por variantes mais curtas, a mais longa primeiro)
@@ -412,6 +415,8 @@ function linhasDoProjeto(p               , w        , mot                       
   const base = `PROJETO  ${feitos} de ${total} PBIs feitos · ${tasks}`;
   const opc = opcoes > 0 ? ` · ${textoOpcoes(opcoes)}` : '';
   const variantes = [
+    `${base} · ${ouInterroga(tt.restantes)} restantes${fora > 0 ? ` · ${fora} sem plano, fora da conta` : ''}${opc}${enc}`,
+    `${base} · ${ouInterroga(tt.restantes)} restantes${fora > 0 ? ` · ${fora} sem plano` : ''}${opc}${enc}`,
     `${base} · ${ouInterroga(tt.restantes)} restantes${fora > 0 ? ` · ${fora} sem plano, fora da conta` : ''}${opc}`,
     `${base} · ${ouInterroga(tt.restantes)} restantes${fora > 0 ? ` · ${fora} sem plano` : ''}${opc}`,
     `${base}${fora > 0 ? ` · ${fora} sem plano` : ''}${opc}`,

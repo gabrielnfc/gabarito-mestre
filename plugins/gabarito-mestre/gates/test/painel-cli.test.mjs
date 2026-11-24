@@ -25,6 +25,7 @@ import { aprovarSpec } from '../scripts/loop.mjs';
 import { medir } from '../scripts/painel-medir.mjs';
 import { prepararLeitura as prepararLeituraReal } from '../scripts/entrega.mjs';
 import { fecharPendenciasNoDiario } from './_adaptador-helpers.mjs';
+import { montarNoDisco } from './painel-fixtures/adotado.mjs';
 import { estadoParaDesenho, linhasDaPane } from '../../mod/painel.mjs';
 import { readFileSync as lerArqVersao } from 'node:fs';
 const VERSAO_PLUGIN = JSON.parse(lerArqVersao(new URL('../package.json', import.meta.url), 'utf8')).version;
@@ -1665,5 +1666,50 @@ describe('GM-15 T19: sinal do loop no painel', { timeout: 60_000 }, () => {
     let out = ''; // sem arquivo: sessão que nunca gravou sinal
     assert.equal(main(['texto', '--sessao', 'S7'], m.repo, IO({ saida: (t) => { out += t; } })), 0, out);
     assert.match(out, /ligar o loop automático/, 'sem arquivo');
+  });
+});
+
+// ───────────────────────────── GM-20 T2 (DT5, REQ-TER-1/2, P9): status terminal pelo CLI real, sobre a fixture comum em disco
+// Mutações: MT1-a (sem o `continue`) ⇒ pbis 10 · MT2-a (mescla com o padrão) ⇒ "Arquivado" + Superado ⇒ terminais 3 · borda sem `terminais` ⇒ config ignorada ⇒ pbis 8
+describe('status-terminal-cli: o painel real lê fluxo.status.terminais da config de origin/HEAD', () => {
+  const projetoDe = async (opcoes) => {
+    const dir = join(novoTmp('terminal-'), 'proj');
+    await montarNoDisco(dir, opcoes);
+    const r = spawnSync(process.execPath, [SCRIPT, 'estado'], { cwd: dir, encoding: 'utf8', timeout: 60_000 });
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    const j = JSON.parse(r.stdout);
+    const t = spawnSync(process.execPath, [SCRIPT, 'texto', '--largura', '120'], { cwd: dir, encoding: 'utf8', timeout: 60_000 });
+    assert.equal(t.status, 0, t.stdout + t.stderr);
+    return { projeto: j.estado.projeto, avisos: j.avisos, texto: t.stdout };
+  };
+
+  test('sem config: Superado e Cancelado saem das contas e viram "2 encerrados sem entrega" na linha 1; sem linha deles', async () => {
+    const { projeto, texto } = await projetoDe();
+    assert.equal(projeto.totais.pbis, 8);
+    assert.equal(projeto.totais.terminais, 2);
+    assert.equal(projeto.totais.opcoes, 0);
+    assert.deepEqual(projeto.linhas.filter((l) => l.id === 'PBI-4' || l.id === 'PBI-10'), []);
+    assert.match(texto, /PROJETO .*8 PBIs.*2 encerrados sem entrega/, texto);
+    assert.ok(!/PBI-4|PBI-10/.test(texto), texto);
+  });
+
+  test('com a lista na config: ["Arquivado"] substitui o padrão (Superado e Cancelado voltam); ["Cancelado"] tira só o PBI-10', async () => {
+    const a = await projetoDe({ terminais: ['Arquivado'] });
+    assert.equal(a.projeto.totais.terminais, 0);
+    assert.equal(a.projeto.totais.pbis, 10);
+    assert.deepEqual(a.avisos.filter((x) => /terminais/.test(x)), []);
+    const c = await projetoDe({ terminais: ['Cancelado'] });
+    assert.equal(c.projeto.totais.terminais, 1);
+    assert.equal(c.projeto.totais.pbis, 9);
+    assert.match(c.texto, /1 encerrado sem entrega/, c.texto);
+  });
+
+  test('lista inválida na config: vale o padrão e o painel avisa "fluxo.status.terminais inválido"', async () => {
+    for (const ruim of ['Superado', [1, 2], null]) {
+      const { projeto, avisos } = await projetoDe({ terminais: ruim });
+      assert.equal(projeto.totais.terminais, 2, JSON.stringify(ruim));
+      assert.equal(projeto.totais.pbis, 8);
+      assert.ok(avisos.some((x) => x.startsWith('fluxo.status.terminais inválido')), `${JSON.stringify(ruim)}: ${avisos.join(' | ')}`);
+    }
   });
 });

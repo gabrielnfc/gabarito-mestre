@@ -44,7 +44,7 @@ import { lerX } from '../dist/pouso.js';
 import { sessoesDeRetomada } from '../dist/pouso-pendente.js';
 import { encerramentoDe, idDaBranch, trilhaDe } from '../dist/trilha.js';
 import { proximaEntrega } from '../dist/depende.js';
-import { cardDe, planoMdDoCard, projetarProjeto, worktreesDe } from '../dist/projeto.js';
+import { cardDe, planoMdDoCard, projetarProjeto, terminaisValidos, worktreesDe } from '../dist/projeto.js';
 import { temOnboarding } from './cartao-sessao.mjs';
 import { carregarPlano, checkoutDaSessao, configDoLote, contexto, lerDiarioEstrito, lerSpec, lerSpecs, medicaoDoPouso } from './loop.mjs';
 import { decisaoDe, pausado, prepararLeitura } from './entrega.mjs';
@@ -377,9 +377,15 @@ export function projetoDoRepo({ atual, cfg, idPadrao, agoraMs, fuso, deps = {} }
     avisos.push('fluxo.status.FL1 ilegível: vale o quadro padrão');
     statusFl1 = undefined;
   }
+  // GM-20 DT5: `fluxo.status.terminais` (lista de textos) substitui o padrão; forma inválida avisa e cai no padrão, nunca "ok"
+  let terminais = cfg?.fluxo?.status?.terminais;
+  if (terminais !== undefined && terminaisValidos(terminais) === null) {
+    avisos.push('fluxo.status.terminais inválido: valem Superado, Cancelado e Descartado');
+    terminais = undefined;
+  }
   const vinculo = cfg?.fluxo?.vinculoPbiEpic;
   const titulosEpic = vinculo?.tipo === 'frontmatter' ? titulosDosEpics(atual, cfg?.fluxo?.mapeamento?.FL2, avisos) : {};
-  return projetarProjeto(arvores, { agoraMs, fuso, idPadrao: idRe, avisos, statusFl1, opcoesComoContagem: cfg?.painel?.projeto?.opcoesComoContagem === true, vinculo, titulosEpic });
+  return projetarProjeto(arvores, { agoraMs, fuso, idPadrao: idRe, avisos, statusFl1, terminais, opcoesComoContagem: cfg?.painel?.projeto?.opcoesComoContagem === true, vinculo, titulosEpic });
 }
 
 // ─────────────────────────────────────────────────────────────── pacote de nomes

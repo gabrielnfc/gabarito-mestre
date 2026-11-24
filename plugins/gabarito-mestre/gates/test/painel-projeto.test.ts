@@ -1008,6 +1008,27 @@ test('render-projeto-propriedade-larguras: de 44 a 120 colunas, o número novo n
     }
   }
   assert.ok(viuInteiro && viuSumido, 'a escala real exercita as duas formas (inteiro e sumido) entre 72 e 120');
+  // GM-20 T2 (DT5): "N encerrados sem entrega" entra inteiro ou some inteiro, o número nunca é cortado; com N = 0 o texto não existe
+  const realEnc = comProjeto(estadoComPlano([ini(0, 'T1')]), { ...projetoAdotado(), totais: { ...projetoAdotado().totais, pbis: 103, feitos: 40, foraDaConta: 9, terminais: 12, tasks: 310, integradas: 97, estimadas: 0, restantes: 213, pct: 31, pctComEstimadas: 31 } });
+  let encInteiro = false, encSumido = false;
+  for (let w = 44; w <= 120; w++) {
+    for (const l of totaisDe(realEnc, w)) {
+      assert.ok(colunas(l) <= w, `w=${w} estourou a largura: ${l}`);
+      assert.equal((l.match(/encerrad/g) ?? []).length, (l.match(/12 encerrados sem entrega/g) ?? []).length, `w=${w} "encerrados" cortado: ${l}`);
+      assert.ok(!/(^|[^\d])2 encerrados/.test(l), `w=${w} número cortado: ${l}`);
+    }
+    if (w >= 44) (totaisDe(realEnc, w).some((l) => l.includes('12 encerrados sem entrega')) ? (encInteiro = true) : (encSumido = true));
+    for (const l of totaisDe(comEst, w)) assert.ok(!/encerrad/.test(l), `w=${w} sem terminal não escreve "encerrados": ${l}`);
+  }
+  assert.ok(encInteiro && encSumido, 'a escala real exercita as duas formas do "encerrados sem entrega"');
+  // 1 terminal: singular
+  const um = comProjeto(estadoComPlano([ini(0, 'T1')]), { ...projetoAdotado(), totais: { ...projetoAdotado().totais, terminais: 1 } });
+  assert.ok(totaisDe(um, 120)[0].includes('· 1 encerrado sem entrega'), totaisDe(um, 120)[0]);
+
+  // o render do projeto lido da fixture: Superado e Cancelado não têm linha, o total diz "2 encerrados sem entrega" quando cabe
+  const desenhado = linhas(comProjeto(estadoComPlano([ini(0, 'T1')]), projetoAdotado()), { largura: 120 });
+  assert.ok(!desenhado.some((l) => /PBI-4|PBI-10/.test(l)), 'terminal sem linha');
+  assert.ok(desenhado.some((l) => /8 PBIs feitos|de 8 PBIs/.test(l) && l.includes('2 encerrados sem entrega')), desenhado.filter((l) => /^PROJETO/.test(l)).join('|'));
   // o texto novo aparece inteiro de 72 colunas em diante (a linha de contagens) e some inteiro abaixo (o resumo de 1 linha não o traz)
   for (let w = 44; w <= 120; w++) {
     const tem = totaisDe(comEst, w).some((l) => /\+2 estimadas\)/.test(l));
@@ -1025,8 +1046,9 @@ test('fixture-adotado-em-disco-igual-a-memoria: o repositório de montarNoDisco,
   const r = rodar(base, ['estado']);
   assert.equal(r.rc, 0, r.stdout + r.stderr);
   const t = JSON.parse(r.stdout).estado.projeto.totais;
-  const m = projetoAdotado().totais;
-  for (const k of ['pbis', 'feitos', 'foraDaConta', 'tasks', 'integradas', 'estimadas', 'restantes', 'pct', 'pctComEstimadas'] as const) assert.equal(t[k], m[k], k);
+  // a config da fixture (só "Cancelado" é terminal) chega ao núcleo: a memória usa a mesma lista
+  const m = projetarProjeto([arvoreAdotado() as ArvoreLida], { ...OPC, terminais: ['Cancelado'] }).totais;
+  for (const k of ['pbis', 'feitos', 'foraDaConta', 'terminais', 'tasks', 'integradas', 'estimadas', 'restantes', 'pct', 'pctComEstimadas'] as const) assert.equal(t[k], m[k], k);
   // sem as chaves opcionais a config só aponta o FL1
   const b2 = realpathSync(mkdtempSync(join(tmpdir(), 'adotado-')));
   await montarNoDisco(b2);
