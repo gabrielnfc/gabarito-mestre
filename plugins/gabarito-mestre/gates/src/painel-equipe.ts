@@ -70,7 +70,8 @@ export function casarVivo(agente: unknown, plano: Plano, estados: ReadonlyMap<st
   if (task === null) return { task: null, papel: null, papelExibido: tipo };
   const estado = estados.get(task);
   // GM-20 REQ-FAN-3 (DT9): a task só é do agente depois de sair de `pendente` nesta entrega; sem estado conhecido (diário ilegível) casa como antes.
-  // Exceção: o spike (Task 0 mede antes do `iniciar`, sem evento no diário: `t0-pendente-com-spike-vivo-em-curso`, GM-15)
+  // Exceção (fonte: teste `t0-pendente-com-spike-vivo-em-curso`, painel-equipe.test.ts, regra da GM-15; a GM-20 REQ-FAN-3 não a revoga): o spike
+  // (Task 0 mede antes do `iniciar`, sem evento no diário) segue casando task pendente
   if (estado === 'pendente' && tipo !== 'spike') return { task: null, papel: null, papelExibido: tipo };
   const antigo = DESCRICAO_RE.exec(desc);
   const doEstado = estado === undefined ? undefined : PAPEL_DO_ESTADO[estado];

@@ -328,7 +328,11 @@ test('agente-fora-do-loop: agente vivo sem `loop.mjs iniciar` (task pendente ou 
   const fora = ag.filter((l) => l.includes(ROTULO_FORA_DO_LOOP));
   assert.equal(fora.length, 2, `T3 pendente e o sem task: ${ag.join('\n')}`);
   assert.ok(ag.every((l) => !/sem task/.test(l)), ag.join('\n'));
-  assert.ok(!ag.some((l) => / T3 /.test(l)), 'a T3 não foi iniciada: não é "T3"');
+  // GM-20 REQ-FAN-3 (spec): task pendente não casa; a linha é a de agente sem task (rótulo "fora do loop" + a description do despacho), não a da task T3
+  const t3 = ag.filter((l) => /T3 implementador/.test(l));
+  assert.equal(t3.length, 1, ag.join('\n'));
+  assert.ok(t3[0].includes(ROTULO_FORA_DO_LOOP), t3[0]);
+  assert.ok(ag.filter((l) => / T2 /.test(l)).every((l) => !l.includes(ROTULO_FORA_DO_LOOP)), 'a T2 iniciada segue com a task, sem o rótulo');
   // estreito (44): o rótulo também, sem cortar o nome do agente
   const est = linhas(comProjeto(s, null), { largura: 60 }).filter((l) => /^[├└]─? ● /.test(l));
   assert.ok(est.some((l) => l.includes(ROTULO_FORA_DO_LOOP)), est.join('\n'));
