@@ -182,9 +182,14 @@ export const NENHUMA_PROXIMA = 'nenhuma próxima anotada';
  */
 export function proximaEntrega(specs         , encerradas                     , eventos         )          {
   const seguir = [{ rotulo: 'seguir', comando: CMD_SEGUIR }];
-  const candidatas = (Array.isArray(specs) ? specs : [])
-    .map((x) => obj(x))
-    .filter((x) => typeof x.pbi === 'string' && ENTREGA_SEGURA.test(x.pbi) && typeof x.caminho === 'string' && !encerradas.has(x.pbi))
+  const todas = (Array.isArray(specs) ? specs : []).map((x) => obj(x));
+  // GM-20 T7 (REQ-PRX-1, DT15): o corte é o maior caminho de spec cujo PBI está encerrado; spec mais antiga que ele não é "próxima".
+  let corte                = null;
+  for (const x of todas) {
+    if (typeof x.pbi === 'string' && typeof x.caminho === 'string' && encerradas.has(x.pbi) && (corte === null || cmp(x.caminho, corte) > 0)) corte = x.caminho;
+  }
+  const candidatas = todas
+    .filter((x) => typeof x.pbi === 'string' && ENTREGA_SEGURA.test(x.pbi) && typeof x.caminho === 'string' && !encerradas.has(x.pbi) && (corte === null || cmp(x.caminho, corte) > 0))
     .sort((a, b) => cmp(a.caminho          , b.caminho          ));
   const nova = candidatas[candidatas.length - 1];
   if (nova !== undefined) {

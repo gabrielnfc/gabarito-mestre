@@ -516,10 +516,34 @@ test('proxima-entrega-pura: spec sem encerramento mais nova pelo nome; id insegu
   const specs = [sp('docs/a/2026-01-01-x.md', 'GM-1'), sp('docs/a/2026-03-01-y.md', 'GM-3', 'Painel `x` com_tema'), sp('docs/a/2026-02-01-z.md', 'GM-2'),
     sp('docs/a/2026-04-01-w.md', 'GM 4'), sp('docs/a/2026-05-01-v.md', null)];
   assert.deepEqual(proximaEntrega(specs, new Set(), []), { tipo: 'spec', texto: 'GM-3 Painel x com tema', acoes: [{ rotulo: 'seguir', comando: '/gabarito-mestre:gabarito-loop' }] });
-  assert.equal(proximaEntrega(specs, new Set(['GM-3']), []).texto, 'GM-2 T', 'a encerrada nunca é oferecida (M8b)');
+  assert.equal(proximaEntrega(specs, new Set(['GM-1']), []).texto, 'GM-3 Painel x com tema', 'a encerrada nunca é oferecida (M8b)');
+  assert.equal(proximaEntrega(specs, new Set(['GM-3']), []).tipo, 'nenhuma', 'GM-2 é mais antiga que a encerrada GM-3 (REQ-PRX-1)');
   assert.doesNotMatch(proximaEntrega(specs, new Set(), []).texto, REGEX_TECNICA);
   for (const torto of [null, 7, 'x', [null, 1, { pbi: 'GM-9' }]]) assert.equal(proximaEntrega(torto, new Set(), null).tipo, 'nenhuma');
   assert.deepEqual(proximaEntrega([], new Set(), 'diario torto'), { tipo: 'nenhuma', texto: 'nenhuma próxima anotada', acoes: [] });
+});
+
+// ── GM-20 T7 (REQ-PRX-1): a próxima ignora spec mais antiga que a última entregue ───────────────────────────────────────────────────────
+test('proxima-ignora-spec-antiga: corte = maior caminho de spec encerrada; candidatas só acima dele', () => {
+  const sp = (caminho: string, pbi: string) => ({ caminho, pbi, titulo: 'T', sha256: '', secoes: 1 });
+  const velha = proximaEntrega([sp('docs/s/2026-10-31-a.md', 'GM-9'), sp('docs/s/2026-11-10-b.md', 'GM-13')], new Set(['GM-13']), []);
+  assert.notEqual(velha.tipo, 'spec', 'GM-9 sem diário, anterior à GM-13 encerrada, não é a próxima');
+  assert.deepEqual(velha, { tipo: 'nenhuma', texto: 'nenhuma próxima anotada', acoes: [] });
+  const nova = proximaEntrega([sp('docs/s/2026-11-10-b.md', 'GM-13'), sp('docs/s/2026-11-11-c.md', 'GM-14')], new Set(['GM-13']), []);
+  assert.equal(nova.tipo, 'spec');
+  assert.equal(nova.texto, 'GM-14 T');
+  // a spec encerrada mais nova dita o corte, mesmo com outra encerrada mais antiga e uma candidata entre as duas
+  const meio = proximaEntrega([sp('docs/s/2026-01-01-a.md', 'GM-1'), sp('docs/s/2026-02-01-b.md', 'GM-2'), sp('docs/s/2026-03-01-c.md', 'GM-3')], new Set(['GM-1', 'GM-3']), []);
+  assert.equal(meio.tipo, 'nenhuma', 'GM-2 fica entre as encerradas, abaixo do corte');
+  // mesma data no nome: o corte compara por caminho, a candidata de caminho igual ao corte não existe (a encerrada sai)
+  const sem = proximaEntrega([sp('docs/s/2026-11-10-b.md', 'GM-13'), sp('docs/s/2026-11-10-c.md', 'GM-15')], new Set(['GM-13']), []);
+  assert.equal(sem.texto, 'GM-15 T', 'caminho acima do corte por ordem de nome');
+  // fronteira estrita: candidata com o mesmo caminho do corte não passa (só acima dele)
+  assert.equal(proximaEntrega([sp('docs/s/2026-11-10-b.md', 'GM-13'), sp('docs/s/2026-11-10-b.md', 'GM-14')], new Set(['GM-13']), []).tipo, 'nenhuma');
+  // sem nenhuma encerrada o comportamento é o de antes
+  assert.equal(proximaEntrega([sp('docs/s/2026-10-31-a.md', 'GM-9')], new Set(), []).texto, 'GM-9 T');
+  // encerrada sem spec na lista não corta nada
+  assert.equal(proximaEntrega([sp('docs/s/2026-10-31-a.md', 'GM-9')], new Set(['GM-77']), []).texto, 'GM-9 T');
 });
 
 // ── GM-15 T13 (REQ-AUT-1): o lote do dono, a mesma lista no `proxima` e no DEPENDE ─────────────────────────────────────────────────────────
