@@ -417,6 +417,8 @@ function linhasDoProjeto(p               , w        , mot                       
     `${base}${fora > 0 ? ` · ${fora} sem plano` : ''}${opc}`,
     `${base}${opc}`,
     base,
+    // última: "+N estimadas" some inteiro com o rótulo (REQ-PCT-2: nunca cortado por caractere)
+    `PROJETO  ${feitos} de ${total} PBIs feitos · ${pct} das tasks (${ouInterroga(tt.integradas)} de ${ouInterroga(tt.tasks)})`,
   ];
   const l1 = variantes.find((v) => colunas(v) <= w) ?? variantes[variantes.length - 1];
   // linha 2: a previsão medida (a); linha 3: a parte dos PBIs sem plano, estimada (b), com "~"

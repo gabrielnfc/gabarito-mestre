@@ -918,6 +918,7 @@ test('borda-status-fl1-ilegivel-avisa: `fluxo.status.FL1` que não é objeto avi
 // ───────────────────────────── GM-20 T1 (D-G42, REQ-PCT-2): o % exibido soma as estimadas. Fixture comum: painel-fixtures/adotado.mjs
 // Mutações: MP2-a `nn(tt.pct)` de volta ⇒ render-pct-com-estimadas · MP2-b somar estimadas na previsão ⇒ previsao-sem-estimadas
 //           MP2-c cortar `+N estimadas` por caractere ⇒ render-projeto-propriedade-larguras
+//           MR1 exclusão só pelo status do card ⇒ pct-concluido-por-encerramento-com-plano-md-fora-das-duas-pontas
 
 /** A fixture adotada MAIS um PBI concluído com `plano.json` (2 tasks) sem registro no diário ⇒ 2 estimadas no projeto. */
 function adotadoComEstimadas(): ArvoreLida {
@@ -941,9 +942,29 @@ test('render-pct-com-estimadas: a linha 1 mostra o pctComEstimadas (não o pct m
   const sem = totaisDe(comProjeto(estadoComPlano([ini(0, 'T1')]), projetoAdotado()), 100)[0];
   assert.match(sem, /75% das tasks \(6 de 8\)/, sem);
   assert.ok(!sem.includes('estimadas'), sem);
-  // % ausente (sem task em plano nenhum) segue "?", nunca 0% (e o render tolera o campo novo ausente: lê `pctComEstimadas ?? pct`)
+  // render antigo/campo ausente: lê `pctComEstimadas ?? pct` (aqui o pct medido 60 presente; o "?" de % ausente é coberto no teste de propriedade)
   const antigo = { ...pr, totais: { ...pr.totais, pctComEstimadas: undefined as unknown as number } };
   assert.match(totaisDe(comProjeto(estadoComPlano([ini(0, 'T1')]), antigo), 100)[0], /60% das tasks/);
+});
+
+test('pct-concluido-por-encerramento-com-plano-md-fora-das-duas-pontas: o concluído por `entrega.encerrada` (card ainda "Em execução") com plano .md sai da conta, com ou sem task medida', () => {
+  // MR1: restringir a exclusão ao status do card (`/Conclu/.test(l.status)`) ⇒ cai (este é o caso do relato: card desatualizado + plano antigo)
+  const ev = (seq: number, tipo: string, dados: Record<string, unknown>) => ({ seq, sessao: 's', hash_anterior: null, ts: `2026-11-09T10:0${seq}:00.000Z`, autor: 'x', agente: 'orquestrador', tipo, dados });
+  const md = '# Plano\n\n### Task 1: a\n\nt\n\n### Task 2: b\n\nt\n\n### Task 3: c\n\nt\n';
+  const card = (id: string) => ({ arquivo: `${id}.md`, texto: `---\nid: "${id}"\ntipo: US\nstatus: Em execução\natualizadoEm: "2026-11-09"\n---\n# Card desatualizado ${id}\nFL1 · User Story. Plano: \`docs/superpowers/plans/${id}.md\`.\n`, planoMd: md });
+  const base = projetoAdotado().totais;
+  const a = arvoreAdotado() as ArvoreLida;
+  a.cards.push(card('PBI-12'), card('PBI-13'));
+  // PBI-12: encerrada, sem task medida; PBI-13: encerrada COM 1 task integrada medida (a DT1 diz que o .md não tem diário, mas o código lê: sai igual, literal da D-G42)
+  a.entregas.push({ id: 'PBI-12', plano: null, eventos: [ev(1, 'entrega.encerrada', { entrega: 'PBI-12', pr: 12, via: 'head' })] });
+  a.entregas.push({ id: 'PBI-13', plano: null, eventos: [ev(1, 'task.iniciada', { task: 'T1', papel: 'implementador' }), ev(2, 'task.concluida', { task: 'T1' }), ev(3, 'task.integrada', { task: 'T1' }), ev(4, 'entrega.encerrada', { entrega: 'PBI-13', pr: 13, via: 'head' })] });
+  const pr = projetarProjeto([a], OPC);
+  for (const id of ['PBI-12', 'PBI-13']) {
+    const l = pr.linhas.find((x) => x.id === id);
+    assert.ok(l !== undefined && l.feito === true && l.plano === 'md' && l.tasks !== null, `${id} é feito, plano .md, com tasks na linha`);
+  }
+  assert.equal(pr.totais.feitos, base.feitos + 2);
+  for (const k of ['tasks', 'integradas', 'estimadas', 'restantes'] as const) assert.equal(pr.totais[k], base[k], `${k}: o concluído .md fica fora da conta`);
 });
 
 test('previsao-sem-estimadas: as estimadas entram no % exibido e nunca na previsão medida', () => {
@@ -963,7 +984,7 @@ test('render-projeto-propriedade-larguras: de 44 a 120 colunas, o número novo n
     for (const l of totaisDe(comEst, w)) {
       // "+N estimadas" só inteiro: todo "+<dígito>" da linha é o início de "+N estimadas" completo
       assert.equal((l.match(/\+\d/g) ?? []).length, (l.match(/\+\d+ estimadas/g) ?? []).length, `w=${w} número solto: ${l}`);
-      assert.ok(colunas(l) <= w || w >= 72, `w=${w} estourou a largura: ${l}`);
+      assert.ok(colunas(l) <= w, `w=${w} estourou a largura: ${l}`);
       // o % do projeto, quando aparece, é o com estimadas: 80 (nunca o 60 medido)
       assert.ok(!/(^|[^\d])60%/.test(l), `w=${w} % sem estimadas: ${l}`);
     }
@@ -972,6 +993,21 @@ test('render-projeto-propriedade-larguras: de 44 a 120 colunas, o número novo n
       assert.ok(l.includes('?'), `w=${w} ausente sem "?": ${l}`);
     }
   }
+  // escala real (40 de 103 PBIs, 97 de 310 tasks, +213 estimadas): a linha 1 chega à borda e "+213 estimadas" nunca é cortado por caractere
+  const real = comProjeto(estadoComPlano([ini(0, 'T1')]), { ...projetoAdotado(), totais: { ...projetoAdotado().totais, pbis: 103, feitos: 40, foraDaConta: 9, tasks: 310, integradas: 97, estimadas: 213, restantes: 0, pct: 31, pctComEstimadas: 100 } });
+  let viuInteiro = false, viuSumido = false;
+  for (let w = 44; w <= 120; w++) {
+    for (const l of totaisDe(real, w)) {
+      assert.ok(colunas(l) <= w, `w=${w} estourou a largura: ${l}`);
+      assert.equal((l.match(/\+\d/g) ?? []).length, (l.match(/\+213 estimadas/g) ?? []).length, `w=${w} "+213 estimadas" cortado: ${l}`);
+      if (w >= 72) assert.ok(!/estimad/.test(l.replace(/\+213 estimadas/g, '')), `w=${w} rótulo cortado: ${l}`);
+    }
+    if (w >= 72) {
+      const tem = totaisDe(real, w)[0].includes('+213 estimadas');
+      if (tem) viuInteiro = true; else viuSumido = true;
+    }
+  }
+  assert.ok(viuInteiro && viuSumido, 'a escala real exercita as duas formas (inteiro e sumido) entre 72 e 120');
   // o texto novo aparece inteiro de 72 colunas em diante (a linha de contagens) e some inteiro abaixo (o resumo de 1 linha não o traz)
   for (let w = 44; w <= 120; w++) {
     const tem = totaisDe(comEst, w).some((l) => /\+2 estimadas\)/.test(l));

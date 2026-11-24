@@ -66,7 +66,7 @@ const ciclo = (task, a) => [
 export const EVENTOS = {
   'PBI-5': [...ciclo('T1', 0), ...ciclo('T2', 20), base(40, 'task.iniciada', { task: 'T3', papel: 'implementador' })],
   'PBI-7': [...ciclo('T1', 100), ...ciclo('T2', 120), base(140, 'entrega.encerrada', { entrega: 'PBI-7', pr: 7, via: 'head', mergeado_em: iso(140) })],
-  'PBI-8': [...ciclo('T1', 200), ...ciclo('T2', 220), base(240, 'ci.resultado', { ok: true })],
+  'PBI-8': [...ciclo('T1', 200), ...ciclo('T2', 220), base(240, 'ci.resultado', { verde: true })],
 };
 const SESSAO = 'fixture-adotado';
 
