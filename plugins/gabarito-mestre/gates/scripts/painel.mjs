@@ -299,7 +299,7 @@ function commitMsDe(caminho, rel) {
 /** GM-20 REQ-LEG-1/3: plano antigo do card sem ponteiro, por `fluxo.planosLegados` (padrões já válidos); 2 arquivos ou mais para o mesmo PBI ⇒ não liga e avisa. */
 function legadoDoCard(caminho, textoCard, idRe, legados, avisos) {
   const card = cardDe('', textoCard, idRe);
-  if (card === null) return null;
+  if (card === null || existsFile(join(caminho, '.harness', 'entregas', card.id, 'plano.json'))) return null; // plano.json da entrega vale: o padrão nem é avaliado
   const achados = [];
   for (const { padrao, dir, nomes } of legados) for (const n of planoLegadoDe(nomes(caminho), padrao, card.id) ?? []) achados.push(dir === '' ? n : `${dir}/${n}`);
   const unicos = [...new Set(achados)];
@@ -388,8 +388,9 @@ export function projetoDoRepo({ atual, cfg, idPadrao, agoraMs, fuso, deps = {} }
   if (brutos !== undefined) {
     for (const padrao of Array.isArray(brutos) ? brutos : [brutos]) {
       const v = padraoLegadoValido(padrao);
-      if (v === null) { avisosLeg.push(`planosLegados: padrão inválido "${String(padrao).slice(0, 80)}"`); continue; }
-      legados.push({ padrao, dir: v.dir, nomes: (c) => { try { return readdirSync(join(c, v.dir)); } catch { return []; } } });
+      if (v === null) { const a = `planosLegados: padrão inválido "${String(padrao).slice(0, 80)}"`; if (!avisosLeg.includes(a)) avisosLeg.push(a); continue; }
+      const lidos = new Map();
+      legados.push({ padrao, dir: v.dir, nomes: (c) => { if (!lidos.has(c)) { try { lidos.set(c, readdirSync(join(c, v.dir))); } catch { lidos.set(c, []); } } return lidos.get(c); } });
     }
   }
   const arvores = caminhos.map((c) => lerArvoreDoProjeto(c, fl1, idRe, legados, avisosLeg));

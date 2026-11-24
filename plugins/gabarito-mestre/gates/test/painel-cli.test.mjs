@@ -20,7 +20,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import * as diario from '../dist/diario.js';
 import { renderPainel } from '../dist/painel.js';
 import { paraTexto } from '../dist/painel-texto.js';
-import { estadoDoPainel, lerArgs, lerCauda, lerDiarioEstavel, lerEntradaAgentes, main, sessaoDoMod } from '../scripts/painel.mjs';
+import { estadoDoPainel, projetoDoRepo, lerArgs, lerCauda, lerDiarioEstavel, lerEntradaAgentes, main, sessaoDoMod } from '../scripts/painel.mjs';
 import { aprovarSpec } from '../scripts/loop.mjs';
 import { medir } from '../scripts/painel-medir.mjs';
 import { prepararLeitura as prepararLeituraReal } from '../scripts/entrega.mjs';
@@ -1749,12 +1749,44 @@ describe('plano-legado-cli: o painel real lê fluxo.planosLegados e liga o plano
   });
 
   test('2 arquivos para o mesmo PBI: não liga e avisa "plano antigo ambíguo (2 arquivos)"; PBI-1 não casa PBI-10', async () => {
-    const { projeto, avisos } = await projetoDe({ planosLegados: [PADRAO] }, (dir) => {
+    // `{PBI}*` (sem literal depois do id): só a fronteira `(?!\d)` impede PBI-1 de casar PBI-10-b.md (ML3-c)
+    const { projeto, avisos } = await projetoDe({ planosLegados: ['docs/superpowers/plans/*-{PBI}*.md'] }, (dir) => {
       writeFileSync(join(dir, 'docs/superpowers/plans/2026-11-03-PBI-3-copia.md'), '### Task 1: x\n');
       writeFileSync(join(dir, 'docs/superpowers/plans/2026-11-03-PBI-10-b.md'), '### Task 1: x\n');
     });
     assert.ok(avisos.includes('PBI-3: plano antigo ambíguo (2 arquivos)'), avisos.join(' | '));
     assert.equal(l(projeto, 'PBI-3').texto, 'feito, sem plano');
     assert.equal(l(projeto, 'PBI-1').plano, null, 'PBI-1 não casa PBI-10');
+  });
+
+  test('aviso repetido não duplica: padrão inválido 2x na lista e ambíguo em 2 worktrees saem uma vez só', async () => {
+    const a = join(novoTmp('legado-'), 'a');
+    const b = join(novoTmp('legado-'), 'b');
+    for (const d of [a, b]) {
+      await montarNoDisco(d, { planosLegados: [PADRAO] });
+      writeFileSync(join(d, 'docs/superpowers/plans/2026-11-03-PBI-3-copia.md'), '### Task 1: x\n');
+    }
+    const cfg = { fluxo: { mapeamento: { FL1: 'cards/' }, planosLegados: ['../x/{PBI}.md', '../x/{PBI}.md', PADRAO] } };
+    const lista = `worktree ${a}\n\nworktree ${b}\n`;
+    const r = projetoDoRepo({ atual: a, cfg, idPadrao: '^PBI-\\d+$', agoraMs: Date.parse('2026-11-20T12:00:00Z'), fuso: 'UTC', deps: { worktreeList: () => ({ ok: true, saida: lista }) } });
+    const conta = (t) => r.avisos.filter((x) => x === t).length;
+    assert.equal(conta('PBI-3: plano antigo ambíguo (2 arquivos)'), 1, r.avisos.join(' | '));
+    assert.equal(conta('planosLegados: padrão inválido "../x/{PBI}.md"'), 1, r.avisos.join(' | '));
+  });
+
+  test('PBI com plano.json na entrega: os 2 arquivos legados não geram aviso de ambíguo', async () => {
+    const { avisos } = await projetoDe({ planosLegados: [PADRAO] }, (dir) => {
+      writeFileSync(join(dir, 'docs/superpowers/plans/2026-11-03-PBI-5-a.md'), '### Task 1: x\n');
+      writeFileSync(join(dir, 'docs/superpowers/plans/2026-11-03-PBI-5-b.md'), '### Task 1: x\n');
+    });
+    assert.deepEqual(avisos.filter((x) => /PBI-5.*ambíguo/.test(x)), []);
+  });
+
+  test('`{PBI}` na pasta é padrão inválido (aviso) e `*{PBI}` exige fronteira à esquerda (XPBI-3 não casa PBI-3)', async () => {
+    const { avisos } = await projetoDe({ planosLegados: ['docs/{PBI}/plano.md', 'docs/superpowers/plans/*{PBI}-legado.md'] }, (dir) => {
+      writeFileSync(join(dir, 'docs/superpowers/plans/XPBI-3-legado.md'), '### Task 1: x\n');
+    });
+    assert.ok(avisos.includes('planosLegados: padrão inválido "docs/{PBI}/plano.md"'), avisos.join(' | '));
+    assert.deepEqual(avisos.filter((x) => /ambíguo/.test(x)), [], 'XPBI-3 não casa PBI-3: um único arquivo (o legado de 2026-11-02) liga');
   });
 });

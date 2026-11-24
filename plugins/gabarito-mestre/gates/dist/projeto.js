@@ -6,7 +6,7 @@
  * Regras (emenda 4, itens 1 a 5):
  *  1. fontes = card (status do frontmatter), `plano.json` (ou o plano .md, `### Task N:`, quando não houver `plano.json`) e o diário, em TODAS as
  *     worktrees; falha do git ⇒ só a árvore atual + aviso (`worktreesDe`).
- *  2. PBI sem plano: "sem plano", nunca 0 %; o total diz quantos PBIs ficam fora da conta.
+ *  2. PBI sem plano: "sem plano", nunca 0 %; o total diz quantos PBIs ficam fora da conta (PBI aberto só em formato anterior NÃO entra nesse total: GM-20 DT2, REQ-PCT-3/REQ-LEG-2).
  *  3. totais: % de tasks integradas, restantes e previsão pelo ritmo medido da T30 (`ritmoDasAnteriores`): `medida` (a) só com o que tem plano;
  *     `estimada` (b) soma os PBIs sem plano pela mediana de tasks dos PBIs com plano, sinalizada.
  *  4. entrega sem `plano.json`: "fase não medida" em vez de "FASE n de 7" (`rotuloFase`).
@@ -113,23 +113,23 @@ export function planoMdDoCard(texto        )                {
 }
 
 /**
- * GM-20 REQ-LEG-1/3 (DT3): padrão de plano antigo = pasta literal relativa + nome com `{PBI}` e `*` (só no nome). `..`, absoluto, `**`, `*` na pasta, vazio ⇒ `null`.
+ * GM-20 REQ-LEG-1/3 (DT3): padrão de plano antigo = pasta literal relativa + nome com `{PBI}` e `*` (só no nome; `{PBI}` na pasta é inválido). `..`, absoluto, `**`, `*` na pasta, vazio ⇒ `null`.
  */
 export function padraoLegadoValido(padrao         )                                       {
   if (typeof padrao !== 'string' || padrao === '' || padrao.length > 300 || padrao.includes('\0') || padrao.includes('**')) return null;
   const partes = padrao.split('/');
   const nome = partes[partes.length - 1];
   const pastas = partes.slice(0, -1);
-  if (nome === '' || pastas.includes('..') || pastas.includes('') || pastas.some((p) => p.includes('*') || p === '.')) return null;
+  if (nome === '' || pastas.includes('..') || pastas.includes('') || pastas.some((p) => p.includes('*') || p.includes('{PBI}') || p === '.')) return null;
   return { dir: pastas.join('/'), nome };
 }
 
-/** Os `nomes` (arquivos da pasta do padrão) que casam `padrao` para o PBI `id`; `{PBI}` casa o id seguido de não-dígito ou fim (PBI-1 não casa PBI-10). Padrão inválido ⇒ `null`. */
+/** Os `nomes` (arquivos da pasta do padrão) que casam `padrao` para o PBI `id`; `{PBI}` casa o id sem alfanumérico antes (XPBI-3 não casa PBI-3) e sem dígito depois (PBI-1 não casa PBI-10). Padrão inválido ⇒ `null`. */
 export function planoLegadoDe(nomes          , padrao         , id        )                  {
   const v = padraoLegadoValido(padrao);
   if (v === null) return null;
   const esc = (t        )         => t.replace(/[.+?^$()|[\]\\{}]/g, '\\$&');
-  const re = new RegExp(`^${v.nome.split('{PBI}').map((q) => q.split('*').map(esc).join('[^/]*')).join(`${esc(id)}(?!\\d)`)}$`);
+  const re = new RegExp(`^${v.nome.split('{PBI}').map((q) => q.split('*').map(esc).join('[^/]*')).join(`(?<![A-Za-z0-9])${esc(id)}(?!\\d)`)}$`);
   return nomes.filter((n) => re.test(n));
 }
 
