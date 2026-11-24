@@ -229,7 +229,7 @@ test('projeto-corta-antes-da-entrega: com pouca altura as linhas do projeto saem
   assert.ok(recente.length > 0, cheio.join('\n'));
   assert.ok(cheio.some((l) => /^[├└]─ ● /.test(l)));
   // orçamento que tira SÓ as linhas por PBI: o PLANO, os agentes, o RECENTE e os totais do projeto ficam
-  const sem = linhas(s, { orcamento: cheio.length - 5 });
+  const sem = linhas(s, { orcamento: cru(s).length - 5 });
   assert.equal(sem.filter((l) => /^ {2}[✓●○?] PBI-/.test(l)).length, 0, `as linhas por PBI saem primeiro: ${sem.join('\n')}`);
   assert.equal(sem.filter((l) => /^PROJETO/.test(l)).length, 1);
   assert.equal(sem.filter((l) => /^ {2}✓ 1 feito$/.test(l)).length, 1, 'o feito (6.95) fica quando só as linhas de PBI (6.96) saem');
@@ -238,7 +238,7 @@ test('projeto-corta-antes-da-entrega: com pouca altura as linhas do projeto saem
   assert.equal(sem.filter((l) => /^(\d\d:\d\d|\?) [✓✗●○?] /.test(l)).length, recente.length, 'o RECENTE não perde linha por causa do projeto');
   assert.ok(sem.some((l) => /^CI ●/.test(l)) && sem.some((l) => /orquestra/.test(l)), 'o rodapé e o nome do orquestrador (6.x do E4) ficam: o projeto cai antes deles');
   // mais as linhas dos totais: caem os totais do projeto, nada da entrega (o RECENTE e os agentes seguem)
-  const apertado = linhas(s, { orcamento: cheio.length - nLinhasProjeto(pr) });
+  const apertado = linhas(s, { orcamento: cru(s).length - nLinhasProjeto(pr) });
   assert.equal(doProjeto(apertado).length, 0, apertado.join('\n'));
   assert.equal(apertado.filter((l) => /^(\d\d:\d\d|\?) [✓✗●○?] /.test(l)).length, recente.length);
   assert.ok(apertado.some((l) => /^CI ●/.test(l)) && apertado.some((l) => /^[├└]─ ● /.test(l)));
@@ -707,25 +707,25 @@ test('projeto-altura-7-linhas: com pouca altura saem as linhas de PBI, depois fe
   assert.equal(cheio.filter((l) => PBI.test(l)).length, 3);
   assert.equal(cheio.filter((l) => CAB.test(l)).length, 2);
   // 1: saem só as 3 linhas de PBI (6.96); feitos e cabeçalhos ficam
-  const a = linhas(s, { orcamento: cheio.length - 3 });
+  const a = linhas(s, { orcamento: cru(s).length - 3 });
   assert.equal(a.filter((l) => PBI.test(l)).length, 0, a.join('\n'));
   assert.equal(a.filter((l) => FEITO_RE.test(l)).length, 1);
   assert.equal(a.filter((l) => CAB.test(l)).length, 2);
   assert.equal(a.filter((l) => /^PROJETO/.test(l)).length, 1);
   entregaOk(a);
   // 1b: com 1 linha a mais cortada, sai um cabeçalho (6.95, o último), nunca o feito antes dele: o feito tem a prioridade de cabeçalho, não a de PBI
-  const a2 = linhas(s, { orcamento: cheio.length - 4 });
+  const a2 = linhas(s, { orcamento: cru(s).length - 4 });
   assert.equal(a2.filter((l) => PBI.test(l)).length, 0, a2.join('\n'));
   assert.equal(a2.filter((l) => FEITO_RE.test(l)).length, 1, a2.join('\n'));
   assert.equal(a2.filter((l) => CAB.test(l)).length, 1, a2.join('\n'));
   // 2: saem também o feito e os 2 cabeçalhos (6.95); os totais ficam
-  const b = linhas(s, { orcamento: cheio.length - 6 });
+  const b = linhas(s, { orcamento: cru(s).length - 6 });
   assert.equal(b.filter((l) => FEITO_RE.test(l) || CAB.test(l) || PBI.test(l)).length, 0, b.join('\n'));
   assert.equal(b.filter((l) => /^PROJETO/.test(l)).length, 1);
   assert.equal(b.filter((l) => /^ {2}previsão/.test(l)).length, 1);
   entregaOk(b);
   // 3: por último os totais; a entrega intacta
-  const c = linhas(s, { orcamento: cheio.length - nLinhasProjeto(pr) });
+  const c = linhas(s, { orcamento: cru(s).length - nLinhasProjeto(pr) });
   assert.equal(doProj(c).length, 0, c.join('\n'));
   entregaOk(c);
   // orçamento 7 e 80 colunas (o aceite): nada de linha de PBI, e o corte nunca come a entrega por causa do projeto

@@ -373,6 +373,8 @@ const motivoEm = (w: number) => (m: string): string => (w >= 100 ? ` (${m})` : '
 const LARGURA_PROJETO_LINHAS = 72;
 
 /** Prioridade de corte (D-P8, REQ-PRJ-3 h): totais 6.94, "✓ N feitos" e cabeçalhos de Epic 6.95, linhas de PBI 6.96 (o projeto é o 1º a encolher; as linhas de PBI saem antes). */
+/** GM-20 DT14: separadores entre seções, reservados antes do corte; saem depois das linhas do projeto (6.94 a 6.96). */
+export const PRIORIDADE_SEPARADOR = 6.93;
 export const PRIORIDADE_PROJETO = { totais: 6.94, feitosECabecalhos: 6.95, pbi: 6.96 } as const;
 
 /** `estado.projeto` válido e com `linhas + opções` >= 2 (REQ-PRJ-3 g; sem a chave `opcoes` é 0 ⇒ a regra de hoje); senão `null` (nada desenhado). */
@@ -1143,9 +1145,23 @@ export function renderBlocos(e: EstadoPainel, o: OpcoesRender): Linha[] {
   const reserva: Linha | null = dec === null || dec === undefined || typeof dec !== 'object' ? null : linhaReserva(dec, quemTexto, w);
   if (reserva !== null) secao.set(reserva, 4);
 
+  // GM-20 DT14 (REQ-SEP-1): os separadores entre seções entram em `ls` ANTES do corte, com prioridade 6.93 (depois das linhas do projeto, 6.94 a 6.96; antes de tudo o mais);
+  // antes só usavam as sobras do orçamento e um projeto grande os zerava (M15). `minima` (< 44 colunas) segue sem separador.
+  const seps = new Set<Linha>();
+  if (!minima) {
+    const ord = [...ls].sort((x, y) => x.ordem - y.ordem);
+    let ant = -1;
+    let viu = false;
+    const visita = (sec: number, ordemDe: number): void => {
+      if (viu && sec !== ant) { const sp = separador(w); seps.add(sp); ls.push({ prioridade: PRIORIDADE_SEPARADOR, ordem: ordemDe - 0.5, l: sp }); }
+      ant = sec; viu = true;
+    };
+    for (const x of ord) visita(secao.get(x.l) ?? ant, x.ordem);
+  }
+
   // corte por orçamento (REQ-GLB-1): `orcamento`, senão `altura`; sem os dois, sem corte
   const orc = alturaValida(o.orcamento) ?? alturaValida(o.altura);
-  let cortado: { linhas: Linha[]; cortadasTopo: number } = orc === undefined ? { linhas: ls.map((x) => x.l), cortadasTopo: 0 } : cortarComReserva(ls, orc, reserva, daDecisao);
+  let cortado: { linhas: Linha[]; cortadasTopo: number } = orc === undefined ? { linhas: [...ls].sort((x, y) => x.ordem - y.ordem).map((x) => x.l), cortadasTopo: 0 } : cortarComReserva(ls, orc, reserva, daDecisao);
   // Linha-resumo (T42, emenda 37): só quando há reserva da Sombra, ela NÃO coube e compactar o AGORA (agentes) em 1 linha a faz caber.
   if (orc !== undefined && reserva !== null && !cortado.linhas.includes(reserva) && nVivos >= 1 && agoraAgentes.length >= 2) {
     const recente = ls.filter((x) => x.prioridade === 5).map((x) => x.l);
@@ -1193,13 +1209,19 @@ export function renderBlocos(e: EstadoPainel, o: OpcoesRender): Linha[] {
     return { orig: l, l: [...base, ...(folga ? [seg('…', 'warning')] : []), ...(mais2 !== '' ? [seg(mais2, 'warning')] : [])] };
   });
 
-  // separadores do E4 entre seções, só nas linhas que sobram do orçamento (cortados primeiro, como no E4); < 44 colunas não tem
-  let livres = orc === undefined ? Number.POSITIVE_INFINITY : orc - desenhadas.length;
+  // separadores que sobreviveram ao corte: só entre 2 linhas de texto de seções diferentes, 1 por vão (nunca no topo, no fim nem dobrado); só reduz, nunca passa do orçamento
   const saida: Linha[] = [];
   let anterior = -1;
+  let vaoComSep = false;
+  const reais = desenhadas.filter((d) => !seps.has(d.orig)).length;
+  let vistas = 0;
   for (const d of desenhadas) {
+    if (seps.has(d.orig)) { vaoComSep = true; continue; }
+    vistas++;
     const s = secao.get(d.orig) ?? anterior;
-    if (!minima && saida.length > 0 && s !== anterior && livres > 0) { saida.push(separador(w)); livres--; }
+    // a reserva da Sombra não está em `ls` (entra no corte): seu separador só vem se sobrar linha do orçamento, como antes
+    if (saida.length > 0 && s !== anterior && (vaoComSep || (d.orig === reserva && orc !== undefined && saida.length + 1 + (reais - vistas + 1) <= orc))) saida.push(separador(w));
+    vaoComSep = false;
     saida.push(d.l);
     anterior = s;
   }
