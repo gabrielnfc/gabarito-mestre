@@ -109,7 +109,10 @@
         "plugins/gabarito-mestre/gates/test/encerramento.test.ts",
         "plugins/gabarito-mestre/gates/src/depende.ts",
         "plugins/gabarito-mestre/gates/dist/depende.js",
-        "plugins/gabarito-mestre/gates/test/depende.test.ts"
+        "plugins/gabarito-mestre/gates/test/depende.test.ts",
+        "plugins/gabarito-mestre/gates/src/formas.ts",
+        "plugins/gabarito-mestre/gates/dist/formas.js",
+        "plugins/gabarito-mestre/gates/test/formas.test.ts"
       ],
       "reqs": [
         "REQ-CRD-2"
@@ -152,7 +155,8 @@
       "id": "T9",
       "titulo": "Task executada pelo orquestrador",
       "deps": [
-        "T8"
+        "T8",
+        "T6"
       ],
       "arquivos": [
         "plugins/gabarito-mestre/gates/scripts/loop.mjs",
