@@ -361,7 +361,7 @@ function linhaAgente(a: AgentePainel, larga: boolean, nw: number, vw: number, mw
 // ───────────────────────────── GM-15 T32 (REQ-ENT-2 emenda 4, D-G3): visão de PROJETO, acima da visão de entrega ─────────────────────────────
 //
 // O núcleo é `projeto.ts` (T31, puro); a borda (`painel.mjs`) lê todas as worktrees e cola `estado.projeto`. Aqui só se DESENHA. Aparece com 2 ou mais PBIs/entregas
-// (com 1 só, a visão de entrega já é o projeto). ≥ 72 colunas: totais em 2 ou 3 linhas (contagens · previsão medida · previsão estimada) + 1 linha por PBI; abaixo, 1 linha de totais (D-P8: a visão de entrega
+// (com 1 só, a visão de entrega já é o projeto). ≥ 72 colunas: totais em 2 linhas (contagens · previsão: medida e estimada na mesma linha, GM-20 DT13) + 1 linha por PBI; abaixo, 1 linha de totais (D-P8: a visão de entrega
 // mantém a prioridade dela, o projeto é o 1º a encolher); < 44, só a contagem. Número nunca cortado: o que cede é o título; a linha cortada termina em "…".
 // PBI sem plano: "sem plano", nunca 0 % (o total diz quantos ficam fora da conta). Previsão: "(medida)" = ritmo medido (T30) só do que tem plano;
 // a parte dos PBIs sem plano vem com "~" e "estimadas" (emenda 19 p.5, D-G13), nunca somada ao %.
@@ -426,11 +426,21 @@ function linhasDoProjeto(p: EstadoProjeto, w: number, mot: (m: string) => string
     `PROJETO  ${feitos} de ${total} PBIs feitos · ${pct} das tasks (${ouInterroga(tt.integradas)} de ${ouInterroga(tt.tasks)})`,
   ];
   const l1 = variantes.find((v) => colunas(v) <= w) ?? variantes[variantes.length - 1];
-  // linha 2: a previsão medida (a); linha 3: a parte dos PBIs sem plano, estimada (b), com "~"
+  // linha 2 (GM-20 DT13): UMA linha de previsão. Medida + estimada: as duas horas, e o que não cabe sai por variantes
+  // (primeiro o parêntese com os números, depois a 2ª parte); a hora nunca é cortada. Sem estimada, o texto de sempre.
+  const prevMedida = med !== null ? `  previsão ${t(med.hora)} (medida)` : `  previsão ?${mot(tt.previsao?.ritmoS === null || tt.previsao?.ritmoS === undefined ? 'sem ritmo medido' : 'sem fonte')}`;
+  let prevLinha = prevMedida;
+  if (med !== null && est !== null) {
+    const nTasks = inteiroNaoNeg(Math.round(Number(est.tasks)));
+    const nPbis = inteiroNaoNeg(est.pbisSemPlano);
+    const dois = `  previsão com plano ${t(med.hora)} · com estimativa do resto ~${t(est.hora)}`;
+    const paren = nTasks !== null && nPbis !== null ? ` (~${nTasks} tasks em ${nPbis} PBIs sem plano)` : '';
+    const vs2 = [`${dois}${paren}`, dois, prevMedida];
+    prevLinha = vs2.find((v) => colunas(v) <= w) ?? prevMedida;
+  }
   const totais: Linha[] = [
     [seg(l1)],
-    [seg(med !== null ? `  previsão ${t(med.hora)} (medida)` : `  previsão ?${mot(tt.previsao?.ritmoS === null || tt.previsao?.ritmoS === undefined ? 'sem ritmo medido' : 'sem fonte')}`, 'inactive')],
-    ...(est !== null ? [[seg(`  ${t(est.texto)}`, 'inactive')] as Linha] : []),
+    [seg(prevLinha, 'inactive')],
   ];
   const todas = p.linhas.filter((l): l is LinhaProjeto => l !== null && typeof l === 'object' && typeof l.id === 'string');
   // REQ-PRJ-3 (a): os feitos saem do desenho e entram numa linha só, logo abaixo dos totais; o núcleo segue com as linhas deles

@@ -116,10 +116,10 @@ const SEP = /^─+$/;
 const cru = (s: EstadoPainel, o: Partial<OpcoesRender> = {}): string[] =>
   paraTexto(renderPainel(s, { preset: 'esquadrao', tema: 'mono', narracao: true, largura: 120, ...o }), 'mono').split('\n').filter((l) => l !== '');
 const linhas = (s: EstadoPainel, o: Partial<OpcoesRender> = {}): string[] => cru(s, o).filter((l) => !SEP.test(l));
-const doProjeto = (ls: string[]): string[] => ls.filter((l) => /^PROJETO|^PBIs |^ {2}[✓●○?] PBI-|^ {2}[✓●○?] GM-|^ {2}previsão|^ {2}~\d+ tasks estimadas|^ {2}✓ \d+ feitos?$|· \d+ abertos?$/.test(l));
-/** Linhas do projeto em ≥ 72 colunas: totais, previsão (a), previsão estimada (b) quando há PBI sem plano aberto, e 1 por PBI. */
+const doProjeto = (ls: string[]): string[] => ls.filter((l) => /^PROJETO|^PBIs |^ {2}[✓●○?] PBI-|^ {2}[✓●○?] GM-|^ {2}previsão|^ {2}✓ \d+ feitos?$|· \d+ abertos?$/.test(l));
+/** Linhas do projeto em ≥ 72 colunas: totais, UMA linha de previsão (GM-20 DT13), e 1 por PBI. */
 const nLinhasProjeto = (pr: EstadoProjeto): number =>
-  2 + (pr.totais.previsao.estimada !== null ? 1 : 0) + (pr.totais.feitos > 0 ? 1 : 0) + pr.linhas.filter((l) => !l.feito).length + pr.grupos.length;
+  2 + (pr.totais.feitos > 0 ? 1 : 0) + pr.linhas.filter((l) => !l.feito).length + pr.grupos.length;
 
 // ───────────────────────────── render: a visão de projeto
 
@@ -135,8 +135,8 @@ test('projeto-n-pbis-feitas-total: totais (N de M PBIs feitos, % e restantes) e 
   assert.match(tot, new RegExp(`^PROJETO {2}${t.feitos} de ${t.pbis} PBIs feitos · ${t.pctComEstimadas}% das tasks \\(${t.integradas} de ${t.tasks}\\) · ${t.restantes} restantes`));
   assert.equal(t.pbis, 6);
   assert.equal(t.feitos, 1);
-  assert.equal(nLinhasProjeto(pr), 9, 'fixture GM-15: 2 totais + estimada + feitos + 5 abertos');
-  assert.equal(doProjeto(ls).length, 9);
+  assert.equal(nLinhasProjeto(pr), 8, 'fixture GM-15: 2 totais (previsão numa linha) + feitos + 5 abertos');
+  assert.equal(doProjeto(ls).length, 8);
   // 1 linha por PBI ABERTO, na ordem do projeto (o feito sai do desenho, REQ-PRJ-3 a); id, título do card e o texto da linha (o que o núcleo diz)
   const porPbi = ls.filter((l) => /^ {2}[✓●○?] PBI-/.test(l));
   assert.deepEqual(porPbi.map((l) => /PBI-\d/.exec(l)?.[0]), ['PBI-2', 'PBI-3', 'PBI-4', 'PBI-5', 'PBI-6']);
@@ -150,7 +150,7 @@ test('projeto-n-pbis-feitas-total: totais (N de M PBIs feitos, % e restantes) e 
   // o feito: exatamente 1 linha "✓ 1 feito", logo depois da última linha de totais
   assert.equal(ls.filter((l) => /^ {2}✓ 1 feito$/.test(l)).length, 1, ls.join('\n'));
   const iFeito = ls.findIndex((l) => /^ {2}✓ 1 feito$/.test(l));
-  assert.match(ls[iFeito - 1], /^ {2}~\d+ tasks estimadas/);
+  assert.match(ls[iFeito - 1], /^ {2}previsão com plano .* · com estimativa do resto ~/);
   assert.match(ls[iFeito + 1], /^ {2}● PBI-2 /);
   assert.match(porPbi.find((l) => l.includes('PBI-2 ')) as string, /^ {2}● /);
   assert.match(porPbi.find((l) => l.includes('PBI-3 ')) as string, /^ {2}○ /);
@@ -185,8 +185,9 @@ test('projeto-previsao-medida-e-estimada: a previsão marca "(medida)"; a parte 
   assert.ok(p.medida !== null, 'a fixture tem task integrada (ritmo medido)');
   assert.ok(p.estimada !== null, 'a fixture tem PBI sem plano aberto');
   const ls = linhas(comProjeto(estadoComPlano([ini(0, 'T1')]), pr));
-  assert.ok(ls.includes(`  previsão ${p.medida.hora} (medida)`), ls.join('\n'));
-  assert.ok(ls.includes(`  ${p.estimada.texto}`), ls.join('\n'));
+  assert.equal(ls.filter((l) => /^ {2}previsão/.test(l)).length, 1, 'uma linha só de previsão');
+  assert.ok(ls.includes(`  previsão com plano ${p.medida.hora} · com estimativa do resto ~${p.estimada.hora} (~${Math.round(p.estimada.tasks)} tasks em ${p.estimada.pbisSemPlano} PBIs sem plano)`), ls.join('\n'));
+  assert.ok(!ls.some((l) => /^ {2}~\d+ tasks/.test(l)), ls.join('\n'));
   assert.match(p.estimada.texto, /^~\d+ tasks estimadas em \d+ PBIs sem plano, até ~/);
   // sem task integrada em nenhuma entrega ⇒ "?" com o motivo (≥ 100 colunas), nunca um horário inventado
   const semRitmo = projetarProjeto([{ caminho: '/r', cards: [{ arquivo: 'PBI-1.md', texto: '---\nid: "PBI-1"\nstatus: Em execução\n---\n# A\n', planoMd: null },
@@ -583,7 +584,7 @@ const cardS = (id: string, status: string | null, epic: string | null = null) =>
 const projetoS = (cards: ReturnType<typeof cardS>[], extra: Record<string, unknown> = {}): EstadoProjeto =>
   projetarProjeto([{ caminho: '/r', cards, entregas: [] }], { ...OPC, ...extra } as typeof OPC);
 const estS = (pr: EstadoProjeto | null): EstadoPainel => comProjeto(estadoComPlano([ini(0, 'T1')]), pr);
-const LINHA_PROJ = /^PROJETO|^PBIs |^ {2,4}[✓●○?] PBI-|^ {2}previsão|^ {2}~\d+ tasks estimadas|^ {2}✓ \d+ feitos?$|· \d+ abertos?$/;
+const LINHA_PROJ = /^PROJETO|^PBIs |^ {2,4}[✓●○?] PBI-|^ {2}previsão|^ {2}✓ \d+ feitos?$|· \d+ abertos?$/;
 const doProj = (ls: string[]): string[] => ls.filter((l) => LINHA_PROJ.test(l));
 const LIGADA = { opcoesComoContagem: true };
 const FEITO_RE = /^ {2}✓ \d+ feitos?$/;
@@ -773,7 +774,7 @@ test('teto-de-linhas-propriedade: 40 a 200 colunas × 0 a 100 PBIs, chave ligada
         const tot = pj.find((l) => /^PROJETO|^PBIs /.test(l)) as string;
         assert.ok(tot, `${rotulo}: ${ls.join('\n')}`);
         if (w >= 72) {
-          const teto = 2 + (pr.totais.previsao.estimada !== null ? 1 : 0) + (pr.totais.feitos > 0 ? 1 : 0) + abertos + pr.grupos.length;
+          const teto = 2 + (pr.totais.feitos > 0 ? 1 : 0) + abertos + pr.grupos.length;
           assert.ok(pj.length <= teto, `${rotulo}: ${pj.length} > ${teto}`);
           assert.ok(tot.startsWith(`PROJETO  ${pr.totais.feitos} de ${pr.totais.pbis} PBIs feitos`), `${rotulo}: ${tot}`);
           assert.equal(pj.filter((l) => FEITO_RE.test(l)).length, pr.totais.feitos > 0 ? 1 : 0, rotulo);
@@ -801,12 +802,11 @@ test('regressao-fixture-gm15: com a chave desligada as mesmas linhas de hoje, ex
   assert.equal(pr.totais.opcoes, 0);
   const ls = linhas(estS(pr));
   const dp = doProj(ls);
-  assert.equal(dp.length, 9);
+  assert.equal(dp.length, 8);
   assert.match(dp[0], /^PROJETO {2}1 de 6 PBIs feitos/);
-  assert.match(dp[1], /^ {2}previsão /);
-  assert.match(dp[2], /^ {2}~\d+ tasks estimadas/);
-  assert.equal(dp[3], '  ✓ 1 feito');
-  assert.deepEqual(dp.slice(4).map((l) => /PBI-\d/.exec(l)?.[0]), ['PBI-2', 'PBI-3', 'PBI-4', 'PBI-5', 'PBI-6']);
+  assert.match(dp[1], /^ {2}previsão com plano .* · com estimativa do resto ~/);
+  assert.equal(dp[2], '  ✓ 1 feito');
+  assert.deepEqual(dp.slice(3).map((l) => /PBI-\d/.exec(l)?.[0]), ['PBI-2', 'PBI-3', 'PBI-4', 'PBI-5', 'PBI-6']);
   assert.equal(pr.grupos.length, 0);
   assert.ok(!ls.some((l) => /EPIC|sem Epic|opç/.test(l)));
 });
@@ -974,6 +974,46 @@ test('previsao-sem-estimadas: as estimadas entram no % exibido e nunca na previs
   assert.deepEqual(com.previsao.medida, sem.previsao.medida);
 });
 
+// GM-20 T4 (REQ-PRV-1, DT13): uma linha de previsão
+const comPrevisao = (pr: EstadoProjeto, previsao: Record<string, unknown>): EstadoProjeto => ({ ...pr, totais: { ...pr.totais, previsao } }) as unknown as EstadoProjeto;
+const PREV = (tasks: number, pbis: number) => ({ ritmoS: 600, medida: { restanteS: 3600, hora: '27/11 14:30' }, estimada: { restanteS: 9000, hora: '30/11 18:45', pbisSemPlano: pbis, tasksPorPbi: 3, tasks, texto: `~${tasks} tasks estimadas em ${pbis} PBIs sem plano, até ~30/11 18:45` }, motivo: null });
+const prevLinhas = (s: EstadoPainel, largura: number): string[] => linhas(s, { largura }).filter((l) => /^ {2}previsão|^ {2}~\d+ tasks/.test(l));
+
+test('uma-linha-de-previsao: medida e estimada saem em 1 linha, encurtada por variantes sem cortar hora; sem estimada o texto de hoje; abaixo de 72 nada muda', () => {
+  const base = projetoDaFixture();
+  const completa = '  previsão com plano 27/11 14:30 · com estimativa do resto ~30/11 18:45 (~213 tasks em 60 PBIs sem plano)';
+  const semParen = '  previsão com plano 27/11 14:30 · com estimativa do resto ~30/11 18:45';
+  const soMedida = '  previsão 27/11 14:30 (medida)';
+  const s = comProjeto(estadoComPlano([ini(0, 'T1')]), comPrevisao(base, PREV(213, 60)));
+  assert.deepEqual(prevLinhas(s, 120), [completa]);
+  assert.ok(!linhas(s, { largura: 120 }).some((l) => /^ {2}~\d+ tasks/.test(l)), '0 linhas "~N tasks"');
+  const vistas = new Set<string>();
+  for (let w = 72; w <= 120; w++) {
+    const pl = prevLinhas(s, w);
+    assert.equal(pl.length, 1, `w=${w}: ${pl.join(' | ')}`);
+    assert.ok([completa, semParen, soMedida].includes(pl[0]), `w=${w} variante cortada por caractere: ${pl[0]}`);
+    assert.ok(colunas(pl[0]) <= w, `w=${w} estourou: ${pl[0]}`);
+    assert.equal(pl[0], [completa, semParen, soMedida].find((v) => colunas(v) <= w), `w=${w} não é a mais longa que cabe`);
+    vistas.add(pl[0]);
+  }
+  assert.ok(vistas.has(completa) && vistas.has(semParen), 'a completa e a sem parêntese aparecem entre 72 e 120 (a 3ª só entra abaixo do que o render ≥ 72 alcança)');
+  // só medida (sem PBI sem plano): o texto de hoje
+  const so = comProjeto(estadoComPlano([ini(0, 'T1')]), comPrevisao(base, { ...PREV(0, 0), estimada: null }));
+  assert.deepEqual(prevLinhas(so, 120), [soMedida]);
+  // nenhuma: texto de hoje, com motivo
+  const nada = comProjeto(estadoComPlano([ini(0, 'T1')]), comPrevisao(base, { ritmoS: null, medida: null, estimada: null, motivo: 'x' }));
+  assert.deepEqual(prevLinhas(nada, 120), ['  previsão ? (sem ritmo medido)']);
+  // estimada sem medida (estado que o núcleo não produz, mas o render lê): sem hora inventada, o "?" de hoje
+  const semMed = comProjeto(estadoComPlano([ini(0, 'T1')]), comPrevisao(base, { ...PREV(213, 60), medida: null }));
+  assert.deepEqual(prevLinhas(semMed, 120), ['  previsão ? (sem fonte)']);
+  // abaixo de 72: 1 linha de totais, com a hora estimada como sempre
+  for (let w = 44; w < 72; w++) {
+    assert.equal(prevLinhas(s, w).length, 0, `w=${w}`);
+    assert.match(totaisDe(s, w)[0], /~30\/11 18:45 estimada|PBIs/, `w=${w}`);
+  }
+  assert.match(totaisDe(s, 60)[0], /^PROJETO \d+\/\d+ PBIs · \d+% · ~30\/11 18:45 estimada/);
+});
+
 test('render-projeto-propriedade-larguras: de 44 a 120 colunas, o número novo nunca é cortado e ausente nunca vira 0', () => {
   const comEst = comProjeto(estadoComPlano([ini(0, 'T1')]), projetoAdotado(adotadoComEstimadas()));
   // projeto sem nenhuma task em plano: % ausente
@@ -1020,6 +1060,19 @@ test('render-projeto-propriedade-larguras: de 44 a 120 colunas, o número novo n
     if (w >= 44) (totaisDe(realEnc, w).some((l) => l.includes('12 encerrados sem entrega')) ? (encInteiro = true) : (encSumido = true));
     for (const l of totaisDe(comEst, w)) assert.ok(!/encerrad/.test(l), `w=${w} sem terminal não escreve "encerrados": ${l}`);
   }
+  // GM-20 T4 (REQ-PRV-1): escala real (centenas de tasks e de PBIs) — a linha de previsão chega à borda e a hora nunca é cortada
+  const realPrev = comProjeto(estadoComPlano([ini(0, 'T1')]), comPrevisao({ ...projetoAdotado(), totais: { ...projetoAdotado().totais, pbis: 310, feitos: 140, tasks: 903, integradas: 410, estimadas: 0, restantes: 493, pct: 45, pctComEstimadas: 45 } } as EstadoProjeto, PREV(1480, 207)));
+  const longa = '  previsão com plano 27/11 14:30 · com estimativa do resto ~30/11 18:45 (~1480 tasks em 207 PBIs sem plano)';
+  let prevInteira = false, prevCurta = false;
+  for (let w = 72; w <= 120; w++) {
+    const pl = prevLinhas(realPrev, w);
+    assert.equal(pl.length, 1, `w=${w}: ${pl.join(' | ')}`);
+    assert.ok(colunas(pl[0]) <= w, `w=${w} estourou: ${pl[0]}`);
+    assert.equal((pl[0].match(/\d\d:\d\d/g) ?? []).length, /com estimativa/.test(pl[0]) ? 2 : 1, `w=${w} hora cortada: ${pl[0]}`);
+    if (pl[0] === longa) prevInteira = true; else prevCurta = true;
+    if (/\(~/.test(pl[0])) assert.equal(pl[0], longa, `w=${w} parêntese cortado: ${pl[0]}`);
+  }
+  assert.ok(prevInteira && prevCurta, 'a previsão exercita a forma inteira e as curtas entre 72 e 120');
   assert.ok(encInteiro && encSumido, 'a escala real exercita as duas formas do "encerrados sem entrega"');
   // 1 terminal: singular
   const um = comProjeto(estadoComPlano([ini(0, 'T1')]), { ...projetoAdotado(), totais: { ...projetoAdotado().totais, terminais: 1 } });
