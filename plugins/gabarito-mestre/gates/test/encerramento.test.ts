@@ -96,8 +96,11 @@ test('mergeado-legado-sem-base-nao-encerra (M3c): o #7 do F3 só vale para a fas
   assert.equal(trilhaComPr(prFato(7, 'mergeado', {})).marcas[5], '✓', 'a fase PR da trilha segue como hoje');
 });
 
-test('base-next-nao-encerra (M3a)', () => {
-  assert.equal(podeEncerrar([], ID, mergeado(9, T(5), { base: 'next' })), false);
+test('base-da-entrega-decide (M3a, GM-20 REQ-CRD-2): a base é parâmetro; sem ela, main', () => {
+  assert.equal(podeEncerrar([], ID, mergeado(9, T(5), { base: 'next' })), false, 'sem a base da entrega, é main');
+  assert.equal(podeEncerrar([], ID, mergeado(9, T(5), { base: 'next' }), 'next'), true, 'base next ⇒ encerra com base next');
+  assert.equal(podeEncerrar([], ID, mergeado(9, T(5), { base: 'main' }), 'next'), false, 'base next ⇒ não encerra com base main');
+  assert.equal(podeEncerrar([], ID, mergeado(9, T(5), { base: 'main' }), 'main'), true);
   assert.equal(podeEncerrar([], ID, mergeado(9, T(5), { estado: 'aberto' })), false);
   assert.equal(podeEncerrar([], ID, mergeado(9, T(5))), true);
 });

@@ -783,7 +783,7 @@ test('teste-de-origem-s2-usa-raiz-segura: repo() só cria repositório em base q
 
 // ── GM-15 T4 (REQ-ENT-1 a, c; R2-1): o medir grava o encerramento ────────────────────────────────────────────────────────────────────────────
 // `gh` de fixture (fixtures/gh-encerramento/gh) com os PRs #7, #8, #16, #17, #22 e #23 como no GitHub. MUTAÇÕES: M4a não remedir o `aberto` · M4b gravar em
-// `_sem-id` · M4c `mergeado_em` do relógio local · M4d base `next` aceita na busca por título · M4e fato sem `base` encerrando (EQUIVALENTE no adaptador: `podeEncerrar`, trilha.ts:174, já recusa base≠main; só a T3 a mata) · M4f `via` perdido ·
+// `_sem-id` · M4c `mergeado_em` do relógio local · M4d base `next` aceita na busca por título · M4e fato sem `base` encerrando (EQUIVALENTE no adaptador: `podeEncerrar`, trilha.ts:174, recusa a base ≠ da entrega; só a T3 a mata) · M4f `via` perdido ·
 // X1 sem `casaTitulo` na busca por título · X3 sem `casaTitulo` no `pr view` · X5 título casa qualquer ocorrência do ID (não só o prefixo).
 describe('medir: grava o encerramento da entrega (REQ-ENT-1 a, c)', () => {
   const GH_ENC = join(AQUI, 'fixtures', 'gh-encerramento');
@@ -1145,6 +1145,24 @@ describe('medir: encerra pela base configurada da entrega (REQ-CRD-2)', () => {
     const d2 = repo('enabler/GM-30-outra'); baseNoHead(d2, 'next'); aberto(d2);
     assert.equal(rodaEm(d2, [viaNumero('main')]).ok, true);
     assert.equal(encerradasB(d2, 'GM-30').length, 0);
+  });
+
+  test('a exceção de virada de pré-versão segue valendo com a base configurada (MC2-f: tirar ehViradaDePreVersao da coleta ⇒ cai)', () => {
+    const d = repo(BR); baseNoHead(d, 'next');
+    assert.equal(medirB(d, [pr(43, 'next', { title: 'release(GM-30): 2.3.0-alpha.1' })]).ok, true);
+    assert.equal(encerradasB(d, 'GM-30').length, 0, 'PR de pré-versão na base next não encerra');
+    assert.ok(fatos(d, 'GM-30', 'pr').some((e) => e.dados.valor.numero === 43 && e.dados.valor.pre_versao === '2.3.0-alpha.1'));
+    const d2 = repo(BR); baseNoHead(d2, 'next');
+    assert.equal(medirB(d2, [pr(44, 'next')]).ok, true);
+    assert.deepEqual(encerradasB(d2, 'GM-30').map((e) => e.dados.pr), [44], 'controle: o mesmo PR sem pré-versão encerra');
+  });
+
+  test('o aviso da base (origin sem entrega.base, HEAD declara) sai em `avisos`, sem derrubar ok; sem aviso, o campo não existe', () => {
+    const d = repo(BR); baseNoHead(d, 'next');
+    const r = medirB(d, [pr(42, 'next')]);
+    assert.equal(r.ok, true);
+    assert.ok(Array.isArray(r.avisos) && r.avisos.some((a) => a.includes('origin/HEAD sem entrega.base')), JSON.stringify(r.avisos));
+    assert.equal(medirB(repo(BR), []).avisos, undefined);
   });
 
   test('base divergente origin x HEAD segue resolverBaseEntrega: origin (next) vence o HEAD (main)', () => {

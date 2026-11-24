@@ -264,7 +264,8 @@ function gravarEstadoGh(raiz, chave, gh, emMs) {
 export function medir(cwd, opcoes = {}) {
   const gravados = [];
   const falhas = [];
-  const fim = () => ({ ok: falhas.length === 0, gravados, falhas });
+  const avisosBase = [];
+  const fim = () => ({ ok: falhas.length === 0, gravados, falhas, ...(avisosBase.length > 0 ? { avisos: avisosBase } : {}) });
   const rodar = opcoes.rodar ?? rodarPadrao;
   const timeoutMs = opcoes.timeoutMs ?? TIMEOUT_MS;
   const agora = opcoes.agora ?? Date.now;
@@ -323,7 +324,9 @@ export function medir(cwd, opcoes = {}) {
     const encerrar = []; // PRs candidatos a encerrar a entrega `id` (e a "última conhecida")
     let falhaGh = null;
     // GM-20 T6 (REQ-CRD-2): a base de encerramento é a configurada da entrega (a MESMA regra do comando de entrega), lida 1 vez por execução; nunca lança
-    const baseEntrega = lerBaseDaEntrega(raiz, { lerConfigEntrega, resolverBaseEntrega }).resolvida.base;
+    const lidaBase = lerBaseDaEntrega(raiz, { lerConfigEntrega, resolverBaseEntrega });
+    const baseEntrega = lidaBase.resolvida.base;
+    for (const a of lidaBase.avisos.filter((x) => !String(x).startsWith('nenhuma base declarada'))) avisosBase.push(String(a).slice(0, 160)); // o mesmo sinal do comando de entrega, fora de `falhas` (aviso não derruba `ok`)
     const reIdEntrega = new RegExp(`^(?:${idPadrao})$`);
     const alvoExtra = ultimaSemEncerramento(raiz, id, reIdEntrega);
     /** Mede os PRs de uma entrega: head (se há branch), título e remedição por número do que o diário dá como `aberto`. */
@@ -434,8 +437,7 @@ export function medir(cwd, opcoes = {}) {
         if (!alvo.dir.endsWith(alvo.id)) continue;
         const lido = lerEstrito(alvo.dir);
         if (!lido.ok) { falhas.push(`diario_corrompido: ${lido.motivo}`); break; }
-        // `podeEncerrar` (trilha.ts) ainda fixa `main`; a base configurada já foi conferida na coleta (`encerrar`), então o PR entra com a base normalizada
-        if (!podeEncerrar(lido.eventos, alvo.id, { ...pr, base: 'main' })) continue;
+        if (!podeEncerrar(lido.eventos, alvo.id, pr, baseEntrega)) continue; // a regra única, com a base da entrega (REQ-CRD-2)
         const dados = { entrega: alvo.id, pr: pr.numero, via: pr.via, mergeado_em: pr.mergeado_em };
         gravar(alvo.dir, lido.eventos, [{ tipo: 'entrega.encerrada', dados, valor: dados }]);
       }
