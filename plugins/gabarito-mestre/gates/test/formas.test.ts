@@ -798,6 +798,12 @@ test('formas-quatro-eventos: cada forma válida passa; cada campo lido, trocado,
   ok('entrega.encerrada', { ...ENC, via: 'titulo' });
   for (const m of ['ontem', '2026-11-15', '2026-02-30T10:00:00Z', 7]) ruim('entrega.encerrada', { ...ENC, mergeado_em: m }, /`mergeado_em`/);
   ok('entrega.encerrada', { ...ENC, versao: '2.1.0' });
+  // GM-20 D-G47: `sha` opcional (diário antigo sem ele segue válido), 40 a 64 hex minúsculos
+  ok('entrega.encerrada', { ...ENC, sha: 'a'.repeat(40) });
+  ok('entrega.encerrada', { ...ENC, sha: 'b'.repeat(64) });
+  for (const x of ['', 'A'.repeat(40), 'a'.repeat(39), 'g'.repeat(40), 7, null]) ruim('entrega.encerrada', { ...ENC, sha: x }, /`sha`/);
+  ok('fato.medido', fato('pr', { contem: 'c'.repeat(40) }));
+  for (const x of ['', 'x', 'C'.repeat(40), 7, null]) ruim('fato.medido', fato('pr', { contem: x }), /`contem`/);
   ok('entrega.encerrada', { ...ENC, versao: '2.1.0-alpha.1' });
   for (const v of ['2.1', 'v2.1.0', '', 7]) ruim('entrega.encerrada', { ...ENC, versao: v }, /`versao`/);
   // entrega.reaberta: `em` e `entrega` lidos

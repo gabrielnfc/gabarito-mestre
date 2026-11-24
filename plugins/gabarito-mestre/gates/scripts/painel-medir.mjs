@@ -32,7 +32,8 @@ import { lerConfigEntrega, resolverBaseEntrega } from '../dist/entrega.js';
 import { contexto } from './loop.mjs';
 
 const ID_FORA_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
-const CAMPOS_PR = 'number,state,baseRefName,headRefName,title,mergedAt';
+const CAMPOS_PR = 'number,state,baseRefName,headRefName,title,mergedAt,mergeCommit';
+const SHA_GIT_RE = /^[0-9a-f]{40,64}$/;
 
 /** Item da lista do `gh` ⇒ PR normalizado ou `null` (forma inválida). `base`/`mergeado_em` só existem quando o `gh` os devolve. */
 function prDoGh(p, baseEntrega) {
@@ -41,7 +42,7 @@ function prDoGh(p, baseEntrega) {
   const estado = ESTADOS_GH.get(p.state.toUpperCase());
   const mergeadoEm = typeof p.mergedAt === 'string' && !Number.isNaN(Date.parse(p.mergedAt)) ? p.mergedAt : null;
   if (p.state.toUpperCase() === 'MERGED' && p.baseRefName === baseEntrega && mergeadoEm === null) return null; // sem `mergedAt` não há `mergeado_em` a gravar
-  return { numero: p.number, estado, base: textoLinha(p.baseRefName) ? p.baseRefName : null, head: textoLinha(p.headRefName) ? p.headRefName : null, titulo: typeof p.title === 'string' ? p.title : '', mergeado_em: mergeadoEm };
+  return { numero: p.number, estado, base: textoLinha(p.baseRefName) ? p.baseRefName : null, head: textoLinha(p.headRefName) ? p.headRefName : null, titulo: typeof p.title === 'string' ? p.title : '', mergeado_em: mergeadoEm, sha: typeof p.mergeCommit?.oid === 'string' && SHA_GIT_RE.test(p.mergeCommit.oid) ? p.mergeCommit.oid : null }; // `sha`: o commit de merge (GM-20 D-G47); ilegível ⇒ null, não falha
 }
 
 /** `gh pr list|view` ⇒ `{falha}` ou `{lista}` (normalizada). */
@@ -342,7 +343,7 @@ export function medir(cwd, opcoes = {}) {
       const guarda = (p, via) => {
         if (achados.has(p.numero)) return;
         const comBase = p.base !== null;
-        achados.set(p.numero, { numero: p.numero, estado: p.estado, branch: p.head ?? alvo.branch ?? 'desconhecida', base: p.base, via: comBase ? via : null, mergeado_em: p.mergeado_em, titulo: p.titulo });
+        achados.set(p.numero, { numero: p.numero, estado: p.estado, branch: p.head ?? alvo.branch ?? 'desconhecida', base: p.base, via: comBase ? via : null, mergeado_em: p.mergeado_em, titulo: p.titulo, sha: p.sha });
       };
       if (alvo.branch !== null) {
         const r = ghPrs(rodar, cwd, timeoutMs, ['pr', 'list', `--head=${alvo.branch}`, '--state', 'all', '--limit', '30', '--json', CAMPOS_PR], 'pr list', false, baseEntrega);
@@ -361,6 +362,18 @@ export function medir(cwd, opcoes = {}) {
         // head de outra entrega e título sem o ID (`via` ausente): o fato sai da entrega na releitura (`prs()`)
         guarda(p, porHead ? 'head' : p.base === baseEntrega && p.mergeado_em !== null && casaTitulo(p.titulo) ? 'titulo' : null);
       }
+      // GM-20 D-G47: base ≠ main e já encerrada com sha ⇒ o PR em `main` que contém esse sha (a virada) vira fato `pr` com `contem`; é o que tira o lembrete "levar <base> para main"
+      const shaEnc = alvo.eventos.filter((e) => e?.tipo === 'entrega.encerrada' && e.dados?.entrega === alvo.id && typeof e.dados?.sha === 'string' && SHA_GIT_RE.test(e.dados.sha)).map((e) => e.dados.sha).pop();
+      if (baseEntrega !== 'main' && shaEnc !== undefined) {
+        const m = ghPrs(rodar, cwd, timeoutMs, ['pr', 'list', '--base', 'main', '--state', 'merged', '--search', shaEnc, '--limit', '5', '--json', CAMPOS_PR], 'pr list virada', false, baseEntrega);
+        if (m.falha) return m;
+        for (const p of m.lista) {
+          if (p.base !== 'main' || p.estado !== 'mergeado' || p.mergeado_em === null) continue;
+          const antes = achados.get(p.numero);
+          if (antes !== undefined) antes.contem = shaEnc;
+          else achados.set(p.numero, { numero: p.numero, estado: p.estado, branch: p.head ?? 'desconhecida', base: p.base, via: null, mergeado_em: p.mergeado_em, titulo: p.titulo, sha: p.sha, contem: shaEnc });
+        }
+      }
       return { prs: [...achados.values()] };
     };
     const alvos = [];
@@ -374,6 +387,7 @@ export function medir(cwd, opcoes = {}) {
         const valor = { numero: p.numero, estado: p.estado, branch: p.branch };
         if (p.base !== null) valor.base = p.base;
         if (p.via !== null) valor.via = p.via;
+        if (p.contem !== undefined) valor.contem = p.contem;
         const pv = preVersoesDe(p.titulo, p.branch)[0];
         if (pv !== undefined && pv.length <= 64) valor.pre_versao = pv; // a guarda lê daqui (a MESMA ehViradaDePreVersao)
         deGh.push({ chave: 'pr', fonte: 'gh', valor, alvo });
@@ -438,7 +452,7 @@ export function medir(cwd, opcoes = {}) {
         const lido = lerEstrito(alvo.dir);
         if (!lido.ok) { falhas.push(`diario_corrompido: ${lido.motivo}`); break; }
         if (!podeEncerrar(lido.eventos, alvo.id, pr, baseEntrega)) continue; // a regra única, com a base da entrega (REQ-CRD-2)
-        const dados = { entrega: alvo.id, pr: pr.numero, via: pr.via, mergeado_em: pr.mergeado_em };
+        const dados = { entrega: alvo.id, pr: pr.numero, via: pr.via, mergeado_em: pr.mergeado_em, ...(pr.sha ? { sha: pr.sha } : {}) };
         gravar(alvo.dir, lido.eventos, [{ tipo: 'entrega.encerrada', dados, valor: dados }]);
       }
     }

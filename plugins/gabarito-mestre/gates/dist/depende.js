@@ -377,7 +377,16 @@ export function loteDoDono(plano              , eventos          , cfg          
     .map((p) => item(`decidir a redação da Sombra rejeitada (emenda ${p.seq}, ${p.req}): a Sombra não repropõe nessa âncora`));
   const versao = evs.some((e) => !CONHECIDOS.has(e.tipo)) ? [item(motivoPluginAtras(typeof c.versaoPlugin === 'string' ? c.versaoPlugin : undefined), [{ rotulo: 'atualizar', comando: '/plugin' }])] : [];
   const base = typeof c.base === 'string' && c.base !== '' ? c.base : 'main';
-  const main = tasks.length > 0 && base !== 'main' && c.autonomiaEntrega !== true && !encerrada
+  // GM-20 D-G47 (REQ-CRD-2): encerrada na base ≠ main NÃO tira o lembrete da virada; tira o PR em main, mergeado, que o `painel medir` viu conter o sha da encerrada
+  // (`fato.medido pr` com `contem`). Encerrada sem sha (dono, gh sem `mergeCommit`) mantém o item: não há fato que prove a virada.
+  const shaEnc = evs.filter((e) => e.tipo === 'entrega.encerrada').map((e) => obj(e.dados).sha).filter((x)              => typeof x === 'string' && x !== '').pop();
+  const viradaFeita = shaEnc !== undefined && evs.some((e) => {
+    if (e.tipo !== 'fato.medido') return false;
+    const d = obj(e.dados);
+    const v = obj(d.valor);
+    return d.chave === 'pr' && v.base === 'main' && v.estado === 'mergeado' && v.contem === shaEnc;
+  });
+  const main = tasks.length > 0 && base !== 'main' && c.autonomiaEntrega !== true && !viradaFeita
     ? [item(`no fim da entrega: levar ${higienizar(base)} para main`)] : [];
   return [...teto, ...emendas, ...redacoes, ...versao, ...main];
 }

@@ -575,7 +575,8 @@ test('lote-vazio-sem-item: sem teto, sem emenda, diário conhecido e autonomia d
   assert.deepEqual(loteDoDono(PLANO_LOTE, expandir([]), CFG_LIGADA), []);
   assert.deepEqual(loteDoDono(PLANO_LOTE, expandir([]), { ...CFG_DESLIGADA, base: 'main' }), [], 'base main: o pedido de revisão da entrega já é o item do dono');
   const encerrada: C = { t: 'entrega.encerrada', d: { entrega: 'GM-14', pr: 7, via: 'merge', mergeado_em: '2026-11-11T12:00:00Z' } };
-  assert.deepEqual(loteDoDono(PLANO_LOTE, expandir([encerrada]), CFG_DESLIGADA), [], 'entregue: nada a levar');
+  assert.deepEqual(motivos(loteDoDono(PLANO_LOTE, expandir([encerrada]), CFG_DESLIGADA)), ['no fim da entrega: levar next para main'], 'encerrada na next sem sha: a virada ainda é do dono (D-G47)');
+  assert.deepEqual(loteDoDono(PLANO_LOTE, expandir([encerrada]), { ...CFG_DESLIGADA, base: 'main' }), [], 'base main: encerrada encerra o lembrete como hoje');
   assert.deepEqual(loteDoDono({ entrega: 'GM-14', tasks: [] }, expandir([]), CFG_DESLIGADA), [], 'plano sem task: sem fim previsível');
   assert.deepEqual(motivos(dependeDe(APROVADA, expandir([]), [], OK, false, GIT, [])), ['nada depende de você']);
 });
@@ -714,4 +715,23 @@ test('sem-loop-dinamico-avisa-depende (REQ-POU-4): o painel decidiu que falta o 
   assert.deepEqual(motivos(dependeDe(APROVADA, [], [], OK, { pendente: false, id: null, loop: null, ligarLoop: true }, GIT)), [MOTIVO_LIGAR_LOOP]);
   // com o pedido de /clear e o loop desligado o item é 1 só (o de antes do /clear)
   assert.deepEqual(motivos(dependeDe(APROVADA, [], [], OK, { pendente: true, id: 'S1:2', loop: 'ausente', ligarLoop: true }, GIT)), [MOTIVO_LIGAR_ANTES_DO_CLEAR]);
+});
+
+// ── GM-20 T6 (D-G47, REQ-CRD-2): o lembrete da virada sai pelo PR em main que contém o sha da encerrada ─────────────────────────────────────
+// Mutações: MC2-d item sai com `entrega.encerrada` ⇒ lembrete-da-virada-fica-ate-o-pr-em-main · MC2-e PR em main sem o sha tira o item ⇒ idem
+const SHA_ENC = 'a'.repeat(40);
+const encComSha: C = { t: 'entrega.encerrada', d: { entrega: 'GM-14', pr: 7, via: 'head', mergeado_em: '2026-11-11T12:00:00Z', sha: SHA_ENC } };
+const prEm = (numero: number, base: string, extra: Record<string, unknown> = {}): C =>
+  ({ t: 'fato.medido', d: { chave: 'pr', fonte: 'gh', valor: { numero, estado: 'mergeado', branch: 'next', base, ...extra } } });
+const VIRADA = 'no fim da entrega: levar next para main';
+
+test('lembrete-da-virada-fica-ate-o-pr-em-main: base next, encerrada com sha ⇒ item; só sai com PR mergeado em main que contém o sha', () => {
+  assert.deepEqual(motivos(loteDoDono(PLANO_LOTE, expandir([encComSha]), CFG_DESLIGADA)), [VIRADA], 'encerrada, nenhum PR em main');
+  assert.deepEqual(motivos(loteDoDono(PLANO_LOTE, expandir([encComSha, prEm(9, 'main')]), CFG_DESLIGADA)), [VIRADA], 'PR em main sem `contem` não tira');
+  assert.deepEqual(motivos(loteDoDono(PLANO_LOTE, expandir([encComSha, prEm(9, 'main', { contem: 'b'.repeat(40) })]), CFG_DESLIGADA)), [VIRADA], 'contém OUTRO sha: não tira');
+  assert.deepEqual(motivos(loteDoDono(PLANO_LOTE, expandir([encComSha, prEm(9, 'next', { contem: SHA_ENC })]), CFG_DESLIGADA)), [VIRADA], 'base não é main: não tira');
+  assert.deepEqual(motivos(loteDoDono(PLANO_LOTE, expandir([encComSha, prEm(9, 'main', { contem: SHA_ENC, estado: 'aberto' })]), CFG_DESLIGADA)), [VIRADA], 'não mergeado: não tira');
+  assert.deepEqual(loteDoDono(PLANO_LOTE, expandir([encComSha, prEm(9, 'main', { contem: SHA_ENC })]), CFG_DESLIGADA), [], 'PR em main mergeado que contém o sha: sem item');
+  assert.deepEqual(loteDoDono(PLANO_LOTE, expandir([encComSha]), { ...CFG_DESLIGADA, base: 'main' }), [], 'base main: sem item, como hoje');
+  assert.deepEqual(loteDoDono(PLANO_LOTE, expandir([encComSha]), CFG_LIGADA), [], 'autonomia: sem item, como hoje');
 });
