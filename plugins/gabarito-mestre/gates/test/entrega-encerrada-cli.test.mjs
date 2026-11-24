@@ -228,9 +228,14 @@ test('seguir-oferece-proxima: spec com PBI sem encerramento mais nova ⇒ ideias
   // 1ª ordem: a spec mais nova com PBI sem entrega.encerrada; a já encerrada (GM-33) e a própria (GM-32) nunca são oferecidas
   spec(d, '2026-11-01-antiga.md', 'GM-34', 'Antiga');
   spec(d, '2026-11-20-encerrada.md', 'GM-33', 'Já entregue');
-  spec(d, '2026-11-10-nova.md', 'GM-35', 'Painel `novo` com_tema');
+  spec(d, '2026-11-10-nova.md', 'GM-35', 'Painel antigo');
   spec(d, '2026-11-30-propria.md', 'GM-32', 'A própria');
   w(d, 'GM-33', 'loop', 'entrega.encerrada', { entrega: 'GM-33', pr: 43, via: 'head', mergeado_em: '2026-11-14T11:00:00.000Z' }, '2026-11-14T11:00:01.000Z', 'painel');
+  // GM-20 T7 (REQ-PRX-1, DT15): o corte é a spec da última entregue (2026-11-30); GM-35 (2026-11-10) e GM-34 são mais antigas ⇒ não são "próxima" (cai nas ideias)
+  assert.equal(estado(d).proxima.tipo, 'ideias', 'spec mais antiga que a última entregue fica fora, pela CLI');
+  assert.doesNotMatch(texto(d)[0], /próxima: GM-3[45]/);
+  // a spec mais nova que o corte (2026-12-05) é a oferecida
+  spec(d, '2026-12-05-nova.md', 'GM-35', 'Painel `novo` com_tema');
   e = estado(d);
   assert.deepEqual(e.proxima, { tipo: 'spec', texto: 'GM-35 Painel novo com tema', acoes: [{ rotulo: 'seguir', comando: '/gabarito-mestre:gabarito-loop' }] });
   // GM-15 T32 (emenda 4): a linha única segue 1 linha e é a 1ª (item do dono com o botão "seguir"); com 2 PBIs entregues (GM-32, GM-33) o projeto vem abaixo dela
