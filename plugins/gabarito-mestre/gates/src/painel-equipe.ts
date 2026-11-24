@@ -68,8 +68,11 @@ export function casarVivo(agente: unknown, plano: Plano, estados: ReadonlyMap<st
     if (casa && (task === null || id.length > task.length)) task = id;
   }
   if (task === null) return { task: null, papel: null, papelExibido: tipo };
-  const antigo = DESCRICAO_RE.exec(desc);
   const estado = estados.get(task);
+  // GM-20 REQ-FAN-3 (DT9): a task só é do agente depois de sair de `pendente` nesta entrega; sem estado conhecido (diário ilegível) casa como antes.
+  // Exceção: o spike (Task 0 mede antes do `iniciar`, sem evento no diário: `t0-pendente-com-spike-vivo-em-curso`, GM-15)
+  if (estado === 'pendente' && tipo !== 'spike') return { task: null, papel: null, papelExibido: tipo };
+  const antigo = DESCRICAO_RE.exec(desc);
   const doEstado = estado === undefined ? undefined : PAPEL_DO_ESTADO[estado];
   let papel: Papel | undefined;
   if (antigo !== null) papel = antigo[2] as Papel;
@@ -444,14 +447,35 @@ const familia = (modelo: unknown): string | null => {
 const STATUS_ATIVO: ReadonlySet<string> = new Set(['pending', 'running', 'waiting']);
 export type EstadoVivo = 'ativo' | 'encerrado' | 'desconhecido';
 
-/**
- * Ids que já pararam: `encerrados` do mod (`SubagentStop`) e `custo.medicao` de `subagent:<id>` no diário (plano B). Qualquer dos dois vence o `status`.
- */
-export function idsEncerrados(eventos: Evento[], encerrados?: unknown): Set<string> {
-  const ids = new Set<string>();
+/** GM-20: o hand-back (`custo.medicao` de `subagent:<id>`) mais recente de cada id no diário; `ts` ilegível vale `Infinity` (o hand-back fica, nunca cede). */
+function handbacksDoDiario(eventos: Evento[]): Map<string, number> {
+  const mapa = new Map<string, number>();
   for (const e of Array.isArray(eventos) ? eventos : []) {
-    if (ehObjeto(e) && e.tipo === 'custo.medicao' && typeof e.agente === 'string' && e.agente.startsWith('subagent:') && e.agente.length > 9) ids.add(e.agente.slice(9));
+    if (!ehObjeto(e) || e.tipo !== 'custo.medicao' || typeof e.agente !== 'string' || !e.agente.startsWith('subagent:') || e.agente.length <= 9) continue;
+    const ms = Date.parse(e.ts);
+    const id = e.agente.slice(9);
+    mapa.set(id, Math.max(mapa.get(id) ?? -Infinity, Number.isFinite(ms) ? ms : Infinity));
   }
+  return mapa;
+}
+
+/** GM-20 REQ-FAN-1: `handbacks` da borda (`{id: ms}` das outras entregas e do `_sem-id`) somados aos do diário exibido; fora do contrato ⇒ ignorado. */
+function handbacksDe(eventos: Evento[], extra?: unknown): Map<string, number> {
+  const mapa = handbacksDoDiario(eventos);
+  if (ehObjeto(extra)) {
+    for (const [id, ms] of Object.entries(extra)) {
+      if (id !== '' && typeof ms === 'number' && Number.isFinite(ms)) mapa.set(id, Math.max(mapa.get(id) ?? -Infinity, ms));
+    }
+  }
+  return mapa;
+}
+
+/**
+ * Ids que já pararam: `encerrados` do mod (`SubagentStop`), `custo.medicao` de `subagent:<id>` no diário exibido (plano B) e `handbacks` das outras
+ * entregas lidas pela borda (GM-20). Qualquer deles vence o `status`; a retomada por transcript mais novo é de `resolverAtivos`.
+ */
+export function idsEncerrados(eventos: Evento[], encerrados?: unknown, handbacks?: unknown): Set<string> {
+  const ids = new Set<string>(handbacksDe(eventos, handbacks).keys());
   if (Array.isArray(encerrados)) for (const id of encerrados) if (typeof id === 'string' && id !== '') ids.add(id);
   return ids;
 }
@@ -499,6 +523,10 @@ export type AtivosDaEquipe = {
  */
 /** GM-15 T35 (r.11, D-G11 d): limite FIXO sem sinal de vida (C3). */
 export const SEM_SINAL_MS = 30 * 60_000;
+/** GM-20 REQ-FAN-2 (DT8): sem atividade no transcript há mais de 60 min (> p99 de 29,9 min medido) o agente sai; só com transcript legível. */
+export const SILENCIO_MS = 60 * 60_000;
+/** `atividadeMs` = `mtime` do transcript que a borda leu (`AgenteVivo` não o declara: o campo é só da borda para este arquivo). */
+const atividadeDe = (a: unknown): number | null => (ehObjeto(a) && typeof a.atividadeMs === 'number' && Number.isFinite(a.atividadeMs) ? a.atividadeMs : null);
 /**
  * GM-15 T35 (r.11, C2, C3): agente da EQUIPE (só agente; processo de fundo é do SEGUNDO PLANO, D-G8) que a lista do mod ainda dá por vivo, mas está morto:
  * (a) a task casada já está integrada; ou (b) o mod mediu a última ação ao vivo dele (`acoes`, FIEL-11 b) e nem ela nem o último evento da task no diário
@@ -525,15 +553,27 @@ export function resolverAtivos(plano: Plano, eventos: Evento[] | null, entrada: 
   const estados = estadosDasTasks(plano, ord);
   const vazio: AtivosDaEquipe = { ativos: null, desconhecidos: 0, esperando: [], cobertos: new Set(), estados };
   if (entrada.agentes === null || entrada.agentes === undefined) return vazio;
-  const fim = idsEncerrados(lista, entrada.encerrados);
-  const pares = nomesPorPapel(lista, entrada.pacote);
   const brutos = Array.isArray(entrada.agentes) ? (entrada.agentes as unknown[]) : [];
+  const extra = (entrada as { handbacks?: unknown }).handbacks;
+  const fim = idsEncerrados(lista, entrada.encerrados, extra);
+  // GM-20 REQ-FAN-1: o agente retomado (transcript mexido DEPOIS do hand-back) volta; o `SubagentStop` do mod não cede
+  const handbacks = handbacksDe(lista, extra);
+  const doMod = new Set<string>(Array.isArray(entrada.encerrados) ? (entrada.encerrados as unknown[]).filter((x): x is string => typeof x === 'string') : []);
+  for (const a of brutos) {
+    const id = ehObjeto(a) && typeof a.id === 'string' ? a.id : '';
+    const atividade = atividadeDe(a);
+    const hb = handbacks.get(id);
+    if (id !== '' && !doMod.has(id) && hb !== undefined && atividade !== null && atividade > hb) fim.delete(id);
+  }
+  const pares = nomesPorPapel(lista, entrada.pacote);
   let desconhecidos = 0;
   const ativos: { agente: AgenteVivo; id: string; casamento: Casamento; nome: string | null; i: number }[] = [];
   brutos.forEach((a, i) => {
     const e = estadoDoVivo(a, fim);
     if (e === 'desconhecido') { desconhecidos++; return; }
     if (e === 'encerrado') return;
+    const atividade = atividadeDe(a);
+    if (atividade !== null && typeof entrada.agoraMs === 'number' && entrada.agoraMs - atividade > SILENCIO_MS) return; // GM-20 REQ-FAN-2
     const agente = a as AgenteVivo;
     const casamento = casarVivo(agente, plano, estados);
     if (semSinalDeVida(agente, casamento, estados, lista, entrada)) return;

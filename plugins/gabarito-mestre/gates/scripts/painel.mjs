@@ -208,6 +208,18 @@ function caminhoDoTranscript(item) {
   }
 }
 
+/** GM-20 REQ-FAN-2: o `mtime` (ms) do transcript JÁ validado por `caminhoDoTranscript` (mesma lstat); sem transcript legível ⇒ `null` e a regra de silêncio não vale. */
+function atividadeDoItem(item) {
+  const caminho = caminhoDoTranscript(item);
+  if (caminho === null) return null;
+  try {
+    const ms = lstatSync(caminho).mtimeMs;
+    return Number.isFinite(ms) ? ms : null;
+  } catch {
+    return null;
+  }
+}
+
 function usoDoItem(item) {
   const caminho = caminhoDoTranscript(item);
   if (caminho === null) return null;
@@ -457,12 +469,14 @@ function agentesDe(bruto, nomes = {}) {
   for (const it of bruto) {
     if (!ehObj(it) || typeof it.id !== 'string' || it.id === '' || vistos.has(it.id)) continue;
     vistos.add(it.id);
+    const atividadeMs = atividadeDoItem(it);
     saida.push({
       id: it.id,
       type: typeof it.type === 'string' ? it.type : '',
       description: typeof it.description === 'string' ? it.description : '',
       status: typeof it.status === 'string' ? it.status : 'desconhecido', // status desconhecido conta como vivo
       uso: usoDoItem(it),
+      ...(atividadeMs === null ? {} : { atividadeMs }),
       ...(Object.hasOwn(nomes, it.id) ? { nome: nomes[it.id].nome, vistoEm: nomes[it.id].vistoEm } : {}),
     });
   }
@@ -544,10 +558,11 @@ function atividades(raiz, fontes) {
     nomes = readdirSync(base).filter((n) => !n.startsWith('_')).sort();
   } catch (e) {
     if (!ausenteFs(e)) fontes.push(FONTE.entregas);
-    return { ultimas: [], ultima: null, diarios: [] };
+    return { ultimas: [], ultima: null, diarios: [], handbacks: {} };
   }
   const ultimas = [];
   const diarios = [];
+  const handbacks = Object.create(null);
   let ultima = null;
   for (const id of nomes) {
     const dir = join(base, id);
@@ -555,6 +570,7 @@ function atividades(raiz, fontes) {
     const lido = lerEstrito(dir);
     if (!lido.ok) { fontes.push(FONTE.diarioDe(id)); continue; }
     diarios.push({ id, eventos: lido.eventos });
+    handbacksDe(lido.eventos, handbacks);
     const vistos = new Set();
     let maior = null;
     for (const e of lido.eventos) {
@@ -565,7 +581,27 @@ function atividades(raiz, fontes) {
     }
     if (maior !== null && (ultima === null || maior > ultima.data)) ultima = { id, data: maior, dir, eventos: lido.eventos };
   }
-  return { ultimas, ultima: ultima === null ? null : { id: ultima.id, estado: estadoEmPalavras(ultima.dir, ultima.eventos) }, diarios };
+  // GM-20 REQ-FAN-1: o `_sem-id` (fora do filtro acima) só entra aqui, para estes ids; ausente ≠ corrompido
+  const semId = join(base, '_sem-id');
+  let temSemId = false;
+  try { temSemId = lstatSync(semId).isDirectory(); } catch { /* sem a pasta */ }
+  if (temSemId) {
+    const lido = lerEstrito(semId);
+    if (lido.ok) handbacksDe(lido.eventos, handbacks);
+    else fontes.push(FONTE.diarioDe('_sem-id'));
+  }
+  return { ultimas, ultima: ultima === null ? null : { id: ultima.id, estado: estadoEmPalavras(ultima.dir, ultima.eventos) }, diarios, handbacks };
+}
+
+/** GM-20 REQ-FAN-1: acumula em `saida` o `ts` (ms) mais recente do hand-back (`custo.medicao` de `subagent:<id>`) de cada id; `ts` ilegível não conta. */
+function handbacksDe(eventos, saida) {
+  for (const e of eventos) {
+    if (e?.tipo !== 'custo.medicao' || typeof e.agente !== 'string' || !e.agente.startsWith('subagent:') || e.agente.length <= 9) continue;
+    const ms = Date.parse(e.ts);
+    if (!Number.isFinite(ms)) continue;
+    const id = e.agente.slice(9);
+    if (!Object.hasOwn(saida, id) || ms > saida[id]) saida[id] = ms;
+  }
 }
 
 /** `gh` da entrega pelo `.harness/painel-medir.json` (T11; `estado` só lê): ausente ⇒ `nunca`; corrompido ⇒ `nunca` + fonte que falhou; `falhou` ⇒ o GitHub. */
@@ -718,7 +754,7 @@ export function estadoDoPainel(cwd, opts = {}) {
     if (raiz !== null) {
       try { specs = lerSpecs(sessaoRaiz, idPadrao); } catch (e) { if (typeof e?.erro !== 'string') throw e; fontes.push(FONTE.specs); }
     }
-    const ativ = raiz === null ? { ultimas: [], ultima: null, diarios: [] } : atividades(raiz, fontes);
+    const ativ = raiz === null ? { ultimas: [], ultima: null, diarios: [], handbacks: {} } : atividades(raiz, fontes);
     // GM-15 T8 (REQ-ENT-1 d): a entrega encerrada que o painel mostra: a da branch (ou `--entrega`); sem ela, a última conhecida (a do "sem entrega em
     // curso · última"). A próxima: spec com PBI sem encerramento mais nova ⇒ ideias anotadas na entregue ⇒ nenhuma (regra de `proximaEntrega`).
     const daEntregue = id !== null ? { id, eventos } : ativ.ultima === null ? null : { id: ativ.ultima.id, eventos: ativ.diarios.find((x) => x.id === ativ.ultima.id)?.eventos ?? null };
@@ -813,7 +849,7 @@ export function estadoDoPainel(cwd, opts = {}) {
       limites: { h5: numero(sessao.h5), d7: numero(sessao.d7) },
       x: x.x,
       agentes,
-      ...(extras !== null ? { encerrados: extras.valor.encerrados, acoes: extras.valor.acoes, segundoPlano: extras.valor.segundoPlano } : {}),
+      ...(extras !== null ? { handbacks: ativ.handbacks, encerrados: extras.valor.encerrados, acoes: extras.valor.acoes, segundoPlano: extras.valor.segundoPlano } : {}),
       pacote,
       notificacao: notificacaoDe(sessao.notificacao),
       agoraMs,

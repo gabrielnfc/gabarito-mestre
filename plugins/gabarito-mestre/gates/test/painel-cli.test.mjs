@@ -9,7 +9,7 @@ import { test, describe, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { raizSegura } from './_raiz-segura.mjs';
 import {
-  mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, realpathSync, appendFileSync, copyFileSync, existsSync, symlinkSync, statSync, renameSync,
+  mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, realpathSync, appendFileSync, copyFileSync, existsSync, symlinkSync, statSync, renameSync, utimesSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
@@ -1788,5 +1788,78 @@ describe('plano-legado-cli: o painel real lê fluxo.planosLegados e liga o plano
     });
     assert.ok(avisos.includes('planosLegados: padrão inválido "docs/{PBI}/plano.md"'), avisos.join(' | '));
     assert.deepEqual(avisos.filter((x) => /ambíguo/.test(x)), [], 'XPBI-3 não casa PBI-3: um único arquivo (o legado de 2026-11-02) liga');
+  });
+});
+
+// ---- GM-20 T8 (REQ-FAN-1, 2): agente fantasma pelo CLI real; a fixture do spike B refeita aqui (repo-fantasma e repo-fantasma2) ----
+describe('agente fantasma (GM-20)', { timeout: 120_000 }, () => {
+  const T_HB = Date.UTC(2026, 10, 9, 13, 0, 0);
+  const EM_REVISAO = [['task.iniciada', { task: 'T1', papel: 'implementador' }], ['task.concluida', { task: 'T1', sha: 'a'.repeat(40) }], ['task.iniciada', { task: 'T1', papel: 'revisor' }]];
+  /** Hand-back do agente `ghost01` no diário de OUTRA entrega (`entrega`, ex.: `GM-11` ou `_sem-id`), no instante `T_HB`. */
+  const handback = (m, entrega, id = 'ghost01') => {
+    const dir = join(m.repo, '.harness', 'entregas', entrega);
+    mkdirSync(dir, { recursive: true });
+    const r = diario.append(dir, 'loop', { ts: new Date(T_HB).toISOString(), autor: 't@t.test', sessao: 'loop', agente: `subagent:${id}`, tipo: 'custo.medicao', dados: { papel: 'revisor', modelo: 'claude-opus-4-8', input_tokens: 1, output_tokens: 1 } });
+    assert.ok(r.ok, JSON.stringify(r));
+  };
+  const transcript = (m, id, mtimeMs) => {
+    const d = join(novoTmp('painel fantasma '), 'sessao', 'subagents');
+    mkdirSync(d, { recursive: true });
+    const p = join(d, `agent-${id}.jsonl`);
+    copyFileSync(FIXTURE, p);
+    if (mtimeMs !== undefined) utimesSync(p, new Date(mtimeMs), new Date(mtimeMs));
+    return p;
+  };
+  const agente = (extra = {}) => ({ id: 'ghost01', type: 'gabarito-mestre:gabarito-revisor', description: 'T1 revisor', status: 'running', ...extra });
+  const quem = (m, agentes, agoraMs = AGORA) => estado(m, { agoraMs, agentes: { sessao: { window: 200000 }, agentes } }).estado.equipe.agentes;
+  const dono = (lista) => lista.filter((a) => a.vivo);
+
+  test('fantasma-handback-outra-entrega (CLI, repo-fantasma2): hand-back no diário de outra entrega tira o agente da EQUIPE e do texto', () => {
+    const m = montar({ ...comEventos(EM_REVISAO) });
+    assert.equal(dono(quem(m, [agente()])).length, 1, 'controle: sem hand-back o agente está na EQUIPE');
+    handback(m, 'GM-11');
+    assert.equal(dono(quem(m, [agente()])).length, 0);
+    const r = cli(m, ['texto', '--agentes'], { input: JSON.stringify({ sessao: {}, agentes: [agente()] }) });
+    assert.equal(r.rc, 0, r.stderr);
+    assert.doesNotMatch(r.stdout, /fora do loop/);
+    assert.doesNotMatch(r.stdout, /revisor/i);
+  });
+
+  test('fantasma-handback-sem-id (CLI, repo-fantasma): hand-back em `_sem-id` também tira', () => {
+    const m = montar({ ...comEventos(EM_REVISAO) });
+    handback(m, '_sem-id');
+    assert.equal(dono(quem(m, [agente()])).length, 0);
+    handback(m, 'GM-11', 'outro');
+    assert.equal(dono(quem(m, [agente({ id: 'vivo02' })])).length, 1, 'hand-back de outro id não tira');
+  });
+
+  test('fantasma-retomado-volta (CLI): transcript mexido depois do hand-back devolve o agente; antes, não', () => {
+    const m = montar({ ...comEventos(EM_REVISAO) });
+    handback(m, 'GM-11');
+    const agora = T_HB + 30 * 60_000;
+    assert.equal(dono(quem(m, [agente({ transcript: transcript(m, 'ghost01', T_HB + 60_000) })], agora)).length, 1, 'mtime posterior: retomado');
+    assert.equal(dono(quem(m, [agente({ transcript: transcript(m, 'ghost01', T_HB - 60_000) })], agora)).length, 0, 'mtime anterior: segue fora');
+    assert.equal(dono(quem(m, [agente({ transcript: transcript(m, 'ghost01', T_HB) })], agora)).length, 0, 'mesmo instante: segue fora');
+  });
+
+  test('fantasma-silencio-60-min (CLI): o `mtime` do transcript legível decide; 60 exatos fica, 61 sai; sem transcript legível fica', () => {
+    const m = montar({ ...comEventos(EM_REVISAO) });
+    const min = (n) => AGORA - n * 60_000;
+    assert.equal(dono(quem(m, [agente({ transcript: transcript(m, 'ghost01', min(59)) })])).length, 1);
+    assert.equal(dono(quem(m, [agente({ transcript: transcript(m, 'ghost01', min(60)) })])).length, 1, '60 exatos fica');
+    assert.equal(dono(quem(m, [agente({ transcript: transcript(m, 'ghost01', min(61)) })])).length, 0, '61 sai');
+    assert.equal(dono(quem(m, [agente()])).length, 1, 'sem transcript: fica');
+    assert.equal(dono(quem(m, [agente({ transcript: join(novoTmp('painel fantasma '), 'inexistente', 'subagents', 'agent-ghost01.jsonl') })])).length, 1, 'transcript ilegível: fica');
+    // fora da forma (outro id): não é legível, a regra não vale
+    const fora = transcript(m, 'outro', min(300));
+    assert.equal(dono(quem(m, [agente({ transcript: fora })])).length, 1);
+  });
+
+  test('fantasma-nao-pendente (CLI): agente de task pendente não vira `● em curso` no PLANO', () => {
+    const m = montar({});
+    const e = estado(m, { agentes: { sessao: {}, agentes: [agente()] } }).estado;
+    assert.equal(e.plano.tasks.find((t) => t.id === 'T1').glifo, '○');
+    const com = estado(montar({ ...comEventos(EM_REVISAO) }), { agentes: { sessao: {}, agentes: [agente()] } }).estado;
+    assert.equal(com.plano.tasks.find((t) => t.id === 'T1').glifo, '●');
   });
 });
