@@ -89,10 +89,12 @@
       "arquivos": [
         "plugins/gabarito-mestre/gates/src/painel-esquadrao.ts",
         "plugins/gabarito-mestre/gates/dist/painel-esquadrao.js",
-        "plugins/gabarito-mestre/gates/test/painel-altura.test.ts"
+        "plugins/gabarito-mestre/gates/test/painel-altura.test.ts",
+        "plugins/gabarito-mestre/gates/test/painel-projeto.test.ts"
       ],
       "reqs": [
-        "REQ-SEP-1"
+        "REQ-SEP-1",
+        "REQ-PRV-1"
       ]
     },
     {

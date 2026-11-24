@@ -27,3 +27,9 @@ Insumo: `.claude-tmp/gm20/spike-a.md` e `.claude-tmp/gm20/spike-b.md`.
 Insumo: review T6 r1 MAJOR-2 e decisão da Sombra (hash 56c73eb3, fora_da_regra): com o REQ-CRD-2 a entrega encerra no merge para a base configurada e o item do dono "no fim da entrega: levar <base> para main" (`depende.ts:373-375`) sumiria antes da virada.
 
 - **D-G47:** "PR da virada mergeado em main (Recomendado)". O item fica no lote do dono depois do `entrega.encerrada` pela base configurada e só sai quando o `painel medir` vê um PR com base `main` mergeado que contém o commit de encerramento da entrega.
+
+## Resposta do dono sobre o texto da estimada (2026-11-24, sessão 15480378, AskUserQuestion)
+
+Insumo: review T3 r1 MAJOR-1 e decisão da Sombra (hash 4e10ca8c): o PBI aberto em formato anterior sai do total "N sem plano" (DT2, REQ-LEG-2), mas entra na estimada, cujo texto (DT13) diz "em M PBIs sem plano"; a tela mostra "1 sem plano" e "2 PBIs sem plano".
+
+- **D-G48:** "Trocar texto para 'sem medida' (Recomendado)". O parêntese da estimada passa a dizer `(~N tasks em M PBIs sem medida)`, contando sem plano e formato anterior; o total "N sem plano" não muda. Emenda à DT13, só texto.
