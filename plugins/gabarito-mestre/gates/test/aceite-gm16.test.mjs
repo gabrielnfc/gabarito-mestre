@@ -195,9 +195,9 @@ describe('aceite-gm16-repo-grande', () => {
       assert.ok(l, `${p.card} é linha`);
       if (p.tasks === 0) {
         assert.equal(l.tasks, null, `${p.card}: plano sem cabeçalho fica fora da conta`);
-        assert.equal(l.plano, null);
-        assert.equal(l.semPlano, true);
-        assert.equal(l.texto, 'sem plano');
+        assert.equal(l.plano, 'md');
+        assert.equal(l.semPlano, false);
+        assert.equal(l.texto, 'plano (formato anterior)');
         continue;
       }
       comTask++;
@@ -213,8 +213,8 @@ describe('aceite-gm16-repo-grande', () => {
     assert.equal(proj.totais.tasks, N_CABECALHOS);
     assert.equal(proj.totais.restantes, N_CABECALHOS);
     assert.equal(proj.totais.integradas, 0);
-    // os sem plano: abertos sem `Plano:` (5) e o plano sem cabeçalho (1); o feito sem plano não conta (GM-20 REQ-PCT-3)
-    assert.equal(proj.totais.foraDaConta, N_ABERTOS - N_PLANOS + 1 + (proj.linhas.length === N_CARDS ? N_OPCOES : 0));
+    // os sem plano: abertos sem `Plano:` (5) (o plano sem cabeçalho agora é "formato anterior", fora do sem plano, GM-20 REQ-LEG-2); o feito sem plano não conta (GM-20 REQ-PCT-3)
+    assert.equal(proj.totais.foraDaConta, N_ABERTOS - N_PLANOS + (proj.linhas.length === N_CARDS ? N_OPCOES : 0));
   }
 
   describe('doctor (CLI real): os 2 avisos e o nível não muda', () => {

@@ -42,7 +42,7 @@ import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  cardDe, colunasFl1, ehColunaFl1, ehFeito, ehTerminal, planoMdDoCard, projetarProjeto, ROTULO_FASE_NAO_MEDIDA, ROTULO_FORA_DO_LOOP, rotuloAgente, rotuloFase, tasksDoPlanoMd, terminaisValidos, worktreesDe,
+  cardDe, colunasFl1, ehColunaFl1, ehFeito, ehTerminal, planoMdDoCard, projetarProjeto, padraoLegadoValido, planoLegadoDe, ROTULO_FASE_NAO_MEDIDA, ROTULO_FORA_DO_LOOP, rotuloAgente, rotuloFase, tasksDoPlanoMd, terminaisValidos, worktreesDe,
 } from '../src/projeto.ts';
 import type { ArvoreLida, EstadoProjeto, LinhaProjeto } from '../src/projeto.ts';
 import type { Evento } from '../src/tipos.ts';
@@ -693,8 +693,8 @@ test('sem-plano-conta-so-abertos: foraDaConta são os abertos sem plano; os feit
   const e = projetarProjeto([arvoreAdotado() as ArvoreLida], OPC);
   const semPlano = e.linhas.filter((l) => l.semPlano);
   assert.deepEqual(semPlano.filter((l) => l.feito).map((l) => l.id), ['PBI-1', 'PBI-3'], 'a fixture tem 2 feitos sem plano');
-  assert.deepEqual(semPlano.filter((l) => !l.feito).map((l) => l.id), ['PBI-6', 'PBI-9']);
-  assert.equal(e.totais.foraDaConta, 2);
+  assert.deepEqual(semPlano.filter((l) => !l.feito).map((l) => l.id), ['PBI-6'], 'PBI-9 é plano no formato anterior (GM-20 T3), não sem plano');
+  assert.equal(e.totais.foraDaConta, 1);
   assert.equal(e.totais.feitos, 4);
   assert.equal(e.totais.pbis, 8);
 });
@@ -769,4 +769,69 @@ test('status-terminal-config: a lista da config SUBSTITUI o padrão; inválida c
   assert.equal(ehTerminal('Arquivado: obsoleto', ['arquivado']), true);
   assert.equal(ehTerminal('Superado', ['Arquivado']), false);
   assert.equal(ehTerminal('Superado', 'inválido'), true, 'config inválida ⇒ padrão');
+});
+
+// ───────────────────────────── GM-20 T3 (REQ-LEG-1/2/3, DT3, DT4): plano no formato anterior
+// Mutações: ML1-a tirar o fallback do padrão (campo `planoLegado` ignorado) · ML1-b padrão antes do ponteiro · ML2-a marcar `semPlano` no .md sem task
+//           ML2-b aceitar `## Task 1` sem separador (cai plano-md-nao-casa) · ML3-a aceitar `..` · ML3-b ligar o 1º do ambíguo (borda) · ML3-c `{PBI}` sem fronteira
+
+const CARD_LEG = (id: string, status: string, plano = 'a escrever'): string => `---\nid: "${id}"\nstatus: ${status}\natualizadoEm: "2026-11-02"\n---\n# Legado\nPlano: ${plano}.\n`;
+
+test('plano-legado-por-padrao: card sem ponteiro com planoLegado vira plano md; ponteiro vale mais; json vale mais', () => {
+  const md = '# P\n\n### Task 1: a\n\n### Task 2: b\n';
+  const outro = '### Task 1: x\n';
+  const leg = { caminho: 'docs/plans/2026-11-02-PBI-3-x.md', texto: md };
+  const sem = projetarProjeto([{ caminho: '/r', cards: [{ arquivo: 'PBI-3.md', texto: CARD_LEG('PBI-3', 'Concluído'), planoMd: null, planoLegado: leg }], entregas: [] }], OPC);
+  assert.equal(linha(sem, 'PBI-3').plano, 'md');
+  assert.equal(linha(sem, 'PBI-3').semPlano, false);
+  assert.deepEqual(linha(sem, 'PBI-3').tasks, { total: 2, integradas: 0, estimadas: 2, restantes: 0, fora: 0 });
+  // chave ausente: nada muda
+  const nada = projetarProjeto([{ caminho: '/r', cards: [{ arquivo: 'PBI-3.md', texto: CARD_LEG('PBI-3', 'Concluído'), planoMd: null }], entregas: [] }], OPC);
+  assert.equal(linha(nada, 'PBI-3').texto, 'feito, sem plano');
+  // ponteiro vence o padrão
+  const pont = projetarProjeto([{ caminho: '/r', cards: [{ arquivo: 'PBI-3.md', texto: CARD_LEG('PBI-3', 'Preparado', '`p.md`'), planoMd: outro, planoLegado: leg }], entregas: [] }], OPC);
+  assert.equal(linha(pont, 'PBI-3').tasks?.total, 1);
+  // ponteiro para arquivo ausente não cai no padrão
+  const aus = projetarProjeto([{ caminho: '/r', cards: [{ arquivo: 'PBI-3.md', texto: CARD_LEG('PBI-3', 'Preparado', '`p.md`'), planoMd: null, planoLegado: leg }], entregas: [] }], OPC);
+  assert.match(linha(aus, 'PBI-3').motivo ?? '', /não encontrado/);
+  // plano.json vence os dois
+  const js = projetarProjeto([{ caminho: '/r', cards: [{ arquivo: 'PBI-3.md', texto: CARD_LEG('PBI-3', 'Preparado'), planoMd: null, planoLegado: leg }],
+    entregas: [{ id: 'PBI-3', plano: { ok: true, bruto: { entrega: 'PBI-3', tasks: [{ id: 'T1', deps: [], arquivos: [] }] } }, eventos: [] }] }], OPC);
+  assert.equal(linha(js, 'PBI-3').plano, 'json');
+});
+
+test('plano-antigo-sem-task-rotulado: .md sem task contável diz "plano (formato anterior)", fora do % e da medida, dentro da estimada', () => {
+  const r = projetarProjeto([arvoreAdotado() as ArvoreLida], OPC);
+  const l = linha(r, 'PBI-9');
+  assert.equal(l.texto, 'plano (formato anterior)');
+  assert.equal(l.semPlano, false);
+  assert.equal(l.tasks, null);
+  assert.equal(l.plano, 'md');
+  assert.equal(l.motivo, null);
+  assert.equal(r.totais.tasks, 8, 'fora da conta do %');
+  assert.equal(r.totais.foraDaConta, 1, 'só PBI-6');
+  // aberto entra na estimada como hoje: PBI-6 + PBI-9
+  assert.equal(r.totais.previsao.estimada?.pbisSemPlano, 2);
+  // concluído com formato anterior
+  const f = projetarProjeto([{ caminho: '/r', cards: [{ arquivo: 'PBI-3.md', texto: CARD_LEG('PBI-3', 'Concluído', '`p.md`'), planoMd: '## Task 1\n' }], entregas: [] }], OPC);
+  assert.equal(linha(f, 'PBI-3').texto, 'feito, plano (formato anterior)');
+  assert.equal(f.totais.foraDaConta, 0);
+  // a regra (b) da GM-16 segue: "## Task 1" sem separador não conta task
+  assert.deepEqual(tasksDoPlanoMd('## Task 1\n'), []);
+});
+
+test('plano-legado-padrao-seguro: pura, cada condição do padrão e do casamento', () => {
+  const nomes = ['2026-11-02-PBI-1-a.md', '2026-11-02-PBI-10-b.md', 'x-PBI-2.md', 'x-PBI-2-y.md', 'notas.txt'];
+  assert.deepEqual(planoLegadoDe(nomes, 'docs/p/*-{PBI}-*.md', 'PBI-1'), ['2026-11-02-PBI-1-a.md'], '{PBI} com fronteira de dígito');
+  assert.deepEqual(planoLegadoDe(nomes, 'docs/p/*-{PBI}-*.md', 'PBI-10'), ['2026-11-02-PBI-10-b.md']);
+  assert.deepEqual(planoLegadoDe(['PBI-1-a.md', 'PBI-10-b.md', 'PBI-1.md'], 'd/{PBI}*.md', 'PBI-1'), ['PBI-1-a.md', 'PBI-1.md'], 'sem literal depois do {PBI}, só o (?!\\d) separa PBI-1 de PBI-10');
+  assert.deepEqual(planoLegadoDe(nomes, 'docs/p/*-{PBI}.md', 'PBI-2'), ['x-PBI-2.md'], 'fim do nome vale como não-dígito');
+  assert.deepEqual(planoLegadoDe(nomes, 'docs/p/x-{PBI}*', 'PBI-2'), ['x-PBI-2.md', 'x-PBI-2-y.md'], 'o núcleo devolve todos; a borda decide o ambíguo');
+  assert.deepEqual(planoLegadoDe(['a.b-PBI-1.md', 'aXb-PBI-1.md'], 'd/a.b-{PBI}.md', 'PBI-1'), ['a.b-PBI-1.md'], 'ponto literal');
+  for (const ruim of ['../p/*-{PBI}.md', 'docs/../p/{PBI}.md', '/abs/{PBI}.md', 'docs/**/{PBI}.md', 'docs/*/{PBI}.md', 'docs/p/', '', 42, null, './{PBI}.md', 'docs//{PBI}.md', 'docs/p/**.md', 'docs/p/a**{PBI}.md']) {
+    assert.equal(planoLegadoDe(nomes, ruim, 'PBI-1'), null, JSON.stringify(ruim));
+    assert.equal(padraoLegadoValido(ruim), null, JSON.stringify(ruim));
+  }
+  assert.deepEqual(padraoLegadoValido('docs/superpowers/plans/*-{PBI}-*.md'), { dir: 'docs/superpowers/plans', nome: '*-{PBI}-*.md' });
+  assert.deepEqual(padraoLegadoValido('{PBI}.md'), { dir: '', nome: '{PBI}.md' });
 });

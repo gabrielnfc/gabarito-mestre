@@ -27,7 +27,7 @@ const ID_PADRAO = /^[A-Z]+-\d+$/;
 /** O que a borda leu de UMA árvore (worktree). `planoMd` = texto do plano .md que o card aponta, lido na mesma árvore (`null` = sem arquivo). */
 export type ArvoreLida = {
   caminho: string;
-  cards: Array<{ arquivo: string; texto: string; planoMd: string | null }>;
+  cards: Array<{ arquivo: string; texto: string; planoMd: string | null; /** GM-20 REQ-LEG-1: plano antigo achado por `fluxo.planosLegados` (só sem ponteiro no card). */ planoLegado?: { caminho: string; texto: string } | null }>;
   /**
    * `plano`: `null` = sem `plano.json`; `ok:false` = arquivo ilegível. `planoCommitMs`: data (ms) do último commit que tocou o `plano.json` nesta
    * árvore (`git log -1`, lido por quem chama); `null`/ausente = sem git ou não versionado. `eventos`: `null` = diário ilegível.
@@ -47,7 +47,7 @@ export type LinhaProjeto = {
   /** Epic do card (REQ-PRJ-3 b); `null` = sem Epic, ou vínculo que não é frontmatter. */
   epic: string | null;
   plano: 'json' | 'md' | null;
-  /** fora da conta de tasks: sem plano, plano inválido ou plano .md ausente. */
+  /** fora da conta de tasks: sem plano, plano inválido, plano .md ausente ou .md sem task contável ("formato anterior", GM-20). */
   semPlano: boolean;
   tasks: TasksLinha | null;
   /** `null` = fora da conta (nunca 0 % por falta de plano). Só o medido. */
@@ -110,6 +110,27 @@ export function worktreesDe(git: { ok: true; saida: string } | { ok: false; moti
 export function planoMdDoCard(texto: string): string | null {
   const m = /Plano:\s*`([^`]+\.md)`/.exec(String(texto));
   return m === null ? null : m[1];
+}
+
+/**
+ * GM-20 REQ-LEG-1/3 (DT3): padrão de plano antigo = pasta literal relativa + nome com `{PBI}` e `*` (só no nome). `..`, absoluto, `**`, `*` na pasta, vazio ⇒ `null`.
+ */
+export function padraoLegadoValido(padrao: unknown): { dir: string; nome: string } | null {
+  if (typeof padrao !== 'string' || padrao === '' || padrao.length > 300 || padrao.includes('\0') || padrao.includes('**')) return null;
+  const partes = padrao.split('/');
+  const nome = partes[partes.length - 1];
+  const pastas = partes.slice(0, -1);
+  if (nome === '' || pastas.includes('..') || pastas.includes('') || pastas.some((p) => p.includes('*') || p === '.')) return null;
+  return { dir: pastas.join('/'), nome };
+}
+
+/** Os `nomes` (arquivos da pasta do padrão) que casam `padrao` para o PBI `id`; `{PBI}` casa o id seguido de não-dígito ou fim (PBI-1 não casa PBI-10). Padrão inválido ⇒ `null`. */
+export function planoLegadoDe(nomes: string[], padrao: unknown, id: string): string[] | null {
+  const v = padraoLegadoValido(padrao);
+  if (v === null) return null;
+  const esc = (t: string): string => t.replace(/[.+?^$()|[\]\\{}]/g, '\\$&');
+  const re = new RegExp(`^${v.nome.split('{PBI}').map((q) => q.split('*').map(esc).join('[^/]*')).join(`${esc(id)}(?!\\d)`)}$`);
+  return nomes.filter((n) => re.test(n));
 }
 
 /** Card FL1: frontmatter `id` (casa `idPadrao`; senão `null`, ex. `PBI-EXEMPLO`), `status`, `atualizadoEm`; título = 1º `# `. */
@@ -265,12 +286,12 @@ export function projetarProjeto(arvores: ArvoreLida[], opcoes: { agoraMs: number
   const idPadrao = opcoes.idPadrao ?? ID_PADRAO;
   const chaveEpic = chaveEpicDe(opcoes.vinculo);
   const avisos = [...(opcoes.avisos ?? [])];
-  const cards = new Map<string, Array<Card & Fonte & { textoMd: string | null }>>();
+  const cards = new Map<string, Array<Card & Fonte & { textoMd: string | null; legado: { caminho: string; texto: string } | null }>>();
   const entregas = new Map<string, Array<ArvoreLida['entregas'][number] & Fonte>>();
   arvores.forEach((a, idx) => {
     for (const c of a.cards ?? []) {
       const card = cardDe(c.arquivo, c.texto, idPadrao, chaveEpic);
-      if (card !== null) cards.set(card.id, [...(cards.get(card.id) ?? []), { ...card, idx, caminho: a.caminho, textoMd: c.planoMd }]);
+      if (card !== null) cards.set(card.id, [...(cards.get(card.id) ?? []), { ...card, idx, caminho: a.caminho, textoMd: c.planoMd, legado: c.planoLegado ?? null }]);
     }
     for (const e of a.entregas ?? []) {
       if (idPadrao.test(e.id)) entregas.set(e.id, [...(entregas.get(e.id) ?? []), { ...e, idx, caminho: a.caminho }]);
@@ -306,6 +327,7 @@ export function projetarProjeto(arvores: ArvoreLida[], opcoes: { agoraMs: number
     let plano: LinhaProjeto['plano'] = null;
     let taskIds: string[] | null = null;
     let motivo: string | null = null;
+    let mdTexto: string | null = null;
     let origem = card?.caminho ?? ents[0]?.caminho ?? '';
     if (comJson !== undefined && comJson.plano !== null) {
       origem = comJson.caminho;
@@ -316,10 +338,12 @@ export function projetarProjeto(arvores: ArvoreLida[], opcoes: { agoraMs: number
       }
     } else if (card !== null && card.planoMd !== null) {
       if (card.textoMd === null) motivo = `plano ${card.planoMd} não encontrado`;
-      else {
-        const ts = tasksDoPlanoMd(card.textoMd);
-        if (ts.length > 0) { plano = 'md'; taskIds = ts; origem = card.caminho; }
-      }
+      else mdTexto = card.textoMd;
+    } else if (card !== null && card.legado !== null) mdTexto = card.legado.texto; // GM-20: ponteiro vale mais que o padrão
+    if (mdTexto !== null && card !== null) {
+      const ts = tasksDoPlanoMd(mdTexto);
+      plano = 'md'; // GM-20 REQ-LEG-2: .md sem task contável é "plano (formato anterior)", não "sem plano"
+      if (ts.length > 0) { taskIds = ts; origem = card.caminho; }
     }
     let tasks: TasksLinha | null = null;
     if (taskIds !== null) {
@@ -337,12 +361,13 @@ export function projetarProjeto(arvores: ArvoreLida[], opcoes: { agoraMs: number
       const estimadas = feito ? total - integradas : 0;
       tasks = { total, integradas, estimadas, restantes: total - integradas - estimadas, fora };
     }
-    const semPlano = tasks === null;
+    const formatoAnterior = tasks === null && plano === 'md' && motivo === null;
+    const semPlano = tasks === null && !formatoAnterior;
     const pctDe = (n: number): number | null => (tasks === null || tasks.total <= 0 ? null : Math.round((n / tasks.total) * 100));
     const pct = tasks === null ? null : pctDe(tasks.integradas);
     const pctComEstimadas = tasks === null ? null : pctDe(tasks.integradas + tasks.estimadas);
     const texto = motivo !== null ? '? plano inválido'
-      : tasks === null ? (feito ? 'feito, sem plano' : 'sem plano')
+      : tasks === null ? (formatoAnterior ? (feito ? 'feito, plano (formato anterior)' : 'plano (formato anterior)') : feito ? 'feito, sem plano' : 'sem plano')
         : feito ? (tasks.estimadas > 0 ? `feito (${tasks.estimadas} tasks estimadas)` : 'feito')
           : pct === null ? '? sem task no plano' : `${pct} % (${tasks.integradas} de ${tasks.total})`;
     linhas.push({
@@ -404,7 +429,7 @@ function previsaoDoProjeto(linhas: LinhaProjeto[], diarios: Array<{ id: string; 
  * `null` = nenhum PBI sem plano aberto.
  */
 function estimativaSemPlano(linhas: LinhaProjeto[]): { abertos: number; tasksPorPbi: number } | { motivo: string } | null {
-  const abertos = linhas.filter((l) => l.semPlano && !l.feito).length;
+  const abertos = linhas.filter((l) => (l.semPlano || (l.plano === 'md' && l.tasks === null && l.motivo === null)) && !l.feito).length;
   if (abertos === 0) return null;
   const porPbi = linhas.filter((l) => l.tasks !== null && l.tasks.total > 0).map((l) => (l.tasks as TasksLinha).total);
   if (porPbi.length === 0) return { motivo: `sem PBI com plano para estimar os ${abertos} sem plano` };

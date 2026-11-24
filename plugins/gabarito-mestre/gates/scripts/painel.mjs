@@ -44,7 +44,7 @@ import { lerX } from '../dist/pouso.js';
 import { sessoesDeRetomada } from '../dist/pouso-pendente.js';
 import { encerramentoDe, idDaBranch, trilhaDe } from '../dist/trilha.js';
 import { proximaEntrega } from '../dist/depende.js';
-import { cardDe, planoMdDoCard, projetarProjeto, terminaisValidos, worktreesDe } from '../dist/projeto.js';
+import { cardDe, padraoLegadoValido, planoLegadoDe, planoMdDoCard, projetarProjeto, terminaisValidos, worktreesDe } from '../dist/projeto.js';
 import { temOnboarding } from './cartao-sessao.mjs';
 import { carregarPlano, checkoutDaSessao, configDoLote, contexto, lerDiarioEstrito, lerSpec, lerSpecs, medicaoDoPouso } from './loop.mjs';
 import { decisaoDe, pausado, prepararLeitura } from './entrega.mjs';
@@ -296,8 +296,21 @@ function commitMsDe(caminho, rel) {
   }
 }
 
+/** GM-20 REQ-LEG-1/3: plano antigo do card sem ponteiro, por `fluxo.planosLegados` (padrões já válidos); 2 arquivos ou mais para o mesmo PBI ⇒ não liga e avisa. */
+function legadoDoCard(caminho, textoCard, idRe, legados, avisos) {
+  const card = cardDe('', textoCard, idRe);
+  if (card === null) return null;
+  const achados = [];
+  for (const { padrao, dir, nomes } of legados) for (const n of planoLegadoDe(nomes(caminho), padrao, card.id) ?? []) achados.push(dir === '' ? n : `${dir}/${n}`);
+  const unicos = [...new Set(achados)];
+  if (unicos.length > 1) { const a = `${card.id}: plano antigo ambíguo (${unicos.length} arquivos)`; if (!avisos.includes(a)) avisos.push(a); return null; }
+  if (unicos.length === 0) return null;
+  const texto = lerTextoSeguro(join(caminho, unicos[0]));
+  return texto === null ? null : { caminho: unicos[0], texto };
+}
+
 /** O que a borda lê de UMA árvore, no formato de `ArvoreLida` (projeto.ts): cards de `fluxo.mapeamento.FL1`, o plano .md do card, `plano.json` e o diário de cada entrega. */
-function lerArvoreDoProjeto(caminho, fl1, idRe) {
+function lerArvoreDoProjeto(caminho, fl1, idRe, legados = [], avisos = []) {
   const cards = [];
   if (fl1 !== null) {
     let nomes = [];
@@ -306,7 +319,7 @@ function lerArvoreDoProjeto(caminho, fl1, idRe) {
       const texto = lerTextoSeguro(join(caminho, fl1, arquivo));
       if (texto === null) continue;
       const md = relativoSeguro(planoMdDoCard(texto));
-      cards.push({ arquivo, texto, planoMd: md === null ? null : lerTextoSeguro(join(caminho, md)) });
+      cards.push({ arquivo, texto, planoMd: md === null ? null : lerTextoSeguro(join(caminho, md)), planoLegado: md === null ? legadoDoCard(caminho, texto, idRe, legados, avisos) : null });
     }
   }
   const entregas = [];
@@ -369,8 +382,18 @@ export function projetoDoRepo({ atual, cfg, idPadrao, agoraMs, fuso, deps = {} }
   const real = (c) => { try { return realpathSync(c); } catch { return c; } };
   const wt = worktreesDe((deps.worktreeList ?? worktreeListDoGit)(atual), real(atual));
   const caminhos = [...new Set(wt.caminhos.map(real))];
-  const arvores = caminhos.map((c) => lerArvoreDoProjeto(c, fl1, idRe));
-  const avisos = wt.aviso === null ? [] : [wt.aviso];
+  const avisosLeg = [];
+  const legados = [];
+  const brutos = cfg?.fluxo?.planosLegados;
+  if (brutos !== undefined) {
+    for (const padrao of Array.isArray(brutos) ? brutos : [brutos]) {
+      const v = padraoLegadoValido(padrao);
+      if (v === null) { avisosLeg.push(`planosLegados: padrão inválido "${String(padrao).slice(0, 80)}"`); continue; }
+      legados.push({ padrao, dir: v.dir, nomes: (c) => { try { return readdirSync(join(c, v.dir)); } catch { return []; } } });
+    }
+  }
+  const arvores = caminhos.map((c) => lerArvoreDoProjeto(c, fl1, idRe, legados, avisosLeg));
+  const avisos = [...(wt.aviso === null ? [] : [wt.aviso]), ...avisosLeg];
   // GM-16 T4: o que a config diz chega ao núcleo (que nunca lê config, D-G27). Ausente cai no padrão; ilegível avisa e cai no padrão, nunca "ok".
   let statusFl1 = cfg?.fluxo?.status?.FL1;
   if (statusFl1 !== undefined && (typeof statusFl1 !== 'object' || statusFl1 === null || Array.isArray(statusFl1))) {

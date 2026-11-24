@@ -1713,3 +1713,48 @@ describe('status-terminal-cli: o painel real lê fluxo.status.terminais da confi
     }
   });
 });
+
+// ───────────────────────────── GM-20 T3 (REQ-LEG-1/2/3): plano no formato anterior pelo CLI real, sobre a fixture comum em disco
+// Mutações: ML1-a (borda sem o fallback) ⇒ PBI-3 "feito, sem plano" · ML3-b (ambíguo liga o 1º) ⇒ sem aviso e plano md · ML3-a (aceita `..`) ⇒ sem aviso de padrão inválido
+describe('plano-legado-cli: o painel real lê fluxo.planosLegados e liga o plano antigo', () => {
+  const PADRAO = 'docs/superpowers/plans/*-{PBI}-*.md';
+  const projetoDe = async (opcoes, extra = () => {}) => {
+    const dir = join(novoTmp('legado-'), 'proj');
+    await montarNoDisco(dir, opcoes);
+    extra(dir);
+    const r = spawnSync(process.execPath, [SCRIPT, 'estado'], { cwd: dir, encoding: 'utf8', timeout: 60_000 });
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    const j = JSON.parse(r.stdout);
+    return { projeto: j.estado.projeto, avisos: j.avisos };
+  };
+  const l = (p, id) => p.linhas.find((x) => x.id === id);
+
+  test('sem a chave: PBI-3 segue "feito, sem plano"; com o padrão: plano md com 2 tasks estimadas, fora do %', async () => {
+    const sem = await projetoDe();
+    assert.equal(l(sem.projeto, 'PBI-3').texto, 'feito, sem plano');
+    const com = await projetoDe({ planosLegados: [PADRAO] });
+    const p3 = l(com.projeto, 'PBI-3');
+    assert.equal(p3.plano, 'md');
+    assert.deepEqual(p3.tasks, { total: 2, integradas: 0, estimadas: 2, restantes: 0, fora: 0 });
+    assert.equal(com.projeto.totais.tasks, sem.projeto.totais.tasks, 'concluído .md não entra no %');
+    assert.equal(l(com.projeto, 'PBI-9').texto, 'plano (formato anterior)');
+    assert.deepEqual(com.avisos.filter((x) => /planosLegados|ambíguo/.test(x)), []);
+  });
+
+  test('padrões inseguros (.., absoluto, **, * em pasta) são ignorados com aviso; o válido da mesma lista vale', async () => {
+    const ruins = ['../x/*-{PBI}.md', '/etc/{PBI}.md', 'docs/**/{PBI}.md', 'docs/*/{PBI}.md'];
+    const { projeto, avisos } = await projetoDe({ planosLegados: [...ruins, PADRAO] });
+    for (const r of ruins) assert.ok(avisos.includes(`planosLegados: padrão inválido "${r}"`), `${r}: ${avisos.join(' | ')}`);
+    assert.equal(l(projeto, 'PBI-3').plano, 'md');
+  });
+
+  test('2 arquivos para o mesmo PBI: não liga e avisa "plano antigo ambíguo (2 arquivos)"; PBI-1 não casa PBI-10', async () => {
+    const { projeto, avisos } = await projetoDe({ planosLegados: [PADRAO] }, (dir) => {
+      writeFileSync(join(dir, 'docs/superpowers/plans/2026-11-03-PBI-3-copia.md'), '### Task 1: x\n');
+      writeFileSync(join(dir, 'docs/superpowers/plans/2026-11-03-PBI-10-b.md'), '### Task 1: x\n');
+    });
+    assert.ok(avisos.includes('PBI-3: plano antigo ambíguo (2 arquivos)'), avisos.join(' | '));
+    assert.equal(l(projeto, 'PBI-3').texto, 'feito, sem plano');
+    assert.equal(l(projeto, 'PBI-1').plano, null, 'PBI-1 não casa PBI-10');
+  });
+});
