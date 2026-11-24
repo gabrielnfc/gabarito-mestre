@@ -186,7 +186,7 @@ test('projeto-previsao-medida-e-estimada: a previsão marca "(medida)"; a parte 
   assert.ok(p.estimada !== null, 'a fixture tem PBI sem plano aberto');
   const ls = linhas(comProjeto(estadoComPlano([ini(0, 'T1')]), pr));
   assert.equal(ls.filter((l) => /^ {2}previsão/.test(l)).length, 1, 'uma linha só de previsão');
-  assert.ok(ls.includes(`  previsão com plano ${p.medida.hora} · com estimativa do resto ~${p.estimada.hora} (~${Math.round(p.estimada.tasks)} tasks em ${p.estimada.pbisSemPlano} PBIs sem plano)`), ls.join('\n'));
+  assert.ok(ls.includes(`  previsão com plano ${p.medida.hora} · com estimativa do resto ~${p.estimada.hora} (~${Math.round(p.estimada.tasks)} tasks em ${p.estimada.pbisSemPlano} PBIs sem medida)`), ls.join('\n'));
   assert.ok(!ls.some((l) => /^ {2}~\d+ tasks/.test(l)), ls.join('\n'));
   assert.match(p.estimada.texto, /^~\d+ tasks estimadas em \d+ PBIs sem plano, até ~/);
   // sem task integrada em nenhuma entrega ⇒ "?" com o motivo (≥ 100 colunas), nunca um horário inventado
@@ -981,7 +981,7 @@ const prevLinhas = (s: EstadoPainel, largura: number): string[] => linhas(s, { l
 
 test('uma-linha-de-previsao: medida e estimada saem em 1 linha, encurtada por variantes sem cortar hora; sem estimada o texto de hoje; abaixo de 72 nada muda', () => {
   const base = projetoDaFixture();
-  const completa = '  previsão com plano 27/11 14:30 · com estimativa do resto ~30/11 18:45 (~213 tasks em 60 PBIs sem plano)';
+  const completa = '  previsão com plano 27/11 14:30 · com estimativa do resto ~30/11 18:45 (~213 tasks em 60 PBIs sem medida)';
   const semParen = '  previsão com plano 27/11 14:30 · com estimativa do resto ~30/11 18:45';
   const soMedida = '  previsão 27/11 14:30 (medida)';
   const s = comProjeto(estadoComPlano([ini(0, 'T1')]), comPrevisao(base, PREV(213, 60)));
@@ -1062,7 +1062,7 @@ test('render-projeto-propriedade-larguras: de 44 a 120 colunas, o número novo n
   }
   // GM-20 T4 (REQ-PRV-1): escala real (centenas de tasks e de PBIs) — a linha de previsão chega à borda e a hora nunca é cortada
   const realPrev = comProjeto(estadoComPlano([ini(0, 'T1')]), comPrevisao({ ...projetoAdotado(), totais: { ...projetoAdotado().totais, pbis: 310, feitos: 140, tasks: 903, integradas: 410, estimadas: 0, restantes: 493, pct: 45, pctComEstimadas: 45 } } as EstadoProjeto, PREV(1480, 207)));
-  const longa = '  previsão com plano 27/11 14:30 · com estimativa do resto ~30/11 18:45 (~1480 tasks em 207 PBIs sem plano)';
+  const longa = '  previsão com plano 27/11 14:30 · com estimativa do resto ~30/11 18:45 (~1480 tasks em 207 PBIs sem medida)';
   let prevInteira = false, prevCurta = false;
   for (let w = 72; w <= 120; w++) {
     const pl = prevLinhas(realPrev, w);

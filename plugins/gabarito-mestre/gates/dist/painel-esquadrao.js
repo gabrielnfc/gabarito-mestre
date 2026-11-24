@@ -436,7 +436,7 @@ function linhasDoProjeto(p               , w        , mot                       
     const nTasks = inteiroNaoNeg(Math.round(Number(est.tasks)));
     const nPbis = inteiroNaoNeg(est.pbisSemPlano);
     const dois = `  previsão com plano ${t(med.hora)} · com estimativa do resto ~${t(est.hora)}`;
-    const paren = nTasks !== null && nPbis !== null ? ` (~${nTasks} tasks em ${nPbis} PBIs sem plano)` : '';
+    const paren = nTasks !== null && nPbis !== null ? ` (~${nTasks} tasks em ${nPbis} PBIs sem medida)` : '';
     const vs2 = [`${dois}${paren}`, dois, prevMedida];
     prevLinha = vs2.find((v) => colunas(v) <= w) ?? prevMedida;
   }
