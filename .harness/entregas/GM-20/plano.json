@@ -99,7 +99,10 @@
       "deps": [],
       "arquivos": [
         "plugins/gabarito-mestre/gates/scripts/painel-medir.mjs",
-        "plugins/gabarito-mestre/gates/test/painel-medir.test.mjs"
+        "plugins/gabarito-mestre/gates/test/painel-medir.test.mjs",
+        "plugins/gabarito-mestre/gates/src/trilha.ts",
+        "plugins/gabarito-mestre/gates/dist/trilha.js",
+        "plugins/gabarito-mestre/gates/test/encerramento.test.ts"
       ],
       "reqs": [
         "REQ-CRD-2"
