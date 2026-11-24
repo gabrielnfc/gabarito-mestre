@@ -60,6 +60,12 @@ Estas instruções são para você. Ao falar com o usuário, use frases curtas, 
    - `deteccao_mudou` (algo mudou entre a prévia e a gravação, como um servidor MCP que oscilou): volte ao passo 2 e pergunte só o que mudou ou é novo. No máximo 2 voltas; na 3ª, pare com "detecção instável: <itens>".
    - `resposta_fora_das_opcoes`: repergunte só aquele id, 1 vez.
    - `config_invalida`, `falha`: pare com o motivo. Nunca edite o `harness.config.json` à mão.
+   **6b. Adoção** (depois do `ok:true`, no `--atualizar` ou com cards no projeto; fora do teto de perguntas). O 1º comando só lê; o 2º grava só `fluxo.planosLegados` e `fluxo.status.terminais`:
+   ```bash
+   node "${CLAUDE_PLUGIN_ROOT}/gates/scripts/onboarding.mjs" herdar --root "<raiz>"
+   node "${CLAUDE_PLUGIN_ROOT}/gates/scripts/onboarding.mjs" herdar --root "<raiz>" --gravar --planos-legados "<padrão>" --terminais "<A,B>"
+   ```
+   `oferecer:false` ou `ok:false`: pule, sem dizer nada. Senão mostre 1 linha por grupo com o número: entregas concluídas sem plano, planos no formato anterior (`planosLegados.padrao`, com os ambíguos), status fora do quadro (`statusFora`) e cards desatualizados (só listados: nenhum card é escrito). Pergunte por `AskUserQuestion`, com padrão `não` em 1º, se liga os planos antigos e quais status são terminais; rode o `--gravar` só com o escolhido (omita a flag do resto) e mostre o `diff`. Sem `AskUserQuestion` (headless): rode só com `--dry-run` e não grave. Esta pergunta não é gravada como resposta do dono.
    Gravou? Faça agora duas ofertas, fora do teto de perguntas e uma de cada vez; sem `AskUserQuestion` (headless), nenhuma: consentimento não tem default. Cada uma devolve `{ok, oferecer, texto, opcoes, default}`; `oferecer:false` ou `ok:false`: pule, sem dizer nada.
    1. **Foco** (chat mais limpo):
    ```bash

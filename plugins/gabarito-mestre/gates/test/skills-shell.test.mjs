@@ -433,7 +433,10 @@ test('commands-cita-ocultar-e-chat: o comando declara painel ocultar|mostrar, ch
   assert.match(t, /S14 \(segundo plano\), fim de tarefa de subagente: a notificação do fim não chegou ao mod em 0\/3; o fim só se vê pelo sumiço em `background_tasks`/);
   assert.match(t, /o segundo plano já aparece no painel\): `\.superpowers\/sdd\/2026-11-11-proxima\/t0b-relatorio\.md`/);
   assert.doesNotMatch(t, /sem a confirmação|e o segundo plano não aparece|sem medição que os feche/);
-  assert.match(t, /`onboarding\.mjs herdar` .* chega na 2\.2; não existe na 2\.1\.0/);
+  assert.match(t, /`onboarding\.mjs herdar` é o passo de adoção do `--atualizar`/);
+  assert.match(t, /`--gravar` grava só `fluxo\.planosLegados` e `fluxo\.status\.terminais`; nenhum card é escrito/);
+  assert.match(t, /A herança das regras da 1\.x nunca foi feita e está no backlog/);
+  assert.doesNotMatch(t, /chega na 2\.2|regras herdadas da 1\.x/);
   // o que o comando cita do mod existe no mod
   const mod = readFileSync(join(PLUGIN, 'mod/chat.mjs'), 'utf8');
   assert.match(mod, /uso: \/gabarito chat cru\|natural/);

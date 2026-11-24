@@ -368,6 +368,39 @@ test('skill-headless-dry-run', () => {
   assert.ok(violacoesSkill(planta(SKILL, 'não grave', 'grave')).includes('sem-headless-dry-run'));
 });
 
+/** GM-20 REQ-ADO-3 (DT16, DT17; condição 3 da Sombra): o passo 6b roda `herdar` depois do `gravar` e antes das ofertas, pergunta com padrão "não" e não usa o id/forma dormentes. */
+function violacoesAdocao(texto) {
+  const v = [];
+  const fluxo = secao(texto, 'Fluxo');
+  const iGravar = fluxo.indexOf('onboarding.mjs" gravar');
+  const iHerdar = fluxo.indexOf('onboarding.mjs" herdar --root "<raiz>"');
+  const iFoco = fluxo.indexOf('onboarding.mjs" foco --root');
+  if (!(iGravar >= 0 && iHerdar > iGravar && iFoco > iHerdar)) v.push('herdar-fora-de-lugar');
+  const bloco = iHerdar < 0 ? '' : fluxo.slice(iGravar, iFoco > iHerdar ? iFoco : undefined);
+  if (!/\*\*6b\. Adoção\*\*/.test(bloco)) v.push('sem-titulo-6b');
+  if (!/herdar --root "<raiz>" --gravar --planos-legados "<padrão>" --terminais "<A,B>"/.test(bloco)) v.push('sem-comando-gravar');
+  if (!/`AskUserQuestion`[^\n]*padrão `não`/.test(bloco)) v.push('sem-pergunta-padrao-nao');
+  if (!/headless\)[^\n]*`--dry-run`[^\n]*não grave/.test(bloco)) v.push('sem-headless-dry-run-adocao');
+  if (!/nenhum card é escrito/.test(bloco)) v.push('sem-nenhum-card-escrito');
+  if (/herdar:|confirmacao/.test(texto)) v.push('usa-id-ou-forma-dormente');
+  return v;
+}
+
+test('skill-instalar-passo-adocao: a skill real tem o passo 6b; cada cláusula tem caso plantado (MA3-a: tirar o passo derruba)', () => {
+  assert.deepEqual(violacoesAdocao(SKILL), []);
+  assert.ok(violacoesSkill(SKILL).length === 0, JSON.stringify(violacoesSkill(SKILL)));
+  assert.ok(violacoesAdocao(planta(SKILL, 'onboarding.mjs" herdar', 'onboarding.mjs" detectar')).includes('herdar-fora-de-lugar'));
+  assert.ok(violacoesAdocao(planta(SKILL, "**6b. Adoção**", "**6b. Outra coisa**")).includes('sem-titulo-6b'));
+  assert.ok(violacoesAdocao(planta(SKILL, '--terminais "<A,B>"', '')).includes('sem-comando-gravar'));
+  assert.ok(violacoesAdocao(planta(SKILL, 'padrão `não`', 'padrão `sim`')).includes('sem-pergunta-padrao-nao'));
+  assert.ok(violacoesAdocao(planta(SKILL, 'rode só com `--dry-run` e não grave', 'grave')).includes('sem-headless-dry-run-adocao'));
+  assert.ok(violacoesAdocao(planta(SKILL, 'nenhum card é escrito', 'cards são atualizados')).includes('sem-nenhum-card-escrito'));
+  assert.ok(violacoesAdocao(`${SKILL}\nresposta herdar:1\n`).includes('usa-id-ou-forma-dormente'));
+  // o passo vem depois do gravar: trocar a ordem derruba
+  const antes = SKILL.indexOf('onboarding.mjs" gravar');
+  assert.ok(antes >= 0 && SKILL.indexOf('onboarding.mjs" herdar') > antes);
+});
+
 test('skill-deteccao-mudou-teto', () => {
   assert.ok(violacoesSkill(planta(SKILL, 'No máximo 2 voltas', 'Quantas voltas precisar')).includes('sem-teto-deteccao-mudou'));
 });
