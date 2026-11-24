@@ -13,7 +13,8 @@
         "plugins/gabarito-mestre/gates/dist/projeto.js",
         "plugins/gabarito-mestre/gates/dist/painel-esquadrao.js",
         "plugins/gabarito-mestre/gates/test/projeto.test.ts",
-        "plugins/gabarito-mestre/gates/test/painel-projeto.test.ts"
+        "plugins/gabarito-mestre/gates/test/painel-projeto.test.ts",
+        "plugins/gabarito-mestre/gates/test/aceite-gm16.test.mjs"
       ],
       "reqs": [
         "REQ-PCT-1",
@@ -96,13 +97,18 @@
     {
       "id": "T6",
       "titulo": "Encerramento pela base da entrega",
-      "deps": [],
+      "deps": [
+        "T7"
+      ],
       "arquivos": [
         "plugins/gabarito-mestre/gates/scripts/painel-medir.mjs",
         "plugins/gabarito-mestre/gates/test/painel-medir.test.mjs",
         "plugins/gabarito-mestre/gates/src/trilha.ts",
         "plugins/gabarito-mestre/gates/dist/trilha.js",
-        "plugins/gabarito-mestre/gates/test/encerramento.test.ts"
+        "plugins/gabarito-mestre/gates/test/encerramento.test.ts",
+        "plugins/gabarito-mestre/gates/src/depende.ts",
+        "plugins/gabarito-mestre/gates/dist/depende.js",
+        "plugins/gabarito-mestre/gates/test/depende.test.ts"
       ],
       "reqs": [
         "REQ-CRD-2"

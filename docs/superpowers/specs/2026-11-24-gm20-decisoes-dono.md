@@ -21,3 +21,9 @@ Insumo: `.claude-tmp/gm20/spike-a.md` e `.claude-tmp/gm20/spike-b.md`.
 ## Resposta do dono à P1 (2026-11-24, sessão 15480378, AskUserQuestion)
 
 - **D-G46 (P1, item 4):** "(A) Painel trata e avisa (Recomendado)". Confirma a D-G43 original: entrega encerrada fora do loop com card aberto conta como feita e o painel mostra "card desatualizado"; o plugin nunca escreve no card. Fecha a P1 da spec; REQ-CRD-1 e a T11 saem do estado pendente.
+
+## Resposta do dono sobre o lembrete `next ⇒ main` (2026-11-24, sessão 15480378, AskUserQuestion)
+
+Insumo: review T6 r1 MAJOR-2 e decisão da Sombra (hash 56c73eb3, fora_da_regra): com o REQ-CRD-2 a entrega encerra no merge para a base configurada e o item do dono "no fim da entrega: levar <base> para main" (`depende.ts:373-375`) sumiria antes da virada.
+
+- **D-G47:** "PR da virada mergeado em main (Recomendado)". O item fica no lote do dono depois do `entrega.encerrada` pela base configurada e só sai quando o `painel medir` vê um PR com base `main` mergeado que contém o commit de encerramento da entrega.
