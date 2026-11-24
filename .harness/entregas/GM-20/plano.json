@@ -112,7 +112,8 @@
       "arquivos": [
         "plugins/gabarito-mestre/gates/src/depende.ts",
         "plugins/gabarito-mestre/gates/dist/depende.js",
-        "plugins/gabarito-mestre/gates/test/depende.test.ts"
+        "plugins/gabarito-mestre/gates/test/depende.test.ts",
+        "plugins/gabarito-mestre/gates/test/entrega-encerrada-cli.test.mjs"
       ],
       "reqs": [
         "REQ-PRX-1"
