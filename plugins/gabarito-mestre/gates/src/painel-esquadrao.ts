@@ -390,7 +390,7 @@ function linhasDoProjeto(p: EstadoProjeto, w: number, mot: (m: string) => string
   const tt = p.totais;
   const feitos = ouInterroga(tt.feitos);
   const total = ouInterroga(tt.pbis);
-  const pctN = nn(tt.pct);
+  const pctN = nn(tt.pctComEstimadas ?? tt.pct);
   const pct = pctN === null ? '?' : `${Math.round(pctN)}%`;
   const fora = inteiroNaoNeg(tt.foraDaConta) ?? 0;
   const med = tt.previsao?.medida ?? null;

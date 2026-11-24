@@ -41,6 +41,7 @@ import { planoMdDoCard, projetarProjeto, ROTULO_FASE_NAO_MEDIDA, ROTULO_FORA_DO_
 import type { ArvoreLida, EstadoProjeto } from '../src/projeto.ts';
 import type { AgenteVivo, EntradaPainel, EstadoPainel, Evento, OpcoesRender, Plano, TipoEvento } from '../src/tipos.ts';
 import type { FatosTrilha } from '../src/trilha.ts';
+import { arvore as arvoreAdotado, montarNoDisco } from './painel-fixtures/adotado.mjs';
 // @ts-expect-error: script .mjs sem tipos
 import { estadoDoPainel, main } from '../scripts/painel.mjs';
 
@@ -129,7 +130,9 @@ test('projeto-n-pbis-feitas-total: totais (N de M PBIs feitos, % e restantes) e 
   const tot = ls.find((l) => /^PROJETO/.test(l)) as string;
   assert.ok(tot, ls.join('\n'));
   const t = pr.totais;
-  assert.match(tot, new RegExp(`^PROJETO {2}${t.feitos} de ${t.pbis} PBIs feitos · ${t.pct}% das tasks \\(${t.integradas} de ${t.tasks}, \\+${t.estimadas} estimadas\\) · ${t.restantes} restantes`));
+  // GM-20: o % exibido é o `pctComEstimadas`; sem estimada (o .md concluído de PBI-1 saiu da conta) não há "+N estimadas"
+  assert.equal(t.estimadas, 0);
+  assert.match(tot, new RegExp(`^PROJETO {2}${t.feitos} de ${t.pbis} PBIs feitos · ${t.pctComEstimadas}% das tasks \\(${t.integradas} de ${t.tasks}\\) · ${t.restantes} restantes`));
   assert.equal(t.pbis, 6);
   assert.equal(t.feitos, 1);
   assert.equal(nLinhasProjeto(pr), 9, 'fixture GM-15: 2 totais + estimada + feitos + 5 abertos');
@@ -426,7 +429,7 @@ test('cli-script-real-texto-e-estado: o script rodado pela flag real sai com rc 
   assert.deepEqual(j.estado.projeto.linhas.map((l: { id: string }) => l.id), ['PBI-1', 'PBI-2', 'PBI-3', 'PBI-4']);
   const t = rodar(repo, ['texto', '--largura', '120']);
   assert.equal(t.rc, 0, t.stdout + t.stderr);
-  assert.match(t.stdout, /^PROJETO {2}1 de 4 PBIs feitos · \? das tasks \(0 de 0\) · 0 restantes · 4 sem plano, fora da conta/m);
+  assert.match(t.stdout, /^PROJETO {2}1 de 4 PBIs feitos · \? das tasks \(0 de 0\) · 0 restantes · 3 sem plano, fora da conta/m); // GM-20 REQ-PCT-3: o PBI feito sem plano não conta (eram 4)
   assert.match(t.stdout, /^fase não medida/m, 'a entrega PBI-2 sem plano.json: "fase não medida"');
   assert.doesNotMatch(t.stdout, /FASE \d de 7/);
   assert.equal(rodar(repo, ['texto', '--nao-existe']).rc, 2);
@@ -910,4 +913,86 @@ test('borda-status-fl1-ilegivel-avisa: `fluxo.status.FL1` que não é objeto avi
   assert.equal(pr.totais.opcoes, 1, 'o quadro padrão vale');
   const ok = montarRepo({ painel: OPCOES_ON });
   assert.deepEqual(prDe(ok.repo).avisos, [], 'ausente não avisa');
+});
+
+// ───────────────────────────── GM-20 T1 (D-G42, REQ-PCT-2): o % exibido soma as estimadas. Fixture comum: painel-fixtures/adotado.mjs
+// Mutações: MP2-a `nn(tt.pct)` de volta ⇒ render-pct-com-estimadas · MP2-b somar estimadas na previsão ⇒ previsao-sem-estimadas
+//           MP2-c cortar `+N estimadas` por caractere ⇒ render-projeto-propriedade-larguras
+
+/** A fixture adotada MAIS um PBI concluído com `plano.json` (2 tasks) sem registro no diário ⇒ 2 estimadas no projeto. */
+function adotadoComEstimadas(): ArvoreLida {
+  const a = arvoreAdotado() as ArvoreLida;
+  a.cards.push({ arquivo: 'PBI-11.md', texto: '---\nid: "PBI-11"\ntipo: US\nstatus: Concluído\natualizadoEm: "2026-11-06"\n---\n# Concluído com plano.json\n', planoMd: null });
+  a.entregas.push({ id: 'PBI-11', plano: { ok: true, bruto: { entrega: 'PBI-11', tasks: [{ id: 'T1', deps: [], arquivos: [] }, { id: 'T2', deps: [], arquivos: [] }] } }, eventos: [] });
+  return a;
+}
+const projetoAdotado = (a: ArvoreLida = arvoreAdotado() as ArvoreLida): EstadoProjeto => projetarProjeto([a], OPC);
+const totaisDe = (s: EstadoPainel, largura: number): string[] => linhas(s, { largura }).filter((l) => /^PROJETO|^PBIs /.test(l));
+
+test('render-pct-com-estimadas: a linha 1 mostra o pctComEstimadas (não o pct medido) e "+N estimadas" quando N > 0', () => {
+  const pr = projetoAdotado(adotadoComEstimadas());
+  assert.equal(pr.totais.pct, 60);
+  assert.equal(pr.totais.pctComEstimadas, 80);
+  assert.equal(pr.totais.estimadas, 2);
+  const tot = totaisDe(comProjeto(estadoComPlano([ini(0, 'T1')]), pr), 100)[0];
+  assert.match(tot, /80% das tasks \(6 de 10, \+2 estimadas\)/, tot);
+  assert.ok(!tot.includes('60%'), tot);
+  // sem estimada o texto "+N estimadas" some, e o % exibido é o medido (iguais)
+  const sem = totaisDe(comProjeto(estadoComPlano([ini(0, 'T1')]), projetoAdotado()), 100)[0];
+  assert.match(sem, /75% das tasks \(6 de 8\)/, sem);
+  assert.ok(!sem.includes('estimadas'), sem);
+  // % ausente (sem task em plano nenhum) segue "?", nunca 0% (e o render tolera o campo novo ausente: lê `pctComEstimadas ?? pct`)
+  const antigo = { ...pr, totais: { ...pr.totais, pctComEstimadas: undefined as unknown as number } };
+  assert.match(totaisDe(comProjeto(estadoComPlano([ini(0, 'T1')]), antigo), 100)[0], /60% das tasks/);
+});
+
+test('previsao-sem-estimadas: as estimadas entram no % exibido e nunca na previsão medida', () => {
+  const com = projetoAdotado(adotadoComEstimadas()).totais;
+  const sem = projetoAdotado().totais;
+  assert.equal(com.restantes, sem.restantes, 'restantes (a base da previsão) não soma as estimadas');
+  assert.deepEqual(com.previsao.medida, sem.previsao.medida);
+});
+
+test('render-projeto-propriedade-larguras: de 44 a 120 colunas, o número novo nunca é cortado e ausente nunca vira 0', () => {
+  const comEst = comProjeto(estadoComPlano([ini(0, 'T1')]), projetoAdotado(adotadoComEstimadas()));
+  // projeto sem nenhuma task em plano: % ausente
+  const vazio = projetarProjeto([{ caminho: '/x', cards: arvoreAdotado().cards.slice(0, 1).concat(arvoreAdotado().cards.slice(5, 6)).map((c: { arquivo: string; texto: string }) => ({ ...c, planoMd: null })), entregas: [] }], OPC);
+  assert.equal(vazio.totais.pct, null);
+  const semPct = comProjeto(estadoComPlano([ini(0, 'T1')]), vazio);
+  for (let w = 44; w <= 120; w++) {
+    for (const l of totaisDe(comEst, w)) {
+      // "+N estimadas" só inteiro: todo "+<dígito>" da linha é o início de "+N estimadas" completo
+      assert.equal((l.match(/\+\d/g) ?? []).length, (l.match(/\+\d+ estimadas/g) ?? []).length, `w=${w} número solto: ${l}`);
+      assert.ok(colunas(l) <= w || w >= 72, `w=${w} estourou a largura: ${l}`);
+      // o % do projeto, quando aparece, é o com estimadas: 80 (nunca o 60 medido)
+      assert.ok(!/(^|[^\d])60%/.test(l), `w=${w} % sem estimadas: ${l}`);
+    }
+    for (const l of totaisDe(semPct, w)) {
+      assert.ok(!/(^|[^\d])0%/.test(l), `w=${w} ausente virou 0%: ${l}`);
+      assert.ok(l.includes('?'), `w=${w} ausente sem "?": ${l}`);
+    }
+  }
+  // o texto novo aparece inteiro de 72 colunas em diante (a linha de contagens) e some inteiro abaixo (o resumo de 1 linha não o traz)
+  for (let w = 44; w <= 120; w++) {
+    const tem = totaisDe(comEst, w).some((l) => /\+2 estimadas\)/.test(l));
+    assert.equal(tem, w >= 72, `w=${w}: "+2 estimadas" ${tem ? 'presente' : 'ausente'}`);
+    assert.ok(totaisDe(comEst, w).some((l) => /80%/.test(l)), `w=${w}: o % exibido é o com estimadas`);
+  }
+});
+
+test('fixture-adotado-em-disco-igual-a-memoria: o repositório de montarNoDisco, lido pelo CLI real, dá os mesmos totais da árvore em memória; terminais e planosLegados entram na config', async () => {
+  const base = realpathSync(mkdtempSync(join(tmpdir(), 'adotado-')));
+  await montarNoDisco(base, { terminais: ['Cancelado'], planosLegados: { x: 1 } });
+  const cfg = JSON.parse(readFileSync(join(base, 'harness.config.json'), 'utf8'));
+  assert.deepEqual(cfg.fluxo.status, { terminais: ['Cancelado'] });
+  assert.deepEqual(cfg.fluxo.planosLegados, { x: 1 });
+  const r = rodar(base, ['estado']);
+  assert.equal(r.rc, 0, r.stdout + r.stderr);
+  const t = JSON.parse(r.stdout).estado.projeto.totais;
+  const m = projetoAdotado().totais;
+  for (const k of ['pbis', 'feitos', 'foraDaConta', 'tasks', 'integradas', 'estimadas', 'restantes', 'pct', 'pctComEstimadas'] as const) assert.equal(t[k], m[k], k);
+  // sem as chaves opcionais a config só aponta o FL1
+  const b2 = realpathSync(mkdtempSync(join(tmpdir(), 'adotado-')));
+  await montarNoDisco(b2);
+  assert.deepEqual(JSON.parse(readFileSync(join(b2, 'harness.config.json'), 'utf8')), { fluxo: { mapeamento: { FL1: 'cards/' } } });
 });

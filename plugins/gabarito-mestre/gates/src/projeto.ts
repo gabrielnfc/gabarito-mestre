@@ -36,7 +36,7 @@ export type ArvoreLida = {
 };
 
 export type Card = { id: string; status: string | null; titulo: string | null; atualizadoEm: string | null; planoMd: string | null; /** valor da chave de Epic no frontmatter; `null` = sem chave ou sem valor. */ epic: string | null };
-/** `integradas` = medidas no diário; `estimadas` = de PBI concluído sem registro no diário (emenda 18 p.2): nunca somam às medidas. */
+/** `integradas` = medidas no diário; `estimadas` = de PBI concluído sem registro no diário (emenda 18 p.2): nunca somam às medidas e nunca somam na previsão; no % exibido somam (D-G42). */
 export type TasksLinha = { total: number; integradas: number; estimadas: number; restantes: number; fora: number };
 export type LinhaProjeto = {
   id: string;
@@ -323,16 +323,16 @@ export function projetarProjeto(arvores: ArvoreLida[], opcoes: { agoraMs: number
       fase: plano === 'json' ? null : ROTULO_FASE_NAO_MEDIDA, origem,
     });
   }
-  // totais: medidas e estimadas separadas (p.2); o sem plano fica fora da conta
+  // totais: medidas e estimadas separadas (p.2); o sem plano fica fora da conta; GM-20 D-G42/DT1: concluído sem `plano.json` (o .md inclusive) sai das duas pontas
   let tasks = 0, integradas = 0, estimadas = 0;
   for (const l of linhas) {
-    if (l.tasks === null) continue;
+    if (l.tasks === null || (l.feito && l.plano !== 'json')) continue;
     tasks += l.tasks.total;
     integradas += l.tasks.integradas;
     estimadas += l.tasks.estimadas;
   }
   const restantes = tasks - integradas - estimadas;
-  const foraDaConta = linhas.filter((l) => l.semPlano).length;
+  const foraDaConta = linhas.filter((l) => l.semPlano && !l.feito).length;
   return {
     linhas,
     grupos: gruposDe(linhas, opcoes.titulosEpic),

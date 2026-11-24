@@ -46,6 +46,7 @@ import {
 } from '../src/projeto.ts';
 import type { ArvoreLida, EstadoProjeto, LinhaProjeto } from '../src/projeto.ts';
 import type { Evento } from '../src/tipos.ts';
+import { arvore as arvoreAdotado } from './painel-fixtures/adotado.mjs';
 
 const FIX = join(dirname(fileURLToPath(import.meta.url)), 'fixtures', 'projeto');
 const AGORA = Date.parse('2026-11-10T15:00:00.000Z');
@@ -101,13 +102,13 @@ test('projeto-n-pbis-feitas-total: uma linha por PBI, feitos pelo card, cortada 
   assert.deepEqual(linha(e, 'PBI-4').tasks, { total: 3, integradas: 2, estimadas: 0, restantes: 1, fora: 1 });
   assert.equal(linha(e, 'PBI-4').pct, 67);
   assert.equal(linha(e, 'PBI-4').feito, false);
-  // totais: PBI-1 (feito, 3 estimadas) + PBI-2 (1 de 3) + PBI-4 (2 de 3): 3 medidas + 3 estimadas de 9
-  assert.equal(e.totais.tasks, 9);
+  // totais (GM-20 D-G42): PBI-1 (feito, plano .md, 3 estimadas) sai das duas pontas; sobram PBI-2 (1 de 3) + PBI-4 (2 de 3): 3 medidas de 6
+  assert.equal(e.totais.tasks, 6);
   assert.equal(e.totais.integradas, 3);
-  assert.equal(e.totais.estimadas, 3);
+  assert.equal(e.totais.estimadas, 0);
   assert.equal(e.totais.restantes, 3);
-  assert.equal(e.totais.pct, 33);
-  assert.equal(e.totais.pctComEstimadas, 67);
+  assert.equal(e.totais.pct, 50);
+  assert.equal(e.totais.pctComEstimadas, 50);
 });
 
 test('concluido-sem-diario-e-estimado: tasks de PBI concluído sem registro no diário são estimadas e sinalizadas, nunca integradas medidas', () => {
@@ -342,7 +343,7 @@ test('feito-sem-plano-e-diario-ilegivel: PBI feito sem plano não entra na estim
   arvores[1].entregas.push({ id: 'PBI-3', plano: null, eventos: null });
   const r = projetarProjeto(arvores, OPC);
   assert.equal(linha(r, 'PBI-9').texto, 'feito, sem plano');
-  assert.equal(r.totais.foraDaConta, e.totais.foraDaConta + 1);
+  assert.equal(r.totais.foraDaConta, e.totais.foraDaConta, 'GM-20 REQ-PCT-3: o feito sem plano (PBI-9) não entra em foraDaConta, só os abertos');
   assert.equal(r.totais.previsao.estimada?.pbisSemPlano, 3, 'o feito sem plano não é trabalho a estimar');
   assert.deepEqual(r.avisos, ['PBI-3: diário ilegível em /FIX/wt-pbi-2']);
 });
@@ -364,10 +365,10 @@ test('plano-vigente-e-o-de-commit-mais-recente: entre worktrees vale o plano.jso
 test('pbi-sem-plano-fora-do-pct: as tasks estimadas dos PBIs sem plano não entram no % nem no total de tasks', () => {
   const e = projetoCompleto();
   assert.ok(e.totais.previsao.estimada !== null); // há estimativa (3 PBIs sem plano)…
-  assert.equal(e.totais.tasks, 9); // …mas o % é só dos PBIs com plano
+  assert.equal(e.totais.tasks, 6); // …mas o % é só dos PBIs com plano (GM-20: o .md concluído de PBI-1 também sai)
   assert.equal(e.totais.restantes, 3);
-  assert.equal(e.totais.pct, 33);
-  assert.equal(e.totais.pctComEstimadas, 67);
+  assert.equal(e.totais.pct, 50);
+  assert.equal(e.totais.pctComEstimadas, 50);
 });
 
 test('previsao-estima-pbi-sem-plano-com-til: tasks estimadas = mediana × PBIs sem plano não concluídos; número com "~" e rotulado estimado', () => {
@@ -648,4 +649,52 @@ test('epic-e-feito-entre-arvores: vale o card mais novo (Epic e status); diário
   assert.equal(f.linhas[0].feito, true);
   assert.equal(f.totais.feitos, 1);
   assert.ok(f.avisos.some((a) => /PBI-3.*ilegível.*\/b/.test(a)));
+});
+
+// ───────────────────────────── GM-20 T1 (D-G42, DT1, DT2): % do projeto sem misturar denominadores. Fixture comum: painel-fixtures/adotado.mjs
+// Mutações: MP1-a voltar a somar o .md concluído nos totais ⇒ tasks 11 em vez de 8 (pct-concluido-sem-plano-json-fora-das-duas-pontas);
+//           MP3-a tirar `&& !feito` de foraDaConta ⇒ sem-plano-conta-so-abertos.
+
+/** A fixture adotada MAIS um PBI concluído com `plano.json` (2 tasks) e sem registro no diário: o caminho das estimadas (spec REQ-PCT-1, 2º Dado). */
+function adotadoComEstimadas(): ArvoreLida {
+  const a = arvoreAdotado() as ArvoreLida;
+  a.cards.push({ arquivo: 'PBI-11.md', texto: '---\nid: "PBI-11"\ntipo: US\nstatus: Concluído\natualizadoEm: "2026-11-06"\n---\n# Concluído com plano.json\n', planoMd: null });
+  a.entregas.push({ id: 'PBI-11', plano: { ok: true, bruto: { entrega: 'PBI-11', tasks: [{ id: 'T1', deps: [], arquivos: [] }, { id: 'T2', deps: [], arquivos: [] }] } }, eventos: [] });
+  return a;
+}
+
+test('pct-concluido-sem-plano-json-fora-das-duas-pontas: concluído com plano .md fica fora de tasks, integradas e estimadas; a linha dele segue igual', () => {
+  const e = projetarProjeto([arvoreAdotado() as ArvoreLida], OPC);
+  const t = e.totais;
+  assert.equal(t.tasks, 8, 'PBI-5 (4) + PBI-7 (2) + PBI-8 (2); os 3 do .md concluído de PBI-2 saem');
+  assert.equal(t.integradas, 6);
+  assert.equal(t.estimadas, 0);
+  assert.equal(t.restantes, 2);
+  assert.equal(t.pct, 75);
+  assert.equal(t.pctComEstimadas, 75);
+  const l2 = e.linhas.find((l) => l.id === 'PBI-2') as LinhaProjeto;
+  assert.equal(l2.texto, 'feito (3 tasks estimadas)');
+  assert.equal(l2.plano, 'md');
+  assert.deepEqual(l2.tasks, { total: 3, integradas: 0, estimadas: 3, restantes: 0, fora: 0 });
+  // concluído com plano.json sem registro no diário continua estimado (o caminho de hoje)
+  const c = projetarProjeto([adotadoComEstimadas()], OPC).totais;
+  assert.equal(c.tasks, 10);
+  assert.equal(c.integradas, 6);
+  assert.equal(c.estimadas, 2);
+  assert.equal(c.pct, 60);
+  assert.equal(c.pctComEstimadas, 80);
+  // PBI-7 (concluído, plano.json, diário completo) segue medido
+  assert.deepEqual((e.linhas.find((l) => l.id === 'PBI-7') as LinhaProjeto).tasks, { total: 2, integradas: 2, estimadas: 0, restantes: 0, fora: 0 });
+  // a previsão não muda com o .md concluído: restantes 2 (só as tasks abertas)
+  assert.equal(t.restantes, e.linhas.reduce((n, l) => n + (l.feito ? 0 : (l.tasks?.restantes ?? 0)), 0));
+});
+
+test('sem-plano-conta-so-abertos: foraDaConta são os abertos sem plano; os feitos sem plano saem dela', () => {
+  const e = projetarProjeto([arvoreAdotado() as ArvoreLida], OPC);
+  const semPlano = e.linhas.filter((l) => l.semPlano);
+  assert.deepEqual(semPlano.filter((l) => l.feito).map((l) => l.id), ['PBI-1', 'PBI-3'], 'a fixture tem 2 feitos sem plano');
+  assert.deepEqual(semPlano.filter((l) => !l.feito).map((l) => l.id), ['PBI-4', 'PBI-6', 'PBI-9', 'PBI-10']);
+  assert.equal(e.totais.foraDaConta, 4);
+  assert.equal(e.totais.feitos, 4);
+  assert.equal(e.totais.pbis, 10);
 });
