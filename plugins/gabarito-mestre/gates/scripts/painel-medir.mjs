@@ -27,24 +27,25 @@ import { join } from 'node:path';
 import { append, dirEntrega, lerEstrito, padraoDeRecusa } from '../dist/diario.js';
 import { encerramentoDe, idDaBranch, podeEncerrar } from '../dist/trilha.js';
 import { ehViradaDePreVersao, preVersoesDe, temOnboarding, versaoAlvo } from '../dist/guarda.js';
-import { idPadraoDe } from '../lib/config.mjs';
+import { idPadraoDe, lerBaseDaEntrega } from '../lib/config.mjs';
+import { lerConfigEntrega, resolverBaseEntrega } from '../dist/entrega.js';
 import { contexto } from './loop.mjs';
 
 const ID_FORA_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 const CAMPOS_PR = 'number,state,baseRefName,headRefName,title,mergedAt';
 
 /** Item da lista do `gh` ⇒ PR normalizado ou `null` (forma inválida). `base`/`mergeado_em` só existem quando o `gh` os devolve. */
-function prDoGh(p) {
+function prDoGh(p, baseEntrega) {
   if (p === null || typeof p !== 'object' || !Number.isInteger(p.number) || p.number <= 0 || typeof p.state !== 'string' || !ESTADOS_GH.has(p.state.toUpperCase())) return null;
   for (const k of ['baseRefName', 'headRefName', 'title', 'mergedAt']) if (p[k] !== undefined && p[k] !== null && typeof p[k] !== 'string') return null;
   const estado = ESTADOS_GH.get(p.state.toUpperCase());
   const mergeadoEm = typeof p.mergedAt === 'string' && !Number.isNaN(Date.parse(p.mergedAt)) ? p.mergedAt : null;
-  if (p.state.toUpperCase() === 'MERGED' && p.baseRefName === 'main' && mergeadoEm === null) return null; // sem `mergedAt` não há `mergeado_em` a gravar
+  if (p.state.toUpperCase() === 'MERGED' && p.baseRefName === baseEntrega && mergeadoEm === null) return null; // sem `mergedAt` não há `mergeado_em` a gravar
   return { numero: p.number, estado, base: textoLinha(p.baseRefName) ? p.baseRefName : null, head: textoLinha(p.headRefName) ? p.headRefName : null, titulo: typeof p.title === 'string' ? p.title : '', mergeado_em: mergeadoEm };
 }
 
 /** `gh pr list|view` ⇒ `{falha}` ou `{lista}` (normalizada). */
-function ghPrs(rodar, cwd, timeoutMs, args, nome, unico) {
+function ghPrs(rodar, cwd, timeoutMs, args, nome, unico, baseEntrega) {
   const r = rodar('gh', args, { cwd, timeoutMs });
   const falha = falhaDoGh(r, nome);
   if (falha !== null) return { falha };
@@ -52,7 +53,7 @@ function ghPrs(rodar, cwd, timeoutMs, args, nome, unico) {
   try { v = JSON.parse(r.stdout); } catch { return { falha: `gh_json_invalido: ${nome}` }; }
   const bruta = unico ? [v] : v;
   if (!Array.isArray(bruta)) return { falha: `gh_json_invalido: ${nome}` };
-  const lista = bruta.map(prDoGh);
+  const lista = bruta.map((x) => prDoGh(x, baseEntrega));
   return lista.every((x) => x !== null) ? { lista } : { falha: `gh_json_invalido: ${nome}` };
 }
 
@@ -321,6 +322,8 @@ export function medir(cwd, opcoes = {}) {
     const deGh = [];
     const encerrar = []; // PRs candidatos a encerrar a entrega `id` (e a "última conhecida")
     let falhaGh = null;
+    // GM-20 T6 (REQ-CRD-2): a base de encerramento é a configurada da entrega (a MESMA regra do comando de entrega), lida 1 vez por execução; nunca lança
+    const baseEntrega = lerBaseDaEntrega(raiz, { lerConfigEntrega, resolverBaseEntrega }).resolvida.base;
     const reIdEntrega = new RegExp(`^(?:${idPadrao})$`);
     const alvoExtra = ultimaSemEncerramento(raiz, id, reIdEntrega);
     /** Mede os PRs de uma entrega: head (se há branch), título e remedição por número do que o diário dá como `aberto`. */
@@ -339,21 +342,21 @@ export function medir(cwd, opcoes = {}) {
         achados.set(p.numero, { numero: p.numero, estado: p.estado, branch: p.head ?? alvo.branch ?? 'desconhecida', base: p.base, via: comBase ? via : null, mergeado_em: p.mergeado_em, titulo: p.titulo });
       };
       if (alvo.branch !== null) {
-        const r = ghPrs(rodar, cwd, timeoutMs, ['pr', 'list', `--head=${alvo.branch}`, '--state', 'all', '--limit', '30', '--json', CAMPOS_PR], 'pr list');
+        const r = ghPrs(rodar, cwd, timeoutMs, ['pr', 'list', `--head=${alvo.branch}`, '--state', 'all', '--limit', '30', '--json', CAMPOS_PR], 'pr list', false, baseEntrega);
         if (r.falha) return r;
         for (const p of r.lista) guarda(p, 'head');
       }
-      const t = ghPrs(rodar, cwd, timeoutMs, ['pr', 'list', '--base', 'main', '--state', 'merged', '--search', `${alvo.id} in:title`, '--limit', '30', '--json', CAMPOS_PR], 'pr list titulo');
+      const t = ghPrs(rodar, cwd, timeoutMs, ['pr', 'list', '--base', baseEntrega, '--state', 'merged', '--search', `${alvo.id} in:title`, '--limit', '30', '--json', CAMPOS_PR], 'pr list titulo', false, baseEntrega);
       if (t.falha) return t;
-      for (const p of t.lista) if (p.base === 'main' && p.head !== null && casaTitulo(p.titulo)) guarda(p, 'titulo');
+      for (const p of t.lista) if (p.base === baseEntrega && p.head !== null && casaTitulo(p.titulo)) guarda(p, 'titulo');
       for (const n of abertosDoDiario(alvo.eventos)) {
         if (achados.has(n)) continue;
-        const v = ghPrs(rodar, cwd, timeoutMs, ['pr', 'view', String(n), '--json', CAMPOS_PR], 'pr view', true);
+        const v = ghPrs(rodar, cwd, timeoutMs, ['pr', 'view', String(n), '--json', CAMPOS_PR], 'pr view', true, baseEntrega);
         if (v.falha) return v;
         const p = v.lista[0];
         const porHead = idDaBranch(p.head, idPadrao) === alvo.id;
         // head de outra entrega e título sem o ID (`via` ausente): o fato sai da entrega na releitura (`prs()`)
-        guarda(p, porHead ? 'head' : p.base === 'main' && p.mergeado_em !== null && casaTitulo(p.titulo) ? 'titulo' : null);
+        guarda(p, porHead ? 'head' : p.base === baseEntrega && p.mergeado_em !== null && casaTitulo(p.titulo) ? 'titulo' : null);
       }
       return { prs: [...achados.values()] };
     };
@@ -371,7 +374,7 @@ export function medir(cwd, opcoes = {}) {
         const pv = preVersoesDe(p.titulo, p.branch)[0];
         if (pv !== undefined && pv.length <= 64) valor.pre_versao = pv; // a guarda lê daqui (a MESMA ehViradaDePreVersao)
         deGh.push({ chave: 'pr', fonte: 'gh', valor, alvo });
-        if (p.base === 'main' && p.mergeado_em !== null && !ehViradaDePreVersao(p, versaoAlvo(raiz, alvo.dir))) encerrar.push({ alvo, pr: p });
+        if (p.base === baseEntrega && p.mergeado_em !== null && !ehViradaDePreVersao(p, versaoAlvo(raiz, alvo.dir))) encerrar.push({ alvo, pr: p });
       }
     }
     if (falhaGh === null) {
@@ -431,7 +434,8 @@ export function medir(cwd, opcoes = {}) {
         if (!alvo.dir.endsWith(alvo.id)) continue;
         const lido = lerEstrito(alvo.dir);
         if (!lido.ok) { falhas.push(`diario_corrompido: ${lido.motivo}`); break; }
-        if (!podeEncerrar(lido.eventos, alvo.id, pr)) continue;
+        // `podeEncerrar` (trilha.ts) ainda fixa `main`; a base configurada já foi conferida na coleta (`encerrar`), então o PR entra com a base normalizada
+        if (!podeEncerrar(lido.eventos, alvo.id, { ...pr, base: 'main' })) continue;
         const dados = { entrega: alvo.id, pr: pr.numero, via: pr.via, mergeado_em: pr.mergeado_em };
         gravar(alvo.dir, lido.eventos, [{ tipo: 'entrega.encerrada', dados, valor: dados }]);
       }
