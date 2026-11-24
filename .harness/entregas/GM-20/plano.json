@@ -55,7 +55,8 @@
         "plugins/gabarito-mestre/gates/dist/projeto.js",
         "plugins/gabarito-mestre/gates/test/projeto.test.ts",
         "plugins/gabarito-mestre/gates/test/painel-cli.test.mjs",
-        "docs/superpowers/specs/2026-11-19-gm16-painel-projeto-design.md"
+        "docs/superpowers/specs/2026-11-19-gm16-painel-projeto-design.md",
+        "plugins/gabarito-mestre/gates/test/aceite-gm16.test.mjs"
       ],
       "reqs": [
         "REQ-LEG-1",
