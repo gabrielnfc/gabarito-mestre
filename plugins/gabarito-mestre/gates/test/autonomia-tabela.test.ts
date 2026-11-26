@@ -9,8 +9,9 @@
  *  MP2-e  calar a escrita no interruptor com `publica` ⇒ a linha "integridade" (interruptor) falha
  *  MP2-f  subagente com `publica` passa ⇒ `subagente-igual-nos-3-niveis` e a tabela falham
  *  MP3-a  sufixo do motivo com nível `nenhuma` ⇒ `motivo-igual-sem-autonomia` falha
- *  DEFESA EM PROFUNDIDADE (equivalentes, sem teste que as mate): `!c.destrutivo`, `c.anel === null` e `!naoLeuTudo` na regra de calar (decidir.ts:124) —
- *     tirar qualquer uma NÃO derruba teste, porque `publicar` já exclui destrutivo, anel e comando acima do teto/`cd` perdido; ficam como cinto e suspensório.
+ *  MP2-g  tirar `!naoLeuTudo` da regra de calar (decidir.ts:124) ⇒ `publicar-acima-do-teto-nao-cala` falha (o `--force` fica além dos 64 KB que `segmentar` lê)
+ *  DEFESA EM PROFUNDIDADE (equivalentes, sem teste que as mate): `!c.destrutivo` e `c.anel === null` na regra de calar (decidir.ts:124) —
+ *     tirar qualquer uma NÃO derruba teste: o anel força `publicar: false` (classificar-alvo.ts:493) e `--force`/`--mirror`/OID nulo ficam fora da forma fechada; cinto e suspensório.
  *  MP3-b  sufixo no `deny` do subagente ⇒ `motivo-subagente-igual` falha
  */
 import { test, describe } from 'node:test';
@@ -69,7 +70,7 @@ const LINHAS: Linha[] = [
   { categoria: 'push sem hooks', casos: [bash('git push --no-verify origin feat/x'), bash('GIT_CONFIG_COUNT=1 git push origin feat/x'), bash('git push --no-verify origin main')], orq: PEDE, sub: 'deny' },
   {
     categoria: 'produção de terceiro',
-    casos: [bash('psql -h db.prod.exemplo.com -c "select 1"'), bash('curl https://api.exemplo.com/x'), bash('vercel env pull --prod'), { tool: 'mcp__banco_prod__execute_sql', input: { query: 'select 1' } }],
+    casos: [bash('psql -h db.prod.exemplo.com -c "select 1"'), bash('curl https://api.exemplo.com/x'), bash('vercel env pull --prod'), bash('vercel logs --prod'), bash('supabase db push --project-ref refprod'), bash('psql "$PROD_DB" -c "select 1"'), { tool: 'mcp__banco_prod__execute_sql', input: { query: 'select 1' } }],
     orq: PEDE,
     sub: 'deny',
   },
@@ -195,6 +196,20 @@ describe('autonomia-so-publica-cala', () => {
   test('padrão do 4º parâmetro é `nenhuma`: sem nível, publicar pede', () => {
     const c = bash('git push origin main');
     assert.equal(decidir(entradaDe(c, false), CFG, ctx('feat/x')).faixa, 'ask');
+  });
+});
+
+describe('teto de leitura (MP2-g)', () => {
+  test('publicar-acima-do-teto-nao-cala: push com --force além dos 64 KB pede nos 3 níveis, sem autonomia_usada', () => {
+    const cmd = 'git push origin main  ' + '-v '.repeat(33000) + '--force';
+    assert.ok(cmd.length > TETO_COMANDO);
+    for (const nivel of NIVEIS) {
+      const d = rodar(bash(cmd), nivel);
+      assert.equal(d.faixa, 'ask', nivel);
+      assert.equal(d.permissionDecision, 'ask', nivel);
+      assert.notEqual(d.evento?.tipo, 'guarda.autonomia_usada', nivel);
+      assert.equal(rodar(bash(cmd), nivel, true).faixa, 'deny', `${nivel} · subagente`);
+    }
   });
 });
 
