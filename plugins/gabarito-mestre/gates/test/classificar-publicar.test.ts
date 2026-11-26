@@ -2,24 +2,30 @@
  * GM-22 T2 (REQ-PUB-1, DT1, DT3): o classificador marca `publicar` só nas 3 formas fechadas (fail-closed).
  * `publicar` ainda não muda nenhuma decisão (T3).
  *
- * MUTAÇÕES PRESCRITAS:
+ * c4: `publicar` passa por um portão positivo único (`portaoPublicar`), ANTES das 3 formas: 1 segmento, texto cru só de `[A-Za-z0-9 ._/@:,=-]`,
+ * sem builtin de ambiente/`VAR=` e 1ª palavra = o próprio comando. A lista de negação por construção de shell (CONSTRUCAO_OCULTA, semPrefixo por forma,
+ * `candidatos prod === 1`, `a !== ''` do vercel) saiu: o portão a torna inalcançável (sem `$`, aspas ou crase não há destino/argumento oculto).
+ * `publicar-matriz-portao` GERA família × forma (produto) e exige false em todas; a decisão do dono (`npm test && git push …` pergunta) é uma das famílias.
+ *
+ * MUTAÇÕES (todas executadas na c4; cada uma derruba o teste citado):
+ *  MG-char   tirar o portão de caracteres (`CARACTERES_PUBLICAR` sempre true) ⇒ `publicar-matriz-portao` falha (crase, `$`, aspas, glob, `~`, `{}`, não-ASCII, `+`…)
+ *  MG-seg    tirar a regra de 1 segmento: sozinha só lança em comando vazio (`segmentos[0]` indefinido); no resto SOBREVIVE, porque o portão de caracteres já barra `;`, `&`, `|` e quebra de linha. Com `;&|\n` também liberados no portão, `publicar-matriz-portao` (família `;`) e `publicar-dois-publicares` falham: as duas regras se cobrem de propósito
+ *  MG-builtin tirar a lista de builtin: SOBREVIVE sozinha (`primeiro === s.cmd` já barra `export`, `env`, `sudo`…); tirando as duas, `publicar-familia-ambiente` e a família `prefixo de comando` falham
+ *  MG-atrib  tirar `s.atribs.length > 0`: SOBREVIVE sozinha (1ª palavra `FOO=1` ≠ comando); tirando também `primeiro === s.cmd`, `publicar-familia-ambiente` falha
+ *  MG-prim   tirar `primeiro === s.cmd` ⇒ `publicar-matriz-portao` falha (`nice`, `timeout`, `/usr/bin/git`, `FOO=1`)
  *  MP1-a  allowlist de flags do push ignorada (qualquer flag) ⇒ `publicar-negativos` (--force, -o, --all, --delete) falha
- *  MP1-b  refspec com `+`/`:` inicial aceito ⇒ `publicar-negativos` (+main, :main) falha
- *  MP1-c  `Classificacao.publicar` = algum segmento prod (em vez de todos) ⇒ `publicar-misto` falha
+ *  MP1-b  refspec com `:` inicial aceito ⇒ `publicar-negativos` (:main) falha (`+main` também cai no portão de caracteres, `:main` é o caso que só a regra do refspec barra)
+ *  MP1-c  removida na c4: com 1 segmento garantido pelo portão, "todos os segmentos prod" ≡ "o segmento"; `publicar-misto` e `publicar-dois-publicares` cobrem a regra de 1 segmento (MG-seg+sep)
  *  MP1-d  `vercel` com qualquer subcomando (sem checar a lista) ⇒ `publicar-negativos` (env pull, logs) falha
- *  MR2    (r1) `publicar = true` no push implícito ⇒ `publicar-push-implicito-flag-fora` falha
- *  MR3    (r1) ignorar global do git antes do push, ou `-R`/`--repo` no gh ⇒ `publicar-outro-repo` falha
- *  MP1-f  (própria) tirar `candidatos prod === 1` ⇒ `publicar-isola-alvo-prod-unico` falha (`git push origin $PROD_DB:main`: destino resolvido em runtime vira 2º candidato)
- *  MS1    (c3r1) tirar a recusa de construção oculta (`construcaoOculta`) ⇒ `publicar-substituicao-recusa` e `publicar-construcao-por-construcao` falham
- *  MS2    (c3r1) a recusa só trata crase (deixa `$(`, `<(`, heredoc, eval…) ⇒ `publicar-construcao-por-construcao` falha
- *  MR4    (r2) tirar a checagem de prefixo de ambiente (`semPrefixo` inteiro) ⇒ `publicar-familia-ambiente` falha; tirar só a linha de `atribs` ⇒ falham os casos `VAR=<x>/<cmd> <cmd>` (valor terminando em `/<cmd>` passa no 1º token, só a linha de `atribs` os barra)
- *  MV4    (c3) tirar `a !== ''` em `formaFechadaVercel` ⇒ `publicar-vercel-arg-vazio` falha
- *  MV1    (c2r1) vercel aceitar flag de alvo (`--cwd`/`--scope`/`--token`/`-A`/`-Q`/`-t`/`-S`/`--local-config`, `--x v` ou `--x=v`) ⇒ `publicar-familia-vercel-flags` falha
- *  MV2    (c2r1) vercel aceitar posicional de caminho/URL/id inválido ⇒ `publicar-familia-vercel-posicional` falha
- *  MV3    (c2r1) push aceitar 2+ refspecs ⇒ `publicar-refspec-unico` falha
- *  MR5    (r2) gh aceitar URL / owner/repo#n (não só número puro) ⇒ `publicar-familia-gh-alvo` falha
- *  MR6    (r2) gh aceitar flag fora da lista fechada ⇒ `publicar-familia-gh-flags` falha
- *  MP1-e  (própria) remoto fora de origin aceito ⇒ `publicar-negativos` (remoto outro) falha
+ *  MP1-e  remoto fora de origin aceito ⇒ `publicar-negativos` (remoto outro) falha
+ *  MV1    vercel aceitar flag de alvo (`--cwd`/`--scope`/`--token`/`-A`/`-Q`/`-t`/`-S`, `--x v` ou `--x=v`) ⇒ `publicar-familia-vercel-flags` falha
+ *  MV2    vercel aceitar posicional de caminho/URL/id inválido ⇒ `publicar-familia-vercel-posicional` falha
+ *  MV3    push aceitar 2+ refspecs ⇒ `publicar-refspec-unico` falha
+ *  MV4    argumento vazio do vercel (`vercel --prod ""`): barrado pelo portão (aspas), caso na matriz e em `publicar-vercel-arg-vazio`; a checagem `a !== ''` foi removida por inalcançável
+ *  M-url  gh aceitar URL / owner/repo#n (não só número puro) ⇒ `publicar-familia-gh-alvo` falha
+ *  M-flag gh aceitar flag fora da lista fechada ⇒ `publicar-familia-gh-flags` falha
+ *  MR2    `publicar = true` no push implícito ⇒ `publicar-push-implicito-flag-fora` falha
+ *  MR3    ignorar global do git antes do push, ou `-R`/`--repo` no gh ⇒ `publicar-outro-repo` falha
  */
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
@@ -237,16 +243,17 @@ describe('classificar-publicar-formas', () => {
     assert.equal(c.publicar, false);
   });
 
-  // Isola a checagem `candidatos prod === 1`: a forma do push é fechada (refspec único, sem flag) e o destino é variável prod,
-  // então o segmento ganha 2 candidatos prod (o `main` do destino resolvido em runtime e a variável); só essa contagem barra.
+  // c4: a checagem `candidatos prod === 1` saiu (inalcançável: 2 candidatos prod num segmento exigem `$` de variável prod ou host em comando de rede,
+  // e o portão barra `$`); o caso que a justificava segue false, agora só pelo portão de caracteres (mutação MG-char o derruba).
   test('publicar-isola-alvo-prod-unico: push com refspec cujo destino vem de variável prod é false', () => {
     const c = bash('git push origin $PROD_DB:main');
     assert.equal(c.ambiente, 'prod');
     assert.equal(c.publicar, false);
   });
 
-  test('publicar-dois-publicares segue true', () => {
-    assert.equal(bash('git push origin main && vercel --prod').publicar, true);
+  // Decisão do dono (c4): comando com mais de 1 segmento volta a perguntar, mesmo com 2 publicares.
+  test('publicar-dois-publicares: 2 segmentos é false', () => {
+    assert.equal(bash('git push origin main && vercel --prod').publicar, false);
   });
 
   test('publicar-mcp-e-ferramenta-de-arquivo', () => {
@@ -287,13 +294,55 @@ describe('classificar-publicar-formas', () => {
     }
   });
 
-  test('publicar-controles-positivos: sem construção oculta segue true', () => {
+  test('publicar-controles-positivos: 1 segmento só de caracteres da lista segue true', () => {
     assert.equal(bash('git push origin main').publicar, true);
-    assert.equal(bash('npm test && git push origin main').publicar, true);
+    assert.equal(bash('npm test && git push origin main').publicar, false);
     assert.equal(bash('gh pr merge 5 --squash', 'main').publicar, true);
     assert.equal(bash('vercel --prod').publicar, true);
   });
 
+  test('publicar-dt1-positivos', () => {
+    for (const [cmd, br] of [['git push origin main', 'feat/x'], ['git push -u origin main', 'feat/x'], ['gh pr merge 5 --squash --delete-branch', 'main'], ['vercel --prod', 'feat/x'], ['vercel promote dpl_abc', 'feat/x']]) {
+      assert.equal(bash(cmd, br).publicar, true, cmd);
+    }
+  });
+
+  // Matriz GERADA: família (o que o leitor não vê inteiro, ou que muda o alvo) × forma (3 formas fechadas). Todas as células são false.
+  const FORMAS: Array<[string, string]> = [['git push origin main', 'feat/x'], ['gh pr merge 5 --squash', 'main'], ['vercel --prod', 'feat/x']];
+  const FAMILIAS: Array<[string, (b: string) => string[]]> = [
+    ['crase', (b) => [`${b} \`echo x\``, `\`echo x\` ; ${b}`]],
+    ['$(', (b) => [`${b} $(echo x)`, `$(echo x) ; ${b}`]],
+    ['$X', (b) => [`${b} $X`, `X=--force ; ${b} $X`]],
+    ['${X}', (b) => [`${b} \${X}`, `${b} x\${X}`]],
+    ['"$X"', (b) => [`${b} "$X"`, `${b} "x"`]],
+    ["'x'", (b) => [`${b} 'x'`, `${b} ''`, `${b} ""`]],
+    ['<(', (b) => [`${b} <(echo x)`, `${b} >(cat)`]],
+    ['\\eval', (b) => [`\\eval x ; ${b}`, `\\eval "${b}"`]],
+    ["e''val", (b) => [`e''val x ; ${b}`, `ev""al x ; ${b}`]],
+    ['export/declare/set -a/atribuição anterior', (b) => [`export A=1 ; ${b}`, `declare A=1 ; ${b}`, `set -a ; ${b}`, `A=1 ; ${b}`, `unset A ; ${b}`, `alias git=x ; ${b}`, `local A=1 ; ${b}`, `readonly A=1 ; ${b}`, `typeset A=1 ; ${b}`]],
+    ['function f {}', (b) => [`function f { :; } ; ${b}`, `f(){ :; } ; ${b}`, `f() { git push --force; } ; ${b}`]],
+    ['+HEAD:main', (b) => [`${b} +HEAD:main`, `${b} +x`, `X=+HEAD ; ${b} $X:main`]],
+    ['&&', (b) => [`npm test && ${b}`, `${b} && npm test`, `${b} && ${b}`, `${b} || echo x`]],
+    [';', (b) => [`${b} ; echo x`, `echo x ; ${b}`]],
+    ['|', (b) => [`${b} | cat`, `echo x | ${b}`, `${b} & echo x`, `${b}\necho x`, `${b}\r`, `${b}\tfoo`]],
+    ['glob', (b) => [`${b} *`, `${b} ?`, `${b} [a]`, `${b} m*`]],
+    ['~', (b) => [`${b} ~`, `${b} ~/x`]],
+    ['{a,b}', (b) => [`${b} {a,b}`, `${b} x{a,b}`]],
+    ['não-ASCII', (b) => [`${b} é`, `${b} \u2011f`, `${b} \u00a0x`]],
+    ['redirecionamento/heredoc', (b) => [`${b} > x`, `${b} < x`, `${b} <<EOF`, `${b} <<<x`, `${b} 2>&1`]],
+    ['prefixo de comando', (b) => [`FOO=1 ${b}`, `env FOO=1 ${b}`, `sudo ${b}`, `nice ${b}`, `timeout 5 ${b}`, `nohup ${b}`, `time ${b}`, `command ${b}`, `exec ${b}`, `builtin ${b}`, `eval ${b}`, `source ${b}`, `. ${b}`, `xargs ${b}`, `sh -c ${b}`, `bash -c ${b}`]],
+    ['caminho do binário', (b) => [`/usr/bin/${b}`, `./${b}`, `../outro/${b}`]],
+  ];
+  for (const [fam, gera] of FAMILIAS) {
+    test(`publicar-matriz-portao: família ${fam} × 3 formas é false`, () => {
+      for (const [base, br] of FORMAS) for (const cmd of gera(base)) assert.equal(bash(cmd, br).publicar, false, JSON.stringify(cmd));
+    });
+  }
+  test('publicar-matriz-portao: tamanho gerado', () => {
+    let n = 0;
+    for (const [, gera] of FAMILIAS) for (const [base] of FORMAS) n += gera(base).length;
+    assert.ok(n >= 240, `matriz com ${n} células`);
+  });
   test('publicar-anel: anel força false', () => {
     const c = bash('git push origin main && echo x > harness.config.json');
     assert.equal(c.anel, 'integridade');

@@ -50,16 +50,22 @@ const SUB_VERCEL_COM_ID = new Set(['redeploy', 'promote', 'rollback']);
 // Id de deploy sem `/`, `.` ou `:`: URL (outro time) ou caminho (outro projeto) não passam.
 const ID_DEPLOY = /^[A-Za-z0-9_-]+$/;
 
-// c3r1: a forma fechada vale só se o leitor vê o comando INTEIRO. Crase, `$(`, `<(`/`>(`, heredoc/herestring, eval, source/`.`, xargs e `sh -c`
-// injetam ou escondem argumentos (o leitor separa o segmento e o argumento some). Texto cru, um ponto só, antes das 3 formas; excesso só custa um `false`.
-const CONSTRUCAO_OCULTA = /`|\$\(|[<>]\(|<<|(^|[\s;&|(){}])(eval|source|xargs|\.)(?=[\s;&|(){}]|$)|(^|[\s;&|(){}])(?:\w*sh)\s+(?:-[A-Za-z]*c|--command)\b/;
-function construcaoOculta(comando: string): boolean {
-  return CONSTRUCAO_OCULTA.test(comando);
+// c4: portão positivo de `publicar`, um ponto só, antes das 3 formas (a lista de negação por construção de shell não convergiu).
+// (1) o comando inteiro é 1 segmento; (2) o texto cru só tem caracteres da lista fechada (sem `$`, crase, aspas, `\`, `()`, `{}`, `<>`, `|`, `*?~!+;&`, tab, não-ASCII);
+// (3) o segmento não começa por builtin de ambiente/definição nem tem `VAR=`; (3b) a 1ª palavra é o próprio comando (sem caminho, nice, timeout…). Excesso só custa um `false`.
+const CARACTERES_PUBLICAR = /^[A-Za-z0-9 ._/@:,=-]*$/;
+const BUILTIN_DE_AMBIENTE = new Set(['export', 'declare', 'typeset', 'local', 'readonly', 'set', 'unset', 'alias', 'function', 'source', '.', 'eval', 'exec', 'env', 'command', 'builtin', 'sudo', 'nohup', 'time']);
+function portaoPublicar(comando: string, segmentos: Segmento[]): boolean {
+  if (segmentos.length !== 1) return false;
+  if (!CARACTERES_PUBLICAR.test(comando)) return false;
+  const s = segmentos[0];
+  const primeiro = comando.trim().split(/\s+/)[0] ?? '';
+  if (BUILTIN_DE_AMBIENTE.has(primeiro) || s.atribs.length > 0) return false;
+  return primeiro === s.cmd;
 }
 
 function formaFechadaVercel(s: Segmento): boolean {
-  if (!semPrefixo(s)) return false;
-  if (!s.args.every((a) => a !== '' && (!a.startsWith('-') || FLAGS_VERCEL_PUBLICAR.has(a)))) return false;
+  if (!s.args.every((a) => (!a.startsWith('-') || FLAGS_VERCEL_PUBLICAR.has(a)))) return false;
   const pos = s.args.filter((a) => !a.startsWith('-'));
   const sub = pos[0] ?? '';
   if (!SUB_VERCEL_PUBLICAR.has(sub)) return false;
@@ -277,13 +283,6 @@ function gravidade(a: Ambiente): number {
   return a === 'prod' ? 4 : a === 'homolog' ? 3 : a === 'desconhecido' ? 2 : 1;
 }
 
-// Forma fechada: o segmento começa direto no comando. Qualquer prefixo (VAR=…, env, sudo…) pode trocar o repositório/projeto alvo (GIT_DIR, GH_REPO…).
-function semPrefixo(s: Segmento): boolean {
-  if (s.atribs.length > 0) return false;
-  const primeiro = s.cru.trim().split(/\s+/)[0] ?? '';
-  return primeiro.split('/').pop() === s.cmd;
-}
-
 function classificarSegmento(s: Segmento, cfg: ConfigGuarda | null, ctx: Contexto): Parcial {
   const p = nada(s.cru);
   const pos = positionaisDe(s.args);
@@ -361,7 +360,7 @@ function classificarSegmento(s: Segmento, cfg: ConfigGuarda | null, ctx: Context
       const posPush = posicionaisDePush(g.resto);
       // DT1(a): flags só da lista, remoto `origin` ou omitido, nenhum refspec com `+` ou `:` inicial.
       // Globais do git antes do push (`-C`, `--git-dir`, `--work-tree`, `-c`…) podem mudar o repositório alvo: fora da forma.
-      const semGlobais = s.args[0] === 'push' && semPrefixo(s);
+      const semGlobais = s.args[0] === 'push';
       const formaPublicar =
         semGlobais &&
         g.resto.every((a) => !a.startsWith('-') || FLAGS_PUBLICAR.has(a)) &&
@@ -406,10 +405,9 @@ function classificarSegmento(s: Segmento, cfg: ConfigGuarda | null, ctx: Context
       candidatos.push({ ambiente: 'prod', alvo });
       escritaD3 = true;
       // `-R`/`--repo` aponta outro repositório: produção de terceiro, fora da forma `gh pr merge <n>` (DT1(b)).
-      // Forma fechada: `gh pr merge [<número>] [flags da lista]`, sem prefixo de ambiente (token antes de `pr merge` cai em `resto` e reprova); URL, owner/repo#n, branch, -R/--repo ficam fora.
+      // Forma fechada: `gh pr merge [<número>] [flags da lista]`; o prefixo de ambiente é barrado pelo portão (`portaoPublicar`); URL, owner/repo#n, branch, -R/--repo ficam fora.
       const resto = s.args.slice(2);
       publicar =
-        semPrefixo(s) &&
         resto.every((a) => /^\d+$/.test(a) || FLAGS_GH_MERGE.has(a)) &&
         resto.filter((a) => /^\d+$/.test(a)).length <= 1;
     } else candidatos.push({ ambiente: 'desconhecido', alvo });
@@ -433,8 +431,8 @@ function classificarSegmento(s: Segmento, cfg: ConfigGuarda | null, ctx: Context
     } else p.acao = 'execucao';
   }
   p.prodEscrita = escolhido.ambiente === 'prod' && escritaD3;
-  // `publicar` vale só se o segmento é prod pela própria forma e sem outro alvo prod no mesmo segmento (DT3: destrutivo já fica fora pela lista de flags).
-  p.publicar = publicar && escolhido.ambiente === 'prod' && candidatos.filter((c) => c.ambiente === 'prod').length === 1;
+  // `publicar` vale só se o segmento é prod pela própria forma (DT3: destrutivo já fica fora pela lista de flags); o alvo prod único é garantido pelo portão (sem `$`, o destino é literal).
+  p.publicar = publicar && escolhido.ambiente === 'prod';
   return p;
 }
 
@@ -477,7 +475,8 @@ function classificarBash(entrada: EntradaHook, cfg: ConfigGuarda | null, ctx: Co
     destrutivo: topo.destrutivo,
     anel: null,
     segmentosProd: parciais.filter((x) => x.ambiente === 'prod').map((x) => x.cru),
-    publicar: !construcaoOculta(comando) && parciais.some((x) => x.ambiente === 'prod') && parciais.filter((x) => x.ambiente === 'prod').every((x) => x.publicar),
+    // O portão garante 1 segmento: `publicar` é o do único segmento (já exige ambiente prod).
+    publicar: portaoPublicar(comando, segmentos) && parciais[0]?.publicar === true,
   };
 
   // O anel vem antes do ambiente.
