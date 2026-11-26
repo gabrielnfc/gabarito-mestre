@@ -124,3 +124,25 @@ Item sai daqui quando entra num plano ou a decisão de descarte é registrada. I
 | Contar `- [ ]` ou `## Task N` nu em plano antigo (DT4) | spec GM-20, "Fora de escopo", 2026-11-26 — dono: Gabriel | dono pedir, com amostra dos planos antigos |
 | `tipo` por task em `plano.json` (DT11) | spec GM-20, "Fora de escopo", 2026-11-26 — dono: Gabriel | 2º uso que precise de tipo |
 | Separadores abaixo de 44 colunas (DT14) | spec GM-20, "Fora de escopo", 2026-11-26 — dono: Gabriel | dono pedir |
+
+## GM-22 (hotfix 2.3.1 da guarda)
+
+| Item | Origem | Gatilho |
+|---|---|---|
+| Opt-in nominal por anel na autonomia | spec GM-22, "Fora de escopo", D-G52 — dono: Gabriel | dono pedir |
+| `core.hooksPath` efetivo, fora de `.githooks`/`.husky`/`.git/hooks` (custo de 1 `git` por chamada não medido) | spec GM-22, "Fora de escopo", DT5 — dono: Gabriel | projeto com outro diretório de hooks |
+| `git commit --no-verify` (`-n`) e `export GIT_CONFIG_*` em segmento anterior | spec GM-22, "Fora de escopo", D-G52 — dono: Gabriel | dono pedir, ou commit-msg virar gate de segurança |
+| `supabase db push`/`functions deploy` em prod como publicar (escreve no banco de produção) | spec GM-22, "Fora de escopo", DT1 — dono: Gabriel | dono pedir publicar migração calado |
+| MCP prod reconhecido por `project_id` em `projetos`; DELETE em massa em host não declarado sai `log` | spec GM-22, "Fora de escopo" (achados extras do spike A) — dono: Gabriel | GM-21 |
+| Itens 2, 3, 4, 5, 7 a 12 do relato da guarda | spec GM-22, "Fora de escopo", D-G51 — dono: Gabriel | GM-21 |
+| `promote`/`rollback`/`redeploy` do vercel com id de deploy de outro projeto não é detectado; `cd ../outro &&` antes de publicar pergunta | CHANGELOG [2.3.1], limites declarados — dono: Gabriel | exigir I/O na guarda, ou 1º caso visto em transcript real |
+| MINOR T1 r2: `pularFlags` põe PGHOST=/X=$PROD_* em atribs depois de env/sudo (`gates/src/aneis.ts:381`): `env PGHOST=db.prod… psql`, `sudo PGHOST=…`, `env X=$PROD_DATABASE_URL echo ok` passam de log a ask/deny; nenhum caso do corpus pina | review T1 r2 GM-22 (MINOR 1) — dono: Gabriel | próxima mudança em `aneis.ts` |
+| MINOR T1 r2 (pré-existente): wrappers não desembrulhados (`nice`, `timeout 5`, `xargs` antes de `git push` sem hooks; `nice rm -rf .harness`) saem silêncio nos 2 papéis | review T1 r2 GM-22 (MINOR 2) — dono: Gabriel | 1º caso visto em transcript real |
+| MINOR T1 r2: `env -S "GIT_CONFIG_COUNT=1 git push origin feat/x"` sai silêncio (a string de `-S` não é re-segmentada) | review T1 r2 GM-22 (MINOR 3) — dono: Gabriel | 1º caso visto em transcript real |
+| MINOR T1 r2: nome "MH2-dprocurar" sem espaço e fora da ordem (`gates/test/anel-hooks-git.test.ts:14`); cabeçalho diz "10 casos", agora 24 (`hooks/test/guarda-corpus-e2e.test.mjs:2`); `.join(' ')` em entrada de teste (`anel-hooks-git.test.ts:126`) equivale ao literal | review T1 r2 GM-22 (MINOR 4, 5) — dono: Gabriel | próxima mudança nesses arquivos |
+| MINOR T2 c4r2: EQUIV falsa em `gates/test/classificar-publicar.test.ts:29`: `git push origin main` com cwd `/repo/.git` é anel e passa o portão; falta teste de 1 segmento que derrube EQ-anel (`classificar-alvo.ts:493`) | review T2 c4r2 GM-22 (MINOR) — dono: Gabriel | próxima mudança em `classificar-alvo.ts` |
+| Suspeita T2: `000:main` e `0:main` saem `publicar:true` (git só lê hex com 4+ dígitos, então é nome de ref e falha) | review T2 c4r2 GM-22 — dono: Gabriel | 1º caso visto em transcript real |
+| MINOR T3 r1: comentário obsoleto em `gates/test/anel-hooks-git.test.ts:35-36` (booleano no 4º argumento de `decidir` vira `trabalha`) | review T3 r1 GM-22 (MINOR-2) — dono: Gabriel | próxima mudança nesse arquivo |
+| MINOR T3 r2: `c.cdPerdido === true` em `gates/src/decidir.ts:123` também é equivalente (portão de 1 segmento); declarar no cabeçalho de `autonomia-tabela.test.ts:12-13` | review T3 r2 GM-22 (MINOR) — dono: Gabriel | próxima mudança nesse arquivo |
+| `PROD_DB=x psql` sai silêncio em todos os níveis (pré-existente) | review T2 c4r2 GM-22 (fora do escopo) — dono: Gabriel | GM-21 |
+| A guarda lê o corpo de heredoc como comando (falso positivo barrou agentes) | relato da GM-22 — dono: Gabriel | GM-21 |

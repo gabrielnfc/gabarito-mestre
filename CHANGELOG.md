@@ -3,6 +3,30 @@
 Formato: [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/). Versionamento: [SemVer](https://semver.org/lang/pt-BR/).
 Usuários do plugin só recebem atualização quando `version` muda.
 
+## [2.3.1] — 2026-11-26
+
+Hotfix de segurança da guarda (GM-22, D-G51, D-G52).
+
+### Corrigido
+
+- **A autonomia cala só publicar.** Com a resposta "publica" (e o interruptor da máquina), passa calado só o pedido de publicar, e só se for comando de 1 segmento, com os caracteres `[A-Za-z0-9 ._/@:,=-]`, sem preparo de ambiente, numa destas formas fechadas: `git push` para a branch de produção com 1 refspec não nulo; `gh pr merge` com número; `vercel --prod`, `--production`, `promote`, `redeploy` ou `rollback` com id. `npm test && git push origin main` pergunta. Origem só de zeros no refspec é destrutiva e pergunta. Produção de terceiro, delete em massa (inclusive `push --force`), arquivos do harness, hooks do git e push sem hooks sempre perguntam ao orquestrador e são negados ao subagente. Com "trabalha", a guarda não cala nada.
+- **Hooks do git no anel de integridade.** Escrever ou apagar em `.githooks/` e `.husky/` pede ao orquestrador e é negado ao subagente.
+- **Push sem hooks** (`--no-verify` e as variáveis `GIT_CONFIG_*` que injetam `core.hooksPath`) pede ao orquestrador e é negado ao subagente, em qualquer branch.
+
+### Mudado
+
+- A pergunta de autonomia do onboarding diz o que cada resposta cala: "Posso trabalhar e publicar sozinha? Sempre pergunto antes de tocar dados no ar, apagar em massa, mexer ou pular travas." A prévia diz "autonomia para publicar".
+- A escrita no interruptor da máquina (arquivo de autonomia em `~/.claude/`) pede sempre, mesmo com a autonomia ligada.
+- Config da 2.2.2 com `guarda.autonomia: "orquestrador"` segue válida e só cala menos; o `ask` avisa o que a autonomia cala.
+- O evento `guarda.autonomia_usada` de publicar não traz `anel`; o campo `anel` é opcional.
+
+### Limites declarados
+
+- `promote`, `rollback` ou `redeploy` com id de deploy de outro projeto não é detectado (exigiria I/O).
+- `cd ../outro && …` não é publicar: pergunta.
+- O diretório de hooks é fixo (`.githooks`, `.husky`, `.git/hooks`); outro `core.hooksPath` não é protegido.
+- `export GIT_CONFIG_…` em comando anterior e `git commit --no-verify` não são vistos.
+
 ## [2.3.0] — 2026-11-26
 
 Projeto que adotou o gabarito com entregas antigas (GM-20, D-G41 a D-G46).
