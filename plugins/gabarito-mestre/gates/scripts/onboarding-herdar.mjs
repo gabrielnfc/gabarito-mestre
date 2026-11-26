@@ -28,7 +28,6 @@ export class Falha extends Error {
 
 /** Candidatos fixos de plano antigo (REQ-ADO-1): o 1º que casa ao menos 1 PBI vira o `padrao` oferecido. */
 export const PADROES_CANDIDATOS = ['docs/superpowers/plans/*-{PBI}-*.md', 'docs/plans/*-{PBI}-*.md'];
-const ID_PADRAO_DEFAULT = '^[A-Z]+-\\d+$';
 const TEXTO_MAX = 1024 * 1024;
 const ehObjeto = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 
@@ -90,8 +89,8 @@ function detectar(raiz, cfg, rodar) {
   const fl1 = relativoSeguro(cfg?.fluxo?.mapeamento?.FL1);
   const statusFl1 = cfg?.fluxo?.status?.FL1;
   const terminais = cfg?.fluxo?.status?.terminais;
-  let idRe;
-  try { idRe = new RegExp(typeof cfg?.fluxo?.idPadrao === 'string' ? cfg.fluxo.idPadrao : ID_PADRAO_DEFAULT); } catch { idRe = new RegExp(ID_PADRAO_DEFAULT); }
+  const idPadrao = idPadraoDe(raiz); // UMA vez: a mesma normalização do painel vale na detecção toda
+  const idRe = new RegExp(idPadrao);
   const arvores = fl1 === null ? [] : arvoresDe(raiz, rodar);
   // um card por id: o de `atualizadoEm` mais novo, empate ⇒ o da árvore que vem antes (a atual), como o painel
   const porId = new Map();
@@ -146,7 +145,7 @@ function detectar(raiz, cfg, rodar) {
   // REQ-CRD-1 (P9): a lista é a do painel (mesma projeção: ordem dos eventos, terminal, opção, status), nunca remontada aqui; sem FL1 não há card
   const cardsDesatualizados = fl1 === null
     ? []
-    : projetoDoRepo({ atual: raiz, cfg, idPadrao: idPadraoDe(raiz), agoraMs: Date.now(), fuso: 'UTC', deps: { worktreeList: () => listaDeWorktrees(raiz, rodar) } })
+    : projetoDoRepo({ atual: raiz, cfg, idPadrao, agoraMs: Date.now(), fuso: 'UTC', deps: { worktreeList: () => listaDeWorktrees(raiz, rodar) } })
       .linhas.filter((l) => l.cardDesatualizado !== null && l.cardDesatualizado !== undefined).map((l) => ({ id: l.id, status: l.cardDesatualizado }));
 
   const oferecer = entreguesSemPlano.length > 0 || planosLegados.padrao !== null || statusFora.length > 0 || cardsDesatualizados.length > 0;

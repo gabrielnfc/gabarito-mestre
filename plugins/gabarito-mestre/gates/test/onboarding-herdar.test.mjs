@@ -448,3 +448,29 @@ test('herdar-e-painel-idpadrao-longo: idPadrao com mais de 200 caracteres vale o
   assert.deepEqual(idsDe(doPainel), ['PBI-7'], 'contexto: o painel real cai no default');
   assert.deepEqual(herdar(dir).j.cardsDesatualizados, doPainel);
 });
+
+// ── GM-20 T11 ciclo 4: a detecção inteira (entreguesSemPlano, planosLegados, statusFora) usa o idPadrao normalizado; o herdar não conta o que o painel real não mostra ──
+const idsDoPainelCli = (dir) => {
+  const t = spawnSync(process.execPath, [PAINEL, 'estado'], { cwd: dir, encoding: 'utf8' });
+  return JSON.parse(t.stdout).estado.projeto.linhas.map((x) => x.id);
+};
+async function pbi10ConcluidoSemPlano(rotulo, valor) {
+  const dir = await idPadraoNaOrigin(rotulo, valor);
+  gravarCard(dir, 'pbi-10', 'Concluído');
+  return dir;
+}
+
+test('herdar-e-painel-idpadrao-vazio-sem-plano: pbi-10 Concluído sem plano.json não é contado pelo herdar quando o painel não o mostra (P9)', async () => {
+  const dir = await pbi10ConcluidoSemPlano('p9-sp-vazio', '');
+  assert.ok(!idsDoPainelCli(dir).includes('pbi-10'), 'contexto: o painel real não mostra pbi-10');
+  const j = herdar(dir).j;
+  assert.ok(!j.entreguesSemPlano.includes('pbi-10'), `herdar contou pbi-10: ${JSON.stringify(j.entreguesSemPlano)}`);
+});
+
+test('herdar-e-painel-idpadrao-longo-sem-plano: idem com idPadrao de mais de 200 caracteres (P9)', async () => {
+  const longo = `^(?:${'x|'.repeat(100)}[a-z]+-\\d+|[A-Z]+-\\d+)$`;
+  const dir = await pbi10ConcluidoSemPlano('p9-sp-longo', longo);
+  assert.ok(!idsDoPainelCli(dir).includes('pbi-10'), 'contexto: o painel real não mostra pbi-10');
+  const j = herdar(dir).j;
+  assert.ok(!j.entreguesSemPlano.includes('pbi-10'), `herdar contou pbi-10: ${JSON.stringify(j.entreguesSemPlano)}`);
+});
