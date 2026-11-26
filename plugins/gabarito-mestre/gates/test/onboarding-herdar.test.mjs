@@ -474,3 +474,39 @@ test('herdar-e-painel-idpadrao-longo-sem-plano: idem com idPadrao de mais de 200
   const j = herdar(dir).j;
   assert.ok(!j.entreguesSemPlano.includes('pbi-10'), `herdar contou pbi-10: ${JSON.stringify(j.entreguesSemPlano)}`);
 });
+
+// ── GM-20 T11 ciclo 4 r1: statusFora e planosLegados também saem da lista filtrada pelo idPadrao normalizado; paridade com o painel CLI real ──
+// opcoesComoContagem:true; pbi-11 "Aguardando cliente", pbi-12 "Em execução" e xPBI-1 (quase-acerto: só casa o padrão sem ^ e $) ficam fora do painel
+async function foraDoPadrao(rotulo, valor) {
+  const dir = await projeto(rotulo);
+  const cfg = cfgDe(dir);
+  cfg.fluxo.idPadrao = valor;
+  cfg.painel = { ...(cfg.painel ?? {}), projeto: { ...(cfg.painel?.projeto ?? {}), opcoesComoContagem: true } };
+  writeFileSync(join(dir, 'harness.config.json'), JSON.stringify(cfg, null, 2));
+  commitarConfig(dir);
+  const antes = herdar(dir).j;
+  gravarCard(dir, 'pbi-11', 'Aguardando cliente');
+  gravarCard(dir, 'pbi-12', 'Em execução');
+  gravarCard(dir, 'xPBI-1', 'Aguardando cliente');
+  mkdirSync(join(dir, 'docs', 'superpowers', 'plans'), { recursive: true });
+  writeFileSync(join(dir, 'docs', 'superpowers', 'plans', '2026-01-01-pbi-12-x.md'), '# plano\n'); // plano legado de card fora do padrão: não pode virar `casados`
+  const t = spawnSync(process.execPath, [PAINEL, 'estado'], { cwd: dir, encoding: 'utf8' });
+  const projetoPainel = JSON.parse(t.stdout).estado.projeto;
+  const ids = projetoPainel.linhas.map((x) => x.id);
+  for (const id of ['pbi-11', 'pbi-12', 'xPBI-1']) assert.ok(!ids.includes(id), `contexto: o painel real não mostra ${id}`);
+  assert.equal(projetoPainel.totais.opcoes, 0, 'contexto: o painel real não conta opção fora do padrão');
+  return { dir, antes, depois: herdar(dir).j };
+}
+const longoRe = `^(?:${'x|'.repeat(100)}[a-z]+-\\d+|[A-Z]+-\\d+)$`;
+for (const [nome, valor] of [['vazio', ''], ['longo', longoRe]]) {
+  test(`herdar-e-painel-idpadrao-${nome}-status-fora: card fora do padrão normalizado não entra em statusFora (P9)`, async () => {
+    const { antes, depois } = await foraDoPadrao(`p9-sf-${nome}`, valor);
+    assert.deepEqual(antes.statusFora, [], 'contexto: sem os cards de fora a fixture não tem statusFora');
+    assert.deepEqual(depois.statusFora, [], `herdar contou card que o painel não mostra: ${JSON.stringify(depois.statusFora)}`);
+  });
+  test(`herdar-e-painel-idpadrao-${nome}-planos-legados: card fora do padrão normalizado, sem ponteiro e sem plano.json, não muda planosLegados.sem (P9)`, async () => {
+    const { antes, depois } = await foraDoPadrao(`p9-pl-${nome}`, valor);
+    assert.equal(depois.planosLegados.sem, antes.planosLegados.sem, `herdar contou card que o painel não mostra: ${JSON.stringify(depois.planosLegados)}`);
+    assert.deepEqual(depois.planosLegados, antes.planosLegados);
+  });
+}
