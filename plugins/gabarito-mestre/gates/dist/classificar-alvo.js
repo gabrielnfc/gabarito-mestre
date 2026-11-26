@@ -328,7 +328,10 @@ function classificarSegmento(s          , cfg                     , ctx         
       const refspecs = posicionaisDePush(g.resto).slice(1);
       const posPush = posicionaisDePush(g.resto);
       // DT1(a): flags só da lista, remoto `origin` ou omitido, nenhum refspec com `+` ou `:` inicial.
+      // Globais do git antes do push (`-C`, `--git-dir`, `--work-tree`, `-c`…) podem mudar o repositório alvo: fora da forma.
+      const semGlobais = s.args[0] === 'push';
       const formaPublicar =
+        semGlobais &&
         g.resto.every((a) => !a.startsWith('-') || FLAGS_PUBLICAR.has(a)) &&
         (posPush[0] === undefined || posPush[0] === 'origin') &&
         refspecs.every((r) => !r.startsWith('+') && !r.startsWith(':'));
@@ -369,7 +372,8 @@ function classificarSegmento(s          , cfg                     , ctx         
     if (ctx.branchAtual !== null && branchesProd.includes(ctx.branchAtual)) {
       candidatos.push({ ambiente: 'prod', alvo });
       escritaD3 = true;
-      publicar = true;
+      // `-R`/`--repo` aponta outro repositório: produção de terceiro, fora da forma `gh pr merge <n>` (DT1(b)).
+      publicar = !s.args.some((a) => a.startsWith('-R') || a === '--repo' || a.startsWith('--repo='));
     } else candidatos.push({ ambiente: 'desconhecido', alvo });
   }
 
