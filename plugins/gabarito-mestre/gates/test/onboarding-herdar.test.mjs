@@ -145,7 +145,7 @@ test('herdar-grava-so-2-chaves: --gravar muda só fluxo.planosLegados e fluxo.st
   const depois = cfgDe(dir);
   const esperada = structuredClone(cfg);
   esperada.fluxo.planosLegados = [PADRAO];
-  esperada.fluxo.status.terminais = ['Aguardando cliente', 'Bloqueado'];
+  esperada.fluxo.status.terminais = ['Superado', 'Cancelado', 'Descartado', 'Aguardando cliente', 'Bloqueado']; // review final r1 MAJOR-2: acrescenta ao padrão
   assert.deepEqual(depois, esperada);
   const fim = foto(dir);
   for (const k of Object.keys(antes)) if (k !== 'harness.config.json') assert.deepEqual(fim[k], antes[k], k);
@@ -576,3 +576,32 @@ for (const [nome, { raiz, wt: naWt }] of CASOS_DEDUP) {
     assert.deepEqual(j.statusFora, doPainel.statusFora);
   });
 }
+
+// ── GM-20 review final r1 MAJOR-2: aceitar a oferta do passo 6b ACRESCENTA ao conjunto vigente (padrão + config) e grava o 1º termo, o que `ehTerminal` casa ──
+test('herdar-aceitar-terminais-acrescenta: --gravar --terminais com o statusFora não reabre Superado/Cancelado e o texto longo casa (fixture rf-terminais)', async () => {
+  const dir = await projeto('aceitar-term');
+  const g = (...a) => execFileSync('git', ['-C', dir, '-c', 'user.name=F', '-c', 'user.email=f@e.invalid', ...a]);
+  writeFileSync(join(dir, 'cards', 'PBI-11.md'), '---\nid: "PBI-11"\ntipo: US\nstatus: Arquivado — sem verba\natualizadoEm: "2026-10-21"\n---\n# Coisa arquivada\nPlano: a escrever.\n');
+  g('add', '.'); g('commit', '-qm', 'card'); g('push', '-q', 'origin', 'main');
+  const painel = () => {
+    const r = spawnSync(process.execPath, [join(AQUI, '..', 'scripts', 'painel.mjs'), 'estado', '--entrega', 'PBI-5'], { cwd: dir, encoding: 'utf8' });
+    const p = JSON.parse(r.stdout.trim().split('\n').at(-1)).estado.projeto;
+    return { pbis: p.totais.pbis, terminais: p.totais.terminais, abertos: p.linhas.filter((l) => !l.feito).map((l) => l.id) };
+  };
+  const antes = painel();
+  assert.equal(antes.pbis, 9, JSON.stringify(antes));
+  assert.ok(antes.abertos.includes('PBI-11'), 'contexto: o arquivado conta como aberto');
+  const h = herdar(dir).j;
+  assert.deepEqual(h.statusFora, [{ status: 'Arquivado — sem verba', n: 1 }]);
+  const gr = herdar(dir, '--gravar', '--terminais', h.statusFora.map((s) => s.status).join(','));
+  assert.equal(gr.rc, 0, gr.out + gr.err);
+  assert.deepEqual(cfgDe(dir).fluxo.status.terminais, ['Superado', 'Cancelado', 'Descartado', 'Arquivado'], 'padrão + o 1º termo do escolhido');
+  assert.deepEqual(gr.j.statusFora, [], 'nada volta a ficar fora');
+  g('commit', '-qam', 'cfg'); g('push', '-q', 'origin', 'main');
+  const depois = painel();
+  assert.equal(depois.pbis, 8, JSON.stringify(depois));
+  assert.equal(depois.terminais, 3);
+  for (const id of ['PBI-4', 'PBI-10', 'PBI-11']) assert.ok(!depois.abertos.includes(id), `${id} segue fora: ${JSON.stringify(depois)}`);
+  // 2ª aceitação com o que já é terminal: nada muda
+  assert.deepEqual(herdar(dir, '--gravar', '--terminais', 'arquivado, Superado').j.diff, []);
+});

@@ -269,9 +269,14 @@ export function terminaisValidos(cfg: unknown): string[] | null {
  * Regra única de "terminal" (DT5): o 1º termo do status (até ` — `, ` – `, ` - `, `:` ou `(`), sem acento, caixa nem espaço nas pontas, é um dos terminais.
  * `terminais` ausente ou inválido ⇒ o padrão. Igualdade do 1º termo inteiro: `Superadoria` não casa `Superado`.
  */
+/** O 1º termo do status (até ` — `, ` – `, ` - `, `:` ou `(`), sem espaço nas pontas: o que `ehTerminal` compara (e o que o `herdar --gravar --terminais` grava). */
+export function primeiroTermo(status: string): string {
+  return (status.split(/ [—–-] |:|\(/)[0] ?? '').trim();
+}
+
 export function ehTerminal(status: string | null, terminais?: unknown): boolean {
   if (status === null) return false;
-  const primeiro = semAcento(status.split(/ [—–-] |:|\(/)[0] ?? '');
+  const primeiro = semAcento(primeiroTermo(status));
   if (primeiro === '') return false;
   const lista = terminais === undefined ? TERMINAIS_PADRAO : (terminaisValidos(terminais) ?? TERMINAIS_PADRAO);
   return lista.some((t) => semAcento(t) === primeiro);

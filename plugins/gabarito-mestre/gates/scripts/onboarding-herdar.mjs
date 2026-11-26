@@ -13,7 +13,7 @@
 
 import { lstatSync, readFileSync, readdirSync, realpathSync } from 'node:fs';
 import { isAbsolute, join } from 'node:path';
-import { cardDe, ehColunaFl1, ehFeito, ehTerminal, padraoLegadoValido, planoLegadoDe, planoMdDoCard, terminaisValidos, worktreesDe } from '../dist/projeto.js';
+import { cardDe, ehColunaFl1, ehFeito, ehTerminal, padraoLegadoValido, planoLegadoDe, planoMdDoCard, primeiroTermo, TERMINAIS_PADRAO, terminaisValidos, worktreesDe } from '../dist/projeto.js';
 import { idPadraoDe } from '../lib/config.mjs';
 import { aplicarConfig, ArquivoInvalido } from './onboarding-config.mjs';
 import { projetoDoRepo } from './painel.mjs';
@@ -155,6 +155,20 @@ function detectar(raiz, cfg, rodar) {
 const lista = (v) => (typeof v === 'string' ? v.split(',').map((s) => s.trim()).filter((s) => s !== '') : []);
 
 /**
+ * GM-20 review final r1 MAJOR-2: aceitar a oferta ACRESCENTA ao conjunto vigente (a config válida, ou o padrão: DT5 faz a config substituir o padrão, então
+ * gravar só o escolhido reabriria Superado/Cancelado). Cada escolhido vira o 1º termo (`primeiroTermo`, o que `ehTerminal` casa: o `statusFora` traz o
+ * texto inteiro do card); o que já é terminal não repete.
+ */
+function somarTerminais(vigente, escolhidos) {
+  const out = [...(terminaisValidos(vigente) ?? TERMINAIS_PADRAO)];
+  for (const t of escolhidos) {
+    const termo = primeiroTermo(t);
+    if (termo !== '' && !ehTerminal(termo, out)) out.push(termo);
+  }
+  return out;
+}
+
+/**
  * REQ-ADO-2: grava só as 2 chaves. `planosLegados`/`terminais` vêm como o texto da flag (ou ausentes); nenhuma das duas ⇒ `argumento_invalido`.
  * Valida tudo ANTES de escrever. Não toca card nem outro arquivo.
  */
@@ -167,12 +181,12 @@ function gravarChaves(raiz, { planosLegados, terminais, dryRun }) {
     const ruim = padroes.find((p) => padraoLegadoValido(p) === null);
     if (ruim !== undefined) throw new Falha('argumento_invalido', `--planos-legados: padrão inválido ${JSON.stringify(ruim.slice(0, 80))} (pasta literal + nome com {PBI} e *); nada foi gravado`);
   }
-  if (termos !== undefined && (termos.length === 0 || terminaisValidos(termos) === null)) throw new Falha('argumento_invalido', '--terminais vazio ou inválido; nada foi gravado');
-  const { ausente } = lerConfig(raiz);
+  if (termos !== undefined && (termos.length === 0 || terminaisValidos(termos) === null || termos.some((t) => primeiroTermo(t) === ''))) throw new Falha('argumento_invalido', '--terminais vazio ou inválido; nada foi gravado');
+  const { ausente, cfg } = lerConfig(raiz);
   if (ausente) throw new Falha('config_invalida', 'harness.config.json não existe; rode o onboarding antes (nada foi gravado)');
   const fluxo = {};
   if (padroes !== undefined) fluxo.planosLegados = padroes;
-  if (termos !== undefined) fluxo.status = { terminais: termos };
+  if (termos !== undefined) fluxo.status = { terminais: somarTerminais(cfg?.fluxo?.status?.terminais, termos) };
   let r;
   try {
     r = aplicarConfig(raiz, { secoes: { fluxo } }, { dryRun });
