@@ -9,14 +9,14 @@ Hotfix de segurança da guarda (GM-22, D-G51, D-G52).
 
 ### Corrigido
 
-- **A autonomia cala só publicar.** Com a resposta "publica" (e o interruptor da máquina), passa calado só o pedido de publicar, e só se for comando de 1 segmento, com os caracteres `[A-Za-z0-9 ._/@:,=-]`, sem preparo de ambiente, numa destas formas fechadas: `git push` para a branch de produção com 1 refspec não nulo; `gh pr merge` com número; `vercel --prod`, `--production`, `promote`, `redeploy` ou `rollback` com id. `npm test && git push origin main` pergunta. Origem só de zeros no refspec é destrutiva e pergunta. Produção de terceiro, delete em massa (inclusive `push --force`), arquivos do harness, hooks do git e push sem hooks sempre perguntam ao orquestrador e são negados ao subagente. Com "trabalha", a guarda não cala nada.
+- **A autonomia cala só publicar.** Com a resposta "publica" (e o interruptor da máquina), passa calado só o pedido de publicar, e só se for comando de 1 segmento, com os caracteres `[A-Za-z0-9 ._/@:,=-]`, sem preparo de ambiente, numa destas formas fechadas (medidas no código integrado): `git push` sem refspec, na branch de produção, ou com 1 refspec não nulo para ela (por exemplo `git push origin main`, `git push -u origin main`), com remoto `origin` ou omitido e só as flags `-u`, `--set-upstream`, `-q`, `--quiet`, `-v`, `--verbose`, `--follow-tags`, `--atomic`, `--porcelain`, `-n`, `--dry-run` (2 refspecs, outro remoto, `--force`, `--no-verify` e `-o` perguntam); `gh pr merge` com ou sem número (no máximo 1), na branch de produção, e só as flags `--merge`, `-m`, `--squash`, `-s`, `--rebase`, `-r`, `--auto`, `--delete-branch`, `-d` (`--admin`, URL e 2 números perguntam); `vercel` ou `vc` com `--prod` ou `--production` (`vercel --prod`, `vercel deploy --prod`, `vc --prod`), `vercel promote` ou `vercel rollback` com ou sem id, e `vercel redeploy --prod` com ou sem id, só com as flags `--prod`, `--production`, `--yes`, `-y` e id de deploy do tipo `dpl_abc` (URL, caminho, `--scope`, `--cwd` e `--token` perguntam). `npm test && git push origin main` pergunta. Origem só de zeros no refspec é destrutiva e pergunta. Produção de terceiro, delete em massa (inclusive `push --force`), arquivos do harness, hooks do git e push sem hooks sempre perguntam ao orquestrador e são negados ao subagente. Com "trabalha", a guarda não cala nada.
 - **Hooks do git no anel de integridade.** Escrever ou apagar em `.githooks/` e `.husky/` pede ao orquestrador e é negado ao subagente.
 - **Push sem hooks** (`--no-verify` e as variáveis `GIT_CONFIG_*` que injetam `core.hooksPath`) pede ao orquestrador e é negado ao subagente, em qualquer branch.
 
 ### Mudado
 
 - A pergunta de autonomia do onboarding diz o que cada resposta cala: "Posso trabalhar e publicar sozinha? Sempre pergunto antes de tocar dados no ar, apagar em massa, mexer ou pular travas." A prévia diz "autonomia para publicar".
-- A escrita no interruptor da máquina (arquivo de autonomia em `~/.claude/`) pede sempre, mesmo com a autonomia ligada.
+- A escrita no interruptor da máquina (`~/.claude/gabarito-autonomia.json`) pede sempre, mesmo com a autonomia ligada.
 - Config da 2.2.2 com `guarda.autonomia: "orquestrador"` segue válida e só cala menos; o `ask` avisa o que a autonomia cala.
 - O evento `guarda.autonomia_usada` de publicar não traz `anel`; o campo `anel` é opcional.
 
