@@ -1515,20 +1515,21 @@ describe('GM-14: subcomandos novos ainda sem implementação', () => {
     return { rc: r.status, j, out: r.stdout, err: r.stderr };
   };
 
-  test('subcomandos-gm14-stub-nao-implementado: onboarding herdar|foco ⇒ rc 1, erro nao_implementado, nada gravado', () => {
+  test('subcomandos-gm14-herdar-nao-e-stub: onboarding herdar lê (rc 0, ok) e --gravar sem flags recusa (rc 1, argumento_invalido); nada gravado (GM-20 T10: saiu do stub; foco tem teste próprio)', () => {
     const amb = ambiente();
     const casos = [
-      // `painel.mjs medir` saiu daqui na T11: tem teste próprio em painel-medir.test.mjs.
-      ['onboarding.mjs herdar', () => rodarNode(amb, ONBOARDING, ['herdar', '--root', amb.dir])],
-      ['onboarding.mjs herdar --gravar', () => rodarNode(amb, ONBOARDING, ['herdar', '--root', amb.dir, '--gravar'])],
+      ['onboarding.mjs herdar', ['herdar', '--root', amb.dir], 0, null],
+      ['onboarding.mjs herdar --gravar', ['herdar', '--root', amb.dir, '--gravar'], 1, 'argumento_invalido'],
     ];
-    for (const [nome, rodar] of casos) {
+    for (const [nome, args, rc, erro] of casos) {
       const antes = foto(amb.dir);
-      const r = rodar();
-      assert.equal(r.rc, 1, `${nome}: ${r.out}${r.err}`);
+      const r = rodarNode(amb, ONBOARDING, args);
+      assert.equal(r.rc, rc, `${nome}: ${r.out}${r.err}`);
       assert.ok(r.j !== null, `${nome}: saída não é 1 linha JSON: ${r.out}`);
-      assert.equal(r.j.ok, false, nome);
-      assert.equal(r.j.erro, 'nao_implementado', `${nome}: ${r.out}`);
+      assert.equal(r.j.ok, erro === null, nome);
+      if (erro !== null) assert.equal(r.j.erro, erro, `${nome}: ${r.out}`);
+      else assert.equal(r.j.oferecer, false, `${nome}: ${r.out}`);
+      assert.notEqual(r.j.erro, 'nao_implementado', nome);
       assert.deepEqual(foto(amb.dir), antes, `${nome}: gravou algo`);
     }
     assert.equal(amb.eventos().length, 0);

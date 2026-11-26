@@ -11,7 +11,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { casarAgente, casarVivo, estadoDoVivo, higienizarDescricao, idsEncerrados, nomesPorPapel, papelDoAgente, projetarEquipe, resolverAtivos, sortearPacote, usoDoTranscript, validarNomesAgentes, validarPacote, validarStdinAgentes } from '../src/painel-equipe.ts';
+import { casarAgente, casarVivo, coberturaDoOrquestrador, estadoDoVivo, higienizarDescricao, idsEncerrados, nomesPorPapel, papelDoAgente, projetarEquipe, resolverAtivos, sortearPacote, usoDoTranscript, validarNomesAgentes, validarPacote, validarStdinAgentes } from '../src/painel-equipe.ts';
 import { projetarPainel } from '../src/painel.ts';
 import { projetarDecisoes } from '../src/sombra.ts';
 import type { AgenteVivo, EntradaPainel, Evento, PacoteNomes, Plano, TipoEvento } from '../src/tipos.ts';
@@ -1133,4 +1133,214 @@ test('equipe-tira-agente-sem-sinal-30min (r.11, C3): task NÃO integrada, sem ev
   assert.equal(resolverAtivos(PLANO, recente, comAcao(Date.parse('2026-11-09T11:00:00.000Z'), Date.parse('2026-11-09T12:21:00.000Z'))).ativos?.length, 1);
   // sem ação medida pelo mod não há prova de morte, mesmo com o diário parado há 3 h: fica (r.15, sem prova não some)
   assert.equal(resolverAtivos(PLANO, evs, entrada({ agentes: [a], agoraMs: AGORA })).ativos?.length, 1);
+});
+
+// ---- GM-20 T8 (REQ-FAN-1, 2, 3): agente fantasma sai da EQUIPE ----
+const estadosDe = (evs: Evento[]) => resolverAtivos(PLANO, evs, entrada({ agentes: [] })).estados;
+const EM_REVISAO = () => diario(ini('T07', 'implementador'), concl('T07'), ini('T07', 'revisor')); // 12:00, 12:01, 12:02Z
+const T_HB = Date.parse('2026-11-09T14:00:00.000Z');
+const fantasma = (extra: Partial<AgenteVivo> & { atividadeMs?: number } = {}): AgenteVivo => ag('T07 revisor', { id: 'ghost01', type: REV, ...extra } as Partial<AgenteVivo>);
+const comHandbacks = (agentes: AgenteVivo[], handbacks: unknown, agoraMs = AGORA) => entrada({ agentes, handbacks, agoraMs } as Partial<EntradaPainel>);
+
+test('fantasma-handback-outra-entrega (REQ-FAN-1): hand-back de outra entrega tira o agente; o id vazio ou outro não tira (MF1-a)', () => {
+  const evs = EM_REVISAO();
+  assert.equal(resolverAtivos(PLANO, evs, comHandbacks([fantasma()], {})).ativos?.length, 1, 'controle: sem hand-back fica');
+  assert.deepEqual(resolverAtivos(PLANO, evs, comHandbacks([fantasma()], { ghost01: T_HB })).ativos, []);
+  assert.equal(resolverAtivos(PLANO, evs, comHandbacks([fantasma()], { outro: T_HB })).ativos?.length, 1, 'hand-back de outro id não tira');
+  const doExibido = [...evs, ev('custo.medicao', { papel: 'revisor', modelo: 'claude-opus-4-8', input_tokens: 1, output_tokens: 1 }, '2026-11-09T14:00:00.000Z', 's1', 'subagent:ghost01')];
+  assert.deepEqual(resolverAtivos(PLANO, doExibido, comHandbacks([fantasma()], {})).ativos, [], 'o do diário exibido segue valendo');
+  assert.deepEqual([...idsEncerrados(evs, ['z'], { ghost01: T_HB })].sort(), ['ghost01', 'z']);
+  for (const lixo of [null, 'x', [1], { ghost01: 'x' }, { ghost01: NaN }]) assert.equal(resolverAtivos(PLANO, evs, comHandbacks([fantasma()], lixo)).ativos?.length, 1, `entrada fora do contrato: ${JSON.stringify(lixo)}`);
+});
+
+test('fantasma-retomado-volta (REQ-FAN-1, MF1-b): transcript mexido DEPOIS do hand-back devolve o agente; no mesmo instante ou antes, não', () => {
+  const evs = EM_REVISAO();
+  const vivo = (atividadeMs: number) => resolverAtivos(PLANO, evs, comHandbacks([fantasma({ atividadeMs })], { ghost01: T_HB }, T_HB + 60_000)).ativos?.length;
+  assert.equal(vivo(T_HB + 1001), 1, 'mtime posterior por mais de 1 s: retomado');
+  assert.equal(vivo(T_HB + 1000), 0, 'exatos 1 s: ainda dentro da margem');
+  assert.equal(vivo(T_HB), 0, 'mesmo instante: segue encerrado');
+  assert.equal(vivo(T_HB - 1), 0);
+  // o hand-back do diário exibido também cede à retomada
+  const doExibido = [...EM_REVISAO(), ev('custo.medicao', { papel: 'revisor', modelo: 'claude-opus-4-8', input_tokens: 1, output_tokens: 1 }, '2026-11-09T14:00:00.000Z', 's1', 'subagent:ghost01')];
+  assert.equal(resolverAtivos(PLANO, doExibido, comHandbacks([fantasma({ atividadeMs: T_HB + 1001 })], {}, T_HB + 60_000)).ativos?.length, 1);
+  // o `SubagentStop` do mod não cede: o mod o dá por parado agora
+  assert.deepEqual(resolverAtivos(PLANO, evs, entrada({ agentes: [fantasma({ atividadeMs: T_HB + 1001 })], encerrados: ['ghost01'], handbacks: { ghost01: T_HB }, agoraMs: T_HB + 60_000 } as Partial<EntradaPainel>)).ativos, []);
+  // o último hand-back de vários vale: retomou entre os dois e parou de novo
+  const dois = [...EM_REVISAO(), ev('custo.medicao', { papel: 'revisor', modelo: 'm', input_tokens: 1, output_tokens: 1 }, '2026-11-09T13:00:00.000Z', 's1', 'subagent:ghost01')];
+  assert.deepEqual(resolverAtivos(PLANO, dois, comHandbacks([fantasma({ atividadeMs: T_HB - 1 })], { ghost01: T_HB }, T_HB + 60_000)).ativos, []);
+});
+
+test('handback-ts-mais-100ms-segue-fora (emenda 4, REQ-FAN-1): o transcript escrito até 100 ms depois do hand-back não é retomada', () => {
+  const evs = EM_REVISAO();
+  const vivo = (atividadeMs: number) => resolverAtivos(PLANO, evs, comHandbacks([fantasma({ atividadeMs })], { ghost01: T_HB }, T_HB + 60_000)).ativos?.length;
+  assert.equal(vivo(T_HB + 100), 0);
+  assert.equal(vivo(T_HB + 999), 0);
+  assert.equal(vivo(T_HB + 1001), 1);
+});
+
+test('minor-5: mtime no futuro (além do agora) não revive o agente com hand-back', () => {
+  const evs = EM_REVISAO();
+  const vivo = (atividadeMs: number) => resolverAtivos(PLANO, evs, comHandbacks([fantasma({ atividadeMs })], { ghost01: T_HB }, T_HB + 60_000)).ativos?.length;
+  assert.equal(vivo(T_HB + 60_000), 1, 'até o agora: retomado');
+  assert.equal(vivo(T_HB + 60_001), 0, 'depois do agora: relógio, não retomada');
+});
+
+test('minor-4: hand-back com ts ilegível (borda e diário) mantém o agente fora, nem a retomada o devolve', () => {
+  const ilegivel = [...EM_REVISAO(), ev('custo.medicao', { papel: 'revisor', modelo: 'm', input_tokens: 1, output_tokens: 1 }, 'não-é-data', 's1', 'subagent:ghost01')];
+  assert.deepEqual(resolverAtivos(PLANO, ilegivel, comHandbacks([fantasma({ atividadeMs: T_HB + 5000 })], {}, T_HB + 60_000)).ativos, []);
+  assert.deepEqual(resolverAtivos(PLANO, EM_REVISAO(), comHandbacks([fantasma({ atividadeMs: T_HB + 5000 })], { ghost01: Infinity }, T_HB + 60_000)).ativos, []);
+});
+
+test('spike-fantasma-outra-entrega-nao-casa (emenda 3, REQ-FAN-3): spike com hand-back em outra entrega não casa a T0 pendente; sem hand-back casa', () => {
+  const plano = planoDe('T0', 'T07');
+  const sp = { ...vivoT('sp', 'T0 medir a paginação', 'gabarito-mestre:gabarito-spike'), atividadeMs: T_HB + 5000 };
+  const com = projetarPainel(plano, [], comHandbacks([sp as AgenteVivo], { sp: T_HB }, T_HB + 60_000));
+  assert.equal(com.plano.tasks.find((t) => t.id === 'T0')?.glifo, '○');
+  const sem = projetarPainel(plano, [], comHandbacks([sp as AgenteVivo], {}, T_HB + 60_000));
+  assert.equal(sem.plano.tasks.find((t) => t.id === 'T0')?.glifo, '●');
+});
+
+test('fantasma-silencio-60-min (REQ-FAN-2): 59 e 60 min ficam, 61 sai; sem transcript legível fica (MF2-a, b, c)', () => {
+  const evs = EM_REVISAO();
+  const com = (minutos: number | null, extra: Partial<EntradaPainel> = {}) => {
+    const a = fantasma(minutos === null ? {} : { atividadeMs: AGORA - minutos * 60_000 });
+    return resolverAtivos(PLANO, evs, entrada({ agentes: [a], agoraMs: AGORA, ...extra })).ativos?.length;
+  };
+  assert.equal(com(59), 1);
+  assert.equal(com(60), 1, '60 exatos fica');
+  assert.equal(com(60 + 1 / 60_000), 0, 'um ms acima de 60 min sai');
+  assert.equal(com(61), 0);
+  assert.equal(com(null), 1, 'sem transcript legível: a regra não vale');
+  assert.equal(com(0), 1, 'ativo agora');
+  assert.equal(com(-5), 1, 'mtime no futuro (relógio) não some');
+  // os 30 min de SEM_SINAL_MS seguem só para a ação ao vivo: 45 min de transcript sem ação do mod fica
+  assert.equal(com(45), 1);
+});
+
+test('vivo-nao-casa-task-pendente (REQ-FAN-3, MF3-a): task pendente não casa; em_revisao casa como hoje', () => {
+  const pend = diario(ini('T08', 'implementador')); // T07 pendente
+  const a = ag('T07 revisor', { id: 'ghost01', type: REV });
+  const c = casarVivo(a, PLANO, estadosDe(pend));
+  assert.deepEqual(c, { task: null, papel: null, papelExibido: 'revisor' });
+  const r = resolverAtivos(PLANO, pend, entrada({ agentes: [a] }));
+  assert.equal(r.ativos?.[0].casamento.task, null);
+  assert.ok(!r.cobertos.has('T07:revisor'));
+  const em = casarVivo(a, PLANO, estadosDe(EM_REVISAO()));
+  assert.equal(em.task, 'T07');
+  assert.equal(em.papel, 'revisor');
+  assert.equal(resolverAtivos(PLANO, EM_REVISAO(), entrada({ agentes: [a] })).ativos?.[0].casamento.task, 'T07');
+  // só o spike (Task 0, mede antes do `iniciar`) casa task pendente; os demais tipos não
+  for (const tipo of [IMPL, REV, SOMBRA, 'general-purpose']) assert.equal(casarVivo(vivoT('b', 'T07 x', tipo), PLANO, estadosDe(pend)).task, null, tipo);
+  assert.equal(casarVivo(vivoT('b', 'T07 x', 'gabarito-mestre:gabarito-spike'), PLANO, estadosDe(pend)).task, 'T07');
+  // diário ilegível (sem estado conhecido): casa como hoje, falha não vira sucesso
+  assert.equal(casarVivo(a, PLANO, new Map()).task, 'T07');
+});
+
+// ---------- GM-20 REQ-EXE-2 / REQ-EXE-3: task executada pelo orquestrador (cobertura pelo diário) ----------
+
+const MOTIVO_EXE = 'task de contrato do painel, o subagent não tem a regra';
+const EXE = { executor: 'orquestrador', motivo: MOTIVO_EXE };
+const taskDoPlano = (s: ReturnType<typeof novo>, id: string) => s.plano.tasks.find((x) => x.id === id);
+
+test('painel-task-com-orquestrador (ME2-a, ME2-b): último task.iniciada com executor ⇒ sem alerta, linha de desvio no ATENÇÃO (com e sem mod), dono orquestrador no PLANO', () => {
+  const eventos = diario(ini('T07', 'implementador', EXE), ini('T08', 'implementador'));
+  const s = novo(PLANO, eventos, { agentes: [] });
+  assert.ok(!s.atencao.includes('T07 sem agente trabalhando'), s.atencao.join('|'));
+  assert.ok(s.atencao.includes(`T07 com o orquestrador: ${MOTIVO_EXE}`), s.atencao.join('|'));
+  assert.ok(s.atencao.includes('T08 sem agente trabalhando'), 'a task sem executor segue com o alerta');
+  assert.deepEqual(s.equipe.esperando, ['T08']);
+  assert.equal(taskDoPlano(s, 'T07')?.nome, 'orquestrador');
+  assert.equal(taskDoPlano(s, 'T07')?.glifo, '●');
+  assert.notEqual(taskDoPlano(s, 'T08')?.nome, 'orquestrador');
+  // a D-G44 diz "sempre visível": sem o mod (agentes null) a linha de desvio continua lá
+  const sem = novo(PLANO, eventos, { agentes: null });
+  assert.ok(sem.atencao.includes(`T07 com o orquestrador: ${MOTIVO_EXE}`), sem.atencao.join('|'));
+  assert.equal(sem.atencao.some((x) => /sem agente trabalhando/.test(x)), false, 'sem mod não há alerta de agente');
+  assert.equal(taskDoPlano(sem, 'T07')?.nome, 'orquestrador');
+});
+
+test('painel-orquestrador-acaba-quando-sai-de-implementando: em revisão, reaberta e integrada tiram a linha e o dono', () => {
+  const casos: [string, Evento[]][] = [
+    ['em_revisao', diario(ini('T07', 'implementador', EXE), concl('T07'), ini('T07', 'revisor'))],
+    ['reaberta retomada', diario(ini('T07', 'implementador', EXE), ['task.reaberta', { task: 'T07', origem: 'retomada' }])],
+    ['reaberta dono', diario(ini('T07', 'implementador', EXE), ['task.reaberta', { task: 'T07', origem: 'dono' }])],
+    ['integrada', diario(ini('T07', 'implementador', EXE), concl('T07'), ini('T07', 'revisor'), ['review.veredito', { task: 'T07', veredito: 'APROVADO', rodada: 1, blocker: 0, major: 0 }], ['task.integrada', { task: 'T07' }])],
+  ];
+  for (const [nome, eventos] of casos) {
+    const s = novo(PLANO, eventos, { agentes: [] });
+    assert.equal(s.atencao.some((x) => /com o orquestrador/.test(x)), false, `${nome}: ${s.atencao.join('|')}`);
+    assert.notEqual(taskDoPlano(s, 'T07')?.nome, 'orquestrador', nome);
+  }
+  // reaberta (dono) em implementando: a task segue implementando e o alerta VOLTA (vale o último)
+  const volta = novo(PLANO, casos[2][1], { agentes: [] });
+  assert.ok(volta.atencao.includes('T07 sem agente trabalhando'), volta.atencao.join('|'));
+  assert.equal(taskDoPlano(volta, 'T07')?.glifo, '◐');
+});
+
+test('painel-orquestrador-linha-segue-a-cobertura-inteira (D-G44): concluída/reprovada sem outro ciclo mantêm a linha de desvio; alerta e dono seguem `implementando`', () => {
+  const casos: [string, Evento[]][] = [
+    ['concluida', diario(ini('T07', 'implementador', EXE), concl('T07'))],
+    ['reprovada', diario(ini('T07', 'implementador', EXE), concl('T07'), ['review.veredito', { task: 'T07', veredito: 'REPROVADO', rodada: 1, blocker: 1, major: 0 }])],
+  ];
+  for (const [nome, eventos] of casos) {
+    for (const agentes of [[], null]) {
+      const s = novo(PLANO, eventos, { agentes });
+      assert.ok(s.atencao.includes(`T07 com o orquestrador: ${MOTIVO_EXE}`), `${nome}: ${s.atencao.join('|')}`);
+      assert.notEqual(taskDoPlano(s, 'T07')?.nome, 'orquestrador', `${nome}: o dono só vale em implementando`);
+    }
+  }
+  assert.equal(novo(PLANO, casos[0][1], { agentes: [] }).atencao.some((x) => /T07 sem agente trabalhando/.test(x)), false);
+});
+
+test('painel-orquestrador-motivo-inteiro (spec:189 `<motivo>`): o motivo de 500 caracteres vai ao ATENÇÃO sem corte', () => {
+  const longo = 'm'.repeat(500);
+  const s = novo(PLANO, diario(ini('T07', 'implementador', { executor: 'orquestrador', motivo: longo })), { agentes: [] });
+  assert.ok(s.atencao.includes(`T07 com o orquestrador: ${longo}`), s.atencao.join('|').slice(0, 120));
+});
+
+test('painel-orquestrador-so-vale-com-forma-exata (ME1-d no painel): executor outro, motivo vazio ou só espaço não cobrem', () => {
+  for (const extra of [{ executor: 'humano', motivo: 'm' }, { executor: 'orquestrador' }, { executor: 'orquestrador', motivo: '' }, { executor: 'orquestrador', motivo: '   ' }, { executor: 'orquestrador', motivo: 5 }, { motivo: 'm' }]) {
+    const eventos = diario(ini('T07', 'implementador', extra));
+    const s = novo(PLANO, eventos, { agentes: [] });
+    assert.ok(s.atencao.includes('T07 sem agente trabalhando'), JSON.stringify(extra));
+    assert.equal(s.atencao.some((x) => /com o orquestrador/.test(x)), false, JSON.stringify(extra));
+  }
+});
+
+test('painel-orquestrador-agente-vivo-casado-vale-mais-que-nada: com agente casado a task segue com o agente (linha de desvio continua, nome do agente no AGORA)', () => {
+  const eventos = diario(ini('T07', 'implementador', EXE));
+  const r = resolverAtivos(PLANO, eventos, entrada({ agentes: [vivoT('a', 'T07 x', IMPL)] }));
+  assert.ok(r.cobertos.has('T07:implementador'));
+  assert.equal(r.ativos?.length, 1);
+});
+
+test('cobertura-do-orquestrador (cada condição da regra única): ultimo evento de ciclo, forma, motivo, estado', () => {
+  const cob = (eventos: Evento[]) => [...coberturaDoOrquestrador(eventos)];
+  const ordenado = (itens: [TipoEvento, Record<string, unknown>][]) => diario(...itens);
+  assert.deepEqual(cob(ordenado([ini('T07', 'implementador', EXE)])), [['T07', MOTIVO_EXE]]);
+  assert.deepEqual(cob(ordenado([ini('T07', 'implementador')])), [], 'sem executor');
+  assert.deepEqual(cob(ordenado([ini('T07', 'implementador', { executor: 'x', motivo: 'm' })])), [], 'executor diferente');
+  assert.deepEqual(cob(ordenado([ini('T07', 'implementador', { executor: 'orquestrador', motivo: ' ' })])), [], 'motivo só espaço');
+  assert.deepEqual(cob(ordenado([ini('T07', 'implementador', EXE), ['task.reaberta', { task: 'T07', origem: 'dono' }]])), [], 'reaberta depois: vale o último');
+  assert.deepEqual(cob(ordenado([ini('T07', 'implementador', EXE), concl('T07'), ini('T07', 'revisor')])), [], 'iniciar sem executor depois');
+  assert.deepEqual(cob(ordenado([ini('T07', 'implementador', EXE), concl('T07')])), [['T07', MOTIVO_EXE]], 'concluída ainda é a task em voo do orquestrador (1 por vez)');
+  assert.deepEqual(cob(ordenado([ini('T07', 'implementador', EXE), concl('T07'), ini('T07', 'revisor'), ['review.veredito', { task: 'T07', veredito: 'APROVADO', rodada: 1, blocker: 0, major: 0 }], ['task.integrada', { task: 'T07' }]])), [], 'integrada');
+  assert.deepEqual(cob(ordenado([ini('T07', 'implementador', EXE), concl('T07'), ['task.fora', { task: 'T07', como: 'adiada', motivo: 'm', origem: 'sombra', fonte: 'f' }]])), [], 'fora do alvo');
+  assert.deepEqual(cob(ordenado([ini('T07', 'implementador', EXE), ini('T08', 'implementador', { executor: 'orquestrador', motivo: 'outro' })])).map(([t]) => t), ['T07', 'T08']);
+  assert.deepEqual(cob(ordenado([ini('T07', 'implementador'), ['task.reaberta', { task: 'T07', origem: 'dono', ...EXE }]])), [], 'só `task.iniciada` carrega o executor; reaberta com os campos não cobre');
+  assert.deepEqual(cob(ordenado([ini('T07', 'implementador'), ini('T07', 'implementador', EXE)])), [], 'diário fora da tabela da task: falha não vira cobertura');
+  assert.deepEqual(cob([] as Evento[]), []);
+  assert.deepEqual([...coberturaDoOrquestrador(null as never)], [], 'entrada ruim nunca lança');
+});
+
+test('nomes-nao-trocam-com-evento-executor (invariante GM-15 T33): o task.iniciada com executor no fim não troca nome antigo', () => {
+  const base = diario(ini('T07', 'implementador'), ini('T08', 'implementador'));
+  const antes = nomesPorPapel(base, TM);
+  const depois = nomesPorPapel([...base, ev('task.iniciada', { task: 'T09', papel: 'implementador', ...EXE }, '2026-11-09T13:00:00.000Z')], TM);
+  for (const [k, v] of antes) assert.equal(depois.get(k), v, k);
+  // e o painel inteiro: os nomes das tasks já em curso não mudam por causa do evento novo
+  const plano = PLANO;
+  const sem = novo(plano, base, { agentes: [] });
+  const com = novo(plano, [...base, ev('task.iniciada', { task: 'T09', papel: 'implementador', ...EXE }, '2026-11-09T13:00:00.000Z')], { agentes: [] });
+  for (const t of ['T07', 'T08']) assert.equal(taskDoPlano(com, t)?.nome, taskDoPlano(sem, t)?.nome, t);
 });

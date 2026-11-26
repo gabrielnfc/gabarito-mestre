@@ -1,0 +1,266 @@
+{
+  "entrega": "GM-20",
+  "spec": "docs/superpowers/specs/2026-11-24-gm20-adocao-tardia-design.md",
+  "tasks": [
+    {
+      "id": "T1",
+      "titulo": "% do projeto sem misturar denominadores",
+      "deps": [],
+      "arquivos": [
+        "plugins/gabarito-mestre/gates/test/painel-fixtures/adotado.mjs",
+        "plugins/gabarito-mestre/gates/src/projeto.ts",
+        "plugins/gabarito-mestre/gates/src/painel-esquadrao.ts",
+        "plugins/gabarito-mestre/gates/dist/projeto.js",
+        "plugins/gabarito-mestre/gates/dist/painel-esquadrao.js",
+        "plugins/gabarito-mestre/gates/test/projeto.test.ts",
+        "plugins/gabarito-mestre/gates/test/painel-projeto.test.ts",
+        "plugins/gabarito-mestre/gates/test/aceite-gm16.test.mjs"
+      ],
+      "reqs": [
+        "REQ-PCT-1",
+        "REQ-PCT-2",
+        "REQ-PCT-3"
+      ]
+    },
+    {
+      "id": "T2",
+      "titulo": "Status terminal fora das contas",
+      "deps": [
+        "T1"
+      ],
+      "arquivos": [
+        "plugins/gabarito-mestre/gates/src/projeto.ts",
+        "plugins/gabarito-mestre/gates/src/painel-esquadrao.ts",
+        "plugins/gabarito-mestre/gates/scripts/painel.mjs",
+        "plugins/gabarito-mestre/gates/dist/projeto.js",
+        "plugins/gabarito-mestre/gates/dist/painel-esquadrao.js",
+        "plugins/gabarito-mestre/gates/test/projeto.test.ts",
+        "plugins/gabarito-mestre/gates/test/painel-projeto.test.ts",
+        "plugins/gabarito-mestre/gates/test/painel-cli.test.mjs"
+      ],
+      "reqs": [
+        "REQ-TER-1",
+        "REQ-TER-2"
+      ]
+    },
+    {
+      "id": "T3",
+      "titulo": "Plano no formato anterior",
+      "deps": [
+        "T2"
+      ],
+      "arquivos": [
+        "plugins/gabarito-mestre/gates/src/projeto.ts",
+        "plugins/gabarito-mestre/gates/scripts/painel.mjs",
+        "plugins/gabarito-mestre/gates/dist/projeto.js",
+        "plugins/gabarito-mestre/gates/test/projeto.test.ts",
+        "plugins/gabarito-mestre/gates/test/painel-cli.test.mjs",
+        "docs/superpowers/specs/2026-11-19-gm16-painel-projeto-design.md",
+        "plugins/gabarito-mestre/gates/test/aceite-gm16.test.mjs"
+      ],
+      "reqs": [
+        "REQ-LEG-1",
+        "REQ-LEG-2",
+        "REQ-LEG-3"
+      ]
+    },
+    {
+      "id": "T4",
+      "titulo": "Uma linha de previsão",
+      "deps": [
+        "T2"
+      ],
+      "arquivos": [
+        "plugins/gabarito-mestre/gates/src/painel-esquadrao.ts",
+        "plugins/gabarito-mestre/gates/dist/painel-esquadrao.js",
+        "plugins/gabarito-mestre/gates/test/painel-projeto.test.ts",
+        "plugins/gabarito-mestre/gates/test/painel-esquadrao.test.ts"
+      ],
+      "reqs": [
+        "REQ-PRV-1"
+      ]
+    },
+    {
+      "id": "T5",
+      "titulo": "Separadores com o projeto na tela",
+      "deps": [
+        "T4"
+      ],
+      "arquivos": [
+        "plugins/gabarito-mestre/gates/src/painel-esquadrao.ts",
+        "plugins/gabarito-mestre/gates/dist/painel-esquadrao.js",
+        "plugins/gabarito-mestre/gates/test/painel-altura.test.ts",
+        "plugins/gabarito-mestre/gates/test/painel-projeto.test.ts"
+      ],
+      "reqs": [
+        "REQ-SEP-1",
+        "REQ-PRV-1"
+      ]
+    },
+    {
+      "id": "T6",
+      "titulo": "Encerramento pela base da entrega",
+      "deps": [
+        "T7"
+      ],
+      "arquivos": [
+        "plugins/gabarito-mestre/gates/scripts/painel-medir.mjs",
+        "plugins/gabarito-mestre/gates/test/painel-medir.test.mjs",
+        "plugins/gabarito-mestre/gates/src/trilha.ts",
+        "plugins/gabarito-mestre/gates/dist/trilha.js",
+        "plugins/gabarito-mestre/gates/test/encerramento.test.ts",
+        "plugins/gabarito-mestre/gates/src/depende.ts",
+        "plugins/gabarito-mestre/gates/dist/depende.js",
+        "plugins/gabarito-mestre/gates/test/depende.test.ts",
+        "plugins/gabarito-mestre/gates/src/formas.ts",
+        "plugins/gabarito-mestre/gates/dist/formas.js",
+        "plugins/gabarito-mestre/gates/test/formas.test.ts"
+      ],
+      "reqs": [
+        "REQ-CRD-2"
+      ]
+    },
+    {
+      "id": "T7",
+      "titulo": "Próxima sem spec já superada",
+      "deps": [],
+      "arquivos": [
+        "plugins/gabarito-mestre/gates/src/depende.ts",
+        "plugins/gabarito-mestre/gates/dist/depende.js",
+        "plugins/gabarito-mestre/gates/test/depende.test.ts",
+        "plugins/gabarito-mestre/gates/test/entrega-encerrada-cli.test.mjs"
+      ],
+      "reqs": [
+        "REQ-PRX-1"
+      ]
+    },
+    {
+      "id": "T8",
+      "titulo": "Agente fantasma sai da equipe",
+      "deps": [
+        "T3",
+        "T5"
+      ],
+      "arquivos": [
+        "plugins/gabarito-mestre/gates/src/painel-equipe.ts",
+        "plugins/gabarito-mestre/gates/scripts/painel.mjs",
+        "plugins/gabarito-mestre/gates/dist/painel-equipe.js",
+        "plugins/gabarito-mestre/gates/test/painel-equipe.test.ts",
+        "plugins/gabarito-mestre/gates/test/painel-cli.test.mjs",
+        "plugins/gabarito-mestre/gates/test/painel.test.ts",
+        "plugins/gabarito-mestre/gates/test/painel-projeto.test.ts"
+      ],
+      "reqs": [
+        "REQ-FAN-1",
+        "REQ-FAN-2",
+        "REQ-FAN-3"
+      ]
+    },
+    {
+      "id": "T9",
+      "titulo": "Task executada pelo orquestrador",
+      "deps": [
+        "T8",
+        "T6",
+        "T10"
+      ],
+      "arquivos": [
+        "plugins/gabarito-mestre/gates/scripts/loop.mjs",
+        "plugins/gabarito-mestre/gates/src/formas.ts",
+        "plugins/gabarito-mestre/gates/src/painel-equipe.ts",
+        "plugins/gabarito-mestre/gates/src/painel.ts",
+        "plugins/gabarito-mestre/gates/src/registro.ts",
+        "plugins/gabarito-mestre/gates/dist/formas.js",
+        "plugins/gabarito-mestre/gates/dist/painel-equipe.js",
+        "plugins/gabarito-mestre/gates/dist/painel.js",
+        "plugins/gabarito-mestre/gates/dist/registro.js",
+        "plugins/gabarito-mestre/gates/test/loop-cli-5.test.mjs",
+        "plugins/gabarito-mestre/gates/test/formas.test.ts",
+        "plugins/gabarito-mestre/gates/test/painel-equipe.test.ts",
+        "plugins/gabarito-mestre/gates/test/registro.test.ts",
+        "plugins/gabarito-mestre/skills/gabarito-loop/SKILL.md",
+        "plugins/gabarito-mestre/gates/test/skills-shell.test.mjs"
+      ],
+      "reqs": [
+        "REQ-EXE-1",
+        "REQ-EXE-2",
+        "REQ-EXE-3"
+      ]
+    },
+    {
+      "id": "T10",
+      "titulo": "Passo de adoção no --atualizar",
+      "deps": [
+        "T3"
+      ],
+      "arquivos": [
+        "plugins/gabarito-mestre/gates/scripts/onboarding-herdar.mjs",
+        "plugins/gabarito-mestre/gates/scripts/onboarding.mjs",
+        "plugins/gabarito-mestre/skills/gabarito-instalar/SKILL.md",
+        "plugins/gabarito-mestre/commands/gabarito.md",
+        "plugins/gabarito-mestre/docs/virada-2.1.md",
+        "plugins/gabarito-mestre/reference/fluxo.md",
+        "plugins/gabarito-mestre/gates/test/loop-cli-3.test.mjs",
+        "plugins/gabarito-mestre/gates/test/skills-shell.test.mjs",
+        "plugins/gabarito-mestre/gates/test/onboarding-skill.test.mjs",
+        "plugins/gabarito-mestre/gates/test/onboarding-herdar.test.mjs"
+      ],
+      "reqs": [
+        "REQ-ADO-1",
+        "REQ-ADO-2",
+        "REQ-ADO-3"
+      ]
+    },
+    {
+      "id": "T11",
+      "titulo": "Card desatualizado: avisa sem escrever",
+      "deps": [
+        "T5",
+        "T10",
+        "T8"
+      ],
+      "arquivos": [
+        "plugins/gabarito-mestre/gates/src/projeto.ts",
+        "plugins/gabarito-mestre/gates/src/painel-esquadrao.ts",
+        "plugins/gabarito-mestre/gates/dist/projeto.js",
+        "plugins/gabarito-mestre/gates/dist/painel-esquadrao.js",
+        "plugins/gabarito-mestre/gates/scripts/onboarding-herdar.mjs",
+        "plugins/gabarito-mestre/gates/test/projeto.test.ts",
+        "plugins/gabarito-mestre/gates/test/painel-projeto.test.ts",
+        "plugins/gabarito-mestre/gates/test/card-desatualizado.test.mjs",
+        "plugins/gabarito-mestre/gates/test/onboarding-herdar.test.mjs"
+      ],
+      "reqs": [
+        "REQ-CRD-1"
+      ]
+    },
+    {
+      "id": "T12",
+      "titulo": "Versão 2.3.0 e CHANGELOG",
+      "deps": [
+        "T1",
+        "T2",
+        "T3",
+        "T4",
+        "T5",
+        "T6",
+        "T7",
+        "T8",
+        "T9",
+        "T10",
+        "T11"
+      ],
+      "arquivos": [
+        "plugins/gabarito-mestre/.claude-plugin/plugin.json",
+        "plugins/gabarito-mestre/gates/package.json",
+        "plugins/gabarito-mestre/gates/test/package.test.mjs",
+        "plugins/gabarito-mestre/scripts/test/texto.test.sh",
+        "CHANGELOG.md",
+        "docs/backlog.md"
+      ],
+      "reqs": [
+        "REQ-VRS-1"
+      ]
+    }
+  ]
+}

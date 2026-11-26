@@ -6,7 +6,7 @@
  * Regras (emenda 4, itens 1 a 5):
  *  1. fontes = card (status do frontmatter), `plano.json` (ou o plano .md, `### Task N:`, quando não houver `plano.json`) e o diário, em TODAS as
  *     worktrees; falha do git ⇒ só a árvore atual + aviso (`worktreesDe`).
- *  2. PBI sem plano: "sem plano", nunca 0 %; o total diz quantos PBIs ficam fora da conta.
+ *  2. PBI sem plano: "sem plano", nunca 0 %; o total diz quantos PBIs ficam fora da conta (PBI aberto só em formato anterior NÃO entra nesse total: GM-20 DT2, REQ-PCT-3/REQ-LEG-2).
  *  3. totais: % de tasks integradas, restantes e previsão pelo ritmo medido da T30 (`ritmoDasAnteriores`): `medida` (a) só com o que tem plano;
  *     `estimada` (b) soma os PBIs sem plano pela mediana de tasks dos PBIs com plano, sinalizada.
  *  4. entrega sem `plano.json`: "fase não medida" em vez de "FASE n de 7" (`rotuloFase`).
@@ -27,7 +27,7 @@ const ID_PADRAO = /^[A-Z]+-\d+$/;
 /** O que a borda leu de UMA árvore (worktree). `planoMd` = texto do plano .md que o card aponta, lido na mesma árvore (`null` = sem arquivo). */
 export type ArvoreLida = {
   caminho: string;
-  cards: Array<{ arquivo: string; texto: string; planoMd: string | null }>;
+  cards: Array<{ arquivo: string; texto: string; planoMd: string | null; /** GM-20 REQ-LEG-1: plano antigo achado por `fluxo.planosLegados` (só sem ponteiro no card). */ planoLegado?: { caminho: string; texto: string } | null }>;
   /**
    * `plano`: `null` = sem `plano.json`; `ok:false` = arquivo ilegível. `planoCommitMs`: data (ms) do último commit que tocou o `plano.json` nesta
    * árvore (`git log -1`, lido por quem chama); `null`/ausente = sem git ou não versionado. `eventos`: `null` = diário ilegível.
@@ -36,7 +36,7 @@ export type ArvoreLida = {
 };
 
 export type Card = { id: string; status: string | null; titulo: string | null; atualizadoEm: string | null; planoMd: string | null; /** valor da chave de Epic no frontmatter; `null` = sem chave ou sem valor. */ epic: string | null };
-/** `integradas` = medidas no diário; `estimadas` = de PBI concluído sem registro no diário (emenda 18 p.2): nunca somam às medidas. */
+/** `integradas` = medidas no diário; `estimadas` = de PBI concluído sem registro no diário (emenda 18 p.2): nunca somam às medidas e nunca somam na previsão; no % exibido somam (D-G42). */
 export type TasksLinha = { total: number; integradas: number; estimadas: number; restantes: number; fora: number };
 export type LinhaProjeto = {
   id: string;
@@ -44,10 +44,12 @@ export type LinhaProjeto = {
   status: string | null;
   /** card "Concluído" (ou o `concluido` da config) ou `entrega.encerrada` sem `entrega.reaberta` depois. */
   feito: boolean;
+  /** REQ-CRD-1: status do card quando a entrega está encerrada e o card não é feito (o plugin nunca escreve no card); `null` = sem desatualização. */
+  cardDesatualizado: string | null;
   /** Epic do card (REQ-PRJ-3 b); `null` = sem Epic, ou vínculo que não é frontmatter. */
   epic: string | null;
   plano: 'json' | 'md' | null;
-  /** fora da conta de tasks: sem plano, plano inválido ou plano .md ausente. */
+  /** fora da conta de tasks: sem plano, plano inválido, plano .md ausente ou .md sem task contável ("formato anterior", GM-20). */
   semPlano: boolean;
   tasks: TasksLinha | null;
   /** `null` = fora da conta (nunca 0 % por falta de plano). Só o medido. */
@@ -81,7 +83,7 @@ export type EstadoProjeto = {
   linhas: LinhaProjeto[];
   /** Só com os PBIs abertos em 2 grupos ou mais (contando "sem Epic"); senão `[]`. Ordem: menor ID aberto; "sem Epic" por último. */
   grupos: GrupoEpic[];
-  totais: { pbis: number; feitos: number; foraDaConta: number; opcoes: number; tasks: number; integradas: number; estimadas: number; restantes: number; pct: number | null; pctComEstimadas: number | null; previsao: PrevisaoProjeto };
+  totais: { pbis: number; feitos: number; foraDaConta: number; opcoes: number; /** cards em status terminal sem medição (DT5): fora de linhas, pbis, % e previsão. */ terminais: number; tasks: number; integradas: number; estimadas: number; restantes: number; pct: number | null; pctComEstimadas: number | null; previsao: PrevisaoProjeto };
   avisos: string[];
 };
 
@@ -110,6 +112,27 @@ export function worktreesDe(git: { ok: true; saida: string } | { ok: false; moti
 export function planoMdDoCard(texto: string): string | null {
   const m = /Plano:\s*`([^`]+\.md)`/.exec(String(texto));
   return m === null ? null : m[1];
+}
+
+/**
+ * GM-20 REQ-LEG-1/3 (DT3): padrão de plano antigo = pasta literal relativa + nome com `{PBI}` e `*` (só no nome; `{PBI}` na pasta é inválido). `..`, absoluto, `**`, `*` na pasta, vazio ⇒ `null`.
+ */
+export function padraoLegadoValido(padrao: unknown): { dir: string; nome: string } | null {
+  if (typeof padrao !== 'string' || padrao === '' || padrao.length > 300 || padrao.includes('\0') || padrao.includes('**')) return null;
+  const partes = padrao.split('/');
+  const nome = partes[partes.length - 1];
+  const pastas = partes.slice(0, -1);
+  if (nome === '' || pastas.includes('..') || pastas.includes('') || pastas.some((p) => p.includes('*') || p.includes('{PBI}') || p === '.')) return null;
+  return { dir: pastas.join('/'), nome };
+}
+
+/** Os `nomes` (arquivos da pasta do padrão) que casam `padrao` para o PBI `id`; `{PBI}` casa o id sem alfanumérico antes (XPBI-3 não casa PBI-3) e sem dígito depois (PBI-1 não casa PBI-10). Padrão inválido ⇒ `null`. */
+export function planoLegadoDe(nomes: string[], padrao: unknown, id: string): string[] | null {
+  const v = padraoLegadoValido(padrao);
+  if (v === null) return null;
+  const esc = (t: string): string => t.replace(/[.+?^$()|[\]\\{}]/g, '\\$&');
+  const re = new RegExp(`^${v.nome.split('{PBI}').map((q) => q.split('*').map(esc).join('[^/]*')).join(`(?<![A-Za-z0-9])${esc(id)}(?!\\d)`)}$`);
+  return nomes.filter((n) => re.test(n));
 }
 
 /** Card FL1: frontmatter `id` (casa `idPadrao`; senão `null`, ex. `PBI-EXEMPLO`), `status`, `atualizadoEm`; título = 1º `# `. */
@@ -224,6 +247,41 @@ export function ehFeito(status: string | null, statusCfg?: unknown): boolean {
   return typeof c === 'string' && semAcento(c) !== '' && semAcento(c) === s;
 }
 
+/**
+ * REQ-CRD-1 (D-G43, D-G46), regra única (o `herdar` a importa do `dist/`): há card, a entrega está encerrada (a última entre `entrega.encerrada` e
+ * `entrega.reaberta` é a encerrada) e o status do card ainda não é "feito". O plugin só AVISA; nenhum caminho dele escreve no card.
+ * `eventos` em ordem cronológica.
+ */
+export function cardDesatualizado(card: Card | null, eventos: Evento[], statusFl1?: unknown): boolean {
+  return card !== null && encerrada(eventos) && !ehFeito(card.status, statusFl1);
+}
+
+/** DT5 (GM-20): status terminal padrão (card encerrado sem entrega); `fluxo.status.terminais` na config substitui a lista. */
+export const TERMINAIS_PADRAO: readonly string[] = ['Superado', 'Cancelado', 'Descartado'];
+
+/** `fluxo.status.terminais` válido ⇒ a lista (de textos não vazios; `[]` vale e não deixa nada terminal); ausente ⇒ o padrão; qualquer outra forma ⇒ `null` (o chamador avisa e usa o padrão). */
+export function terminaisValidos(cfg: unknown): string[] | null {
+  if (!Array.isArray(cfg)) return null;
+  return cfg.every((x) => typeof x === 'string' && semAcento(x) !== '') ? (cfg as string[]) : null;
+}
+
+/**
+ * Regra única de "terminal" (DT5): o 1º termo do status (até ` — `, ` – `, ` - `, `:` ou `(`), sem acento, caixa nem espaço nas pontas, é um dos terminais.
+ * `terminais` ausente ou inválido ⇒ o padrão. Igualdade do 1º termo inteiro: `Superadoria` não casa `Superado`.
+ */
+/** O 1º termo do status (até ` — `, ` – `, ` - `, `:` ou `(`), sem espaço nas pontas: o que `ehTerminal` compara (e o que o `herdar --gravar --terminais` grava). */
+export function primeiroTermo(status: string): string {
+  return (status.split(/ [—–-] |:|\(/)[0] ?? '').trim();
+}
+
+export function ehTerminal(status: string | null, terminais?: unknown): boolean {
+  if (status === null) return false;
+  const primeiro = semAcento(primeiroTermo(status));
+  if (primeiro === '') return false;
+  const lista = terminais === undefined ? TERMINAIS_PADRAO : (terminaisValidos(terminais) ?? TERMINAIS_PADRAO);
+  return lista.some((t) => semAcento(t) === primeiro);
+}
+
 const CHAVE_EPIC = /^[A-Za-z][A-Za-z0-9_-]*$/;
 
 /** `fluxo.vinculoPbiEpic`: só `tipo` = `frontmatter` agrupa; a chave é `nome` (válido) ou `epic`. Outro vínculo (MCP) ou ilegível ⇒ `null`. */
@@ -236,19 +294,20 @@ function chaveEpicDe(vinculo: unknown): string | null {
 
 type Fonte = { idx: number; caminho: string };
 
-export function projetarProjeto(arvores: ArvoreLida[], opcoes: { agoraMs: number; fuso: string; idPadrao?: RegExp; avisos?: string[]; statusFl1?: unknown; opcoesComoContagem?: boolean; vinculo?: unknown; titulosEpic?: Record<string, string> }): EstadoProjeto {
+export function projetarProjeto(arvores: ArvoreLida[], opcoes: { agoraMs: number; fuso: string; idPadrao?: RegExp; avisos?: string[]; statusFl1?: unknown; terminais?: unknown; opcoesComoContagem?: boolean; vinculo?: unknown; titulosEpic?: Record<string, string> }): EstadoProjeto {
   // D-G27: só o booleano `true` liga; a borda lê a config, o núcleo nunca
   const opcoesLigadas = opcoes.opcoesComoContagem === true;
   let nOpcoes = 0;
+  let nTerminais = 0;
   const idPadrao = opcoes.idPadrao ?? ID_PADRAO;
   const chaveEpic = chaveEpicDe(opcoes.vinculo);
   const avisos = [...(opcoes.avisos ?? [])];
-  const cards = new Map<string, Array<Card & Fonte & { textoMd: string | null }>>();
+  const cards = new Map<string, Array<Card & Fonte & { textoMd: string | null; legado: { caminho: string; texto: string } | null }>>();
   const entregas = new Map<string, Array<ArvoreLida['entregas'][number] & Fonte>>();
   arvores.forEach((a, idx) => {
     for (const c of a.cards ?? []) {
       const card = cardDe(c.arquivo, c.texto, idPadrao, chaveEpic);
-      if (card !== null) cards.set(card.id, [...(cards.get(card.id) ?? []), { ...card, idx, caminho: a.caminho, textoMd: c.planoMd }]);
+      if (card !== null) cards.set(card.id, [...(cards.get(card.id) ?? []), { ...card, idx, caminho: a.caminho, textoMd: c.planoMd, legado: c.planoLegado ?? null }]);
     }
     for (const e of a.entregas ?? []) {
       if (idPadrao.test(e.id)) entregas.set(e.id, [...(entregas.get(e.id) ?? []), { ...e, idx, caminho: a.caminho }]);
@@ -271,14 +330,22 @@ export function projetarProjeto(arvores: ArvoreLida[], opcoes: { agoraMs: number
     eventos.sort((a, b) => msDe(a) - msDe(b) || cmp(String(a.sessao), String(b.sessao)) || a.seq - b.seq);
     // REQ-PRJ-2 (b, c): com a chave ligada, card COM status fora do quadro FL1 é opção (não vira linha); a medição vence o card; diário ilegível conta como medição (nunca ausência)
     const medido = ents.some((e) => e.plano !== null) || ents.some((e) => e.eventos === null) || eventos.some((ev) => TIPOS_DE_TASK.includes(ev.tipo));
+    // GM-20 DT5: terminal ANTES da opção (e vale com a chave ligada ou não); a medição vence, como na opção, e avisa
+    if (card !== null && ehTerminal(card.status, opcoes.terminais)) {
+      if (!medido) { nTerminais++; continue; }
+      avisos.push(`${id}: status terminal com trabalho medido`);
+    }
     if (opcoesLigadas && card !== null && card.status !== null && !ehColunaFl1(card.status, opcoes.statusFl1) && !medido) { nOpcoes++; continue; }
     if (eventos.length > 0) diarios.push({ id, eventos });
     const feito = (card !== null && ehFeito(card.status, opcoes.statusFl1)) || encerrada(eventos);
+    const desatualizado = cardDesatualizado(card, eventos, opcoes.statusFl1) ? (card?.status ?? '(sem status)') : null;
+    if (desatualizado !== null) avisos.push(`${id}: card "${desatualizado}" desatualizado (entrega encerrada)`);
     // plano: inválido ⇒ "?" (nunca o .md nem plano velho); sem plano.json, o .md do card
     const comJson = escolherPlanoJson(ents);
     let plano: LinhaProjeto['plano'] = null;
     let taskIds: string[] | null = null;
     let motivo: string | null = null;
+    let mdTexto: string | null = null;
     let origem = card?.caminho ?? ents[0]?.caminho ?? '';
     if (comJson !== undefined && comJson.plano !== null) {
       origem = comJson.caminho;
@@ -289,10 +356,12 @@ export function projetarProjeto(arvores: ArvoreLida[], opcoes: { agoraMs: number
       }
     } else if (card !== null && card.planoMd !== null) {
       if (card.textoMd === null) motivo = `plano ${card.planoMd} não encontrado`;
-      else {
-        const ts = tasksDoPlanoMd(card.textoMd);
-        if (ts.length > 0) { plano = 'md'; taskIds = ts; origem = card.caminho; }
-      }
+      else mdTexto = card.textoMd;
+    } else if (card !== null && card.legado !== null) mdTexto = card.legado.texto; // GM-20: ponteiro vale mais que o padrão
+    if (mdTexto !== null && card !== null) {
+      const ts = tasksDoPlanoMd(mdTexto);
+      plano = 'md'; // GM-20 REQ-LEG-2: .md sem task contável é "plano (formato anterior)", não "sem plano"
+      if (ts.length > 0) { taskIds = ts; origem = card.caminho; }
     }
     let tasks: TasksLinha | null = null;
     if (taskIds !== null) {
@@ -310,34 +379,35 @@ export function projetarProjeto(arvores: ArvoreLida[], opcoes: { agoraMs: number
       const estimadas = feito ? total - integradas : 0;
       tasks = { total, integradas, estimadas, restantes: total - integradas - estimadas, fora };
     }
-    const semPlano = tasks === null;
+    const formatoAnterior = tasks === null && plano === 'md' && motivo === null;
+    const semPlano = tasks === null && !formatoAnterior;
     const pctDe = (n: number): number | null => (tasks === null || tasks.total <= 0 ? null : Math.round((n / tasks.total) * 100));
     const pct = tasks === null ? null : pctDe(tasks.integradas);
     const pctComEstimadas = tasks === null ? null : pctDe(tasks.integradas + tasks.estimadas);
     const texto = motivo !== null ? '? plano inválido'
-      : tasks === null ? (feito ? 'feito, sem plano' : 'sem plano')
+      : tasks === null ? (formatoAnterior ? (feito ? 'feito, plano (formato anterior)' : 'plano (formato anterior)') : feito ? 'feito, sem plano' : 'sem plano')
         : feito ? (tasks.estimadas > 0 ? `feito (${tasks.estimadas} tasks estimadas)` : 'feito')
           : pct === null ? '? sem task no plano' : `${pct} % (${tasks.integradas} de ${tasks.total})`;
     linhas.push({
-      id, titulo: card?.titulo ?? null, status: card?.status ?? null, feito, epic: card?.epic ?? null, plano, semPlano, tasks, pct, pctComEstimadas, texto, motivo,
+      id, titulo: card?.titulo ?? null, status: card?.status ?? null, feito, cardDesatualizado: desatualizado, epic: card?.epic ?? null, plano, semPlano, tasks, pct, pctComEstimadas, texto, motivo,
       fase: plano === 'json' ? null : ROTULO_FASE_NAO_MEDIDA, origem,
     });
   }
-  // totais: medidas e estimadas separadas (p.2); o sem plano fica fora da conta
+  // totais: medidas e estimadas separadas (p.2); o sem plano fica fora da conta; GM-20 D-G42/DT1: concluído sem `plano.json` (o .md inclusive) sai das duas pontas
   let tasks = 0, integradas = 0, estimadas = 0;
   for (const l of linhas) {
-    if (l.tasks === null) continue;
+    if (l.tasks === null || (l.feito && l.plano !== 'json')) continue;
     tasks += l.tasks.total;
     integradas += l.tasks.integradas;
     estimadas += l.tasks.estimadas;
   }
   const restantes = tasks - integradas - estimadas;
-  const foraDaConta = linhas.filter((l) => l.semPlano).length;
+  const foraDaConta = linhas.filter((l) => l.semPlano && !l.feito).length;
   return {
     linhas,
     grupos: gruposDe(linhas, opcoes.titulosEpic),
     totais: {
-      pbis: linhas.length, opcoes: nOpcoes, feitos: linhas.filter((l) => l.feito).length, foraDaConta, tasks, integradas, estimadas, restantes,
+      pbis: linhas.length, opcoes: nOpcoes, terminais: nTerminais, feitos: linhas.filter((l) => l.feito).length, foraDaConta, tasks, integradas, estimadas, restantes,
       pct: tasks > 0 ? Math.round((integradas / tasks) * 100) : null,
       pctComEstimadas: tasks > 0 ? Math.round(((integradas + estimadas) / tasks) * 100) : null,
       previsao: previsaoDoProjeto(linhas, diarios, restantes, opcoes.agoraMs, opcoes.fuso),
@@ -377,7 +447,7 @@ function previsaoDoProjeto(linhas: LinhaProjeto[], diarios: Array<{ id: string; 
  * `null` = nenhum PBI sem plano aberto.
  */
 function estimativaSemPlano(linhas: LinhaProjeto[]): { abertos: number; tasksPorPbi: number } | { motivo: string } | null {
-  const abertos = linhas.filter((l) => l.semPlano && !l.feito).length;
+  const abertos = linhas.filter((l) => (l.semPlano || (l.plano === 'md' && l.tasks === null && l.motivo === null)) && !l.feito).length;
   if (abertos === 0) return null;
   const porPbi = linhas.filter((l) => l.tasks !== null && l.tasks.total > 0).map((l) => (l.tasks as TasksLinha).total);
   if (porPbi.length === 0) return { motivo: `sem PBI com plano para estimar os ${abertos} sem plano` };

@@ -8,7 +8,7 @@
 import { test, describe, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { raizSegura, raizesDeCheckout } from './_raiz-segura.mjs';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, existsSync, realpathSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, appendFileSync, writeFileSync, readFileSync, readdirSync, existsSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { spawnSync, execFileSync } from 'node:child_process';
@@ -20,6 +20,7 @@ import { medir } from '../scripts/painel-medir.mjs';
 import { estadoDoPainel } from '../scripts/painel.mjs';
 import { pedidoOnboarding } from '../../mod/painel.mjs';
 import { entregaPublicada, SESSAO_QUALQUER } from '../dist/guarda.js';
+import { loteDoDono } from '../dist/depende.js';
 
 const AQUI = dirname(fileURLToPath(import.meta.url));
 const FAKE_GH = join(AQUI, 'fixtures', 'gh');
@@ -783,7 +784,7 @@ test('teste-de-origem-s2-usa-raiz-segura: repo() só cria repositório em base q
 
 // ── GM-15 T4 (REQ-ENT-1 a, c; R2-1): o medir grava o encerramento ────────────────────────────────────────────────────────────────────────────
 // `gh` de fixture (fixtures/gh-encerramento/gh) com os PRs #7, #8, #16, #17, #22 e #23 como no GitHub. MUTAÇÕES: M4a não remedir o `aberto` · M4b gravar em
-// `_sem-id` · M4c `mergeado_em` do relógio local · M4d base `next` aceita na busca por título · M4e fato sem `base` encerrando (EQUIVALENTE no adaptador: `podeEncerrar`, trilha.ts:174, já recusa base≠main; só a T3 a mata) · M4f `via` perdido ·
+// `_sem-id` · M4c `mergeado_em` do relógio local · M4d base `next` aceita na busca por título · M4e fato sem `base` encerrando (EQUIVALENTE no adaptador: `podeEncerrar`, trilha.ts:174, recusa a base ≠ da entrega; só a T3 a mata) · M4f `via` perdido ·
 // X1 sem `casaTitulo` na busca por título · X3 sem `casaTitulo` no `pr view` · X5 título casa qualquer ocorrência do ID (não só o prefixo).
 describe('medir: grava o encerramento da entrega (REQ-ENT-1 a, c)', () => {
   const GH_ENC = join(AQUI, 'fixtures', 'gh-encerramento');
@@ -1070,5 +1071,207 @@ describe('medir: grava o encerramento da entrega (REQ-ENT-1 a, c)', () => {
     const extra2 = [{ number: 42, state: 'MERGED', baseRefName: 'main', headRefName: 'next', title: 'entra a GM-32 na main', mergedAt: '2026-11-16T08:00:00Z' }];
     assert.equal(medirEnc(d2, { extra: extra2 }).ok, true);
     assert.deepEqual(encerradas(d2, 'GM-32').map((e) => e.dados.pr), [42]);
+  });
+});
+
+// ── GM-20 T6 (REQ-CRD-2): o medir encerra pela base configurada da entrega ───────────────────────────────────────────────────────────────────
+// `gh` falso da fixture de encerramento + PRs a mais (GH_PRS_EXTRA). MUTAÇÕES: MC2-a literal `main` de volta em painel-medir.mjs (:374, :346, :348, :356) ·
+// MC2-b aceitar qualquer base · MC2-c base lida do checkout em vez de `resolverBaseEntrega` (origin vence o HEAD).
+describe('medir: encerra pela base configurada da entrega (REQ-CRD-2)', () => {
+  const GH_ENC = join(AQUI, 'fixtures', 'gh-encerramento');
+  const rodarB = (extra) => (cmd, args, { cwd, timeoutMs }) => {
+    const env = { ...process.env, GIT_OPTIONAL_LOCKS: '0' };
+    if (cmd === 'gh') { env.PATH = `${GH_ENC}:${process.env.PATH}`; env.GH_PRS_EXTRA = JSON.stringify(extra); }
+    return spawnSync(cmd, args, { cwd, encoding: 'utf8', timeout: timeoutMs, env, stdio: ['ignore', 'pipe', 'pipe'] });
+  };
+  const medirB = (d, extra) => medir(d, { rodar: rodarB(extra), agentes: entrada([]), timeoutMs: 5000, agora: () => Date.parse('2026-11-24T09:00:00Z') });
+  const encerradasB = (d, id) => (existsSync(dirDe(d, id)) ? ler(dirDe(d, id)).filter((e) => e.tipo === 'entrega.encerrada') : []);
+  /** Commita no HEAD um `harness.config.json` que declara `entrega.base`. */
+  const baseNoHead = (d, base) => { writeFileSync(join(d, 'harness.config.json'), `${JSON.stringify({ entrega: { base } })}\n`); git(d, 'add', 'harness.config.json'); git(d, 'commit', '-q', '-m', 'base'); };
+  const pr = (numero, base, extra = {}) => ({ number: numero, state: 'MERGED', baseRefName: base, headRefName: 'enabler/GM-30-x', title: 'enabler(GM-30): x', mergedAt: '2026-11-23T08:00:00Z', ...extra });
+  const BR = 'enabler/GM-30-x';
+
+  test('medir-encerra-pela-base-da-entrega: base next mergeado encerra (via head), com o PR gravado', () => {
+    const d = repo(BR); baseNoHead(d, 'next');
+    assert.equal(medirB(d, [pr(31, 'next')]).ok, true);
+    assert.deepEqual(encerradasB(d, 'GM-30').map((e) => [e.dados.pr, e.dados.via]), [[31, 'head']]);
+  });
+
+  test('base next: PR mergeado em main (a virada) não encerra por ele, e o fato pr segue gravado com a base', () => {
+    const d = repo(BR); baseNoHead(d, 'next');
+    assert.equal(medirB(d, [pr(32, 'main')]).ok, true);
+    assert.equal(encerradasB(d, 'GM-30').length, 0);
+    assert.ok(fatos(d, 'GM-30', 'pr').some((e) => e.dados.valor.numero === 32 && e.dados.valor.base === 'main'));
+  });
+
+  test('base next, via título (head de outra branch): busca `--base next` e encerra; PR de título em main não', () => {
+    const d = repo('enabler/GM-30-outra'); baseNoHead(d, 'next');
+    const log = join(mkdtempSync(join(tmpdir(), 'base log ')), 'gh.log');
+    const gh = rodarB([pr(33, 'next', { headRefName: 'next', title: 'release(GM-30): x' }), pr(34, 'main', { headRefName: 'next', title: 'release(GM-30): y' })]);
+    const r = medir(d, { rodar: (c, a, o) => { if (c === 'gh') appendFileSync(log, `${a.join(' ')}\n`); return gh(c, a, o); }, agentes: entrada([]), timeoutMs: 5000, agora: () => Date.parse('2026-11-24T09:00:00Z') });
+    assert.equal(r.ok, true, JSON.stringify(r.falhas));
+    assert.deepEqual(encerradasB(d, 'GM-30').map((e) => e.dados.pr), [33]);
+    const busca = readFileSync(log, 'utf8').split('\n').find((l) => l.includes('--search'));
+    assert.match(busca, /--base next /);
+  });
+
+  test('sem config de base: a base é main, como hoje (main encerra, next não)', () => {
+    const d = repo(BR);
+    assert.equal(medirB(d, [pr(35, 'main')]).ok, true);
+    assert.deepEqual(encerradasB(d, 'GM-30').map((e) => e.dados.pr), [35]);
+    const d2 = repo(BR);
+    assert.equal(medirB(d2, [pr(36, 'next')]).ok, true);
+    assert.equal(encerradasB(d2, 'GM-30').length, 0);
+  });
+
+  test('PR mergeado na base sem mergedAt é descartado (gh_json_invalido, nada gravado) na base configurada; em outra base não falha', () => {
+    const d = repo(BR); baseNoHead(d, 'next');
+    const r = medirB(d, [pr(37, 'next', { mergedAt: null })]);
+    assert.ok(r.falhas.some((f) => f.startsWith('gh_json_invalido')), JSON.stringify(r.falhas));
+    assert.equal(encerradasB(d, 'GM-30').length, 0);
+    assert.equal(fatos(d, 'GM-30', 'pr').length, 0);
+    const d2 = repo(BR); baseNoHead(d2, 'next');
+    const r2 = medirB(d2, [pr(38, 'main', { mergedAt: null })]);
+    assert.equal(r2.falhas.some((f) => f.startsWith('gh_json_invalido')), false, 'a regra do `mergedAt` é da base da entrega, não de main');
+  });
+
+  test('remedição por número (o diário dá o PR como aberto; a busca por título não o acha): base next casa por título e encerra; base main não', () => {
+    const semBusca = (extra) => { const gh = rodarB(extra); return (c, a, o) => (c === 'gh' && a.includes('--search') ? { status: 0, stdout: '[]', stderr: '' } : gh(c, a, o)); };
+    const aberto = (d) => { const r = append(dirDe(d, 'GM-30'), 'antiga', { ts: '2026-11-22T00:00:00.000Z', autor: 'painel', sessao: 'antiga', agente: 'painel', tipo: 'fato.medido', dados: { chave: 'pr', fonte: 'gh', valor: { numero: 41, estado: 'aberto', branch: 'next' } } }); assert.equal(r.ok, true); };
+    const viaNumero = (base) => ({ number: 41, state: 'MERGED', baseRefName: base, headRefName: 'next', title: 'release(GM-30): z', mergedAt: '2026-11-23T08:00:00Z' });
+    const rodaEm = (d, extra) => medir(d, { rodar: semBusca(extra), agentes: entrada([]), timeoutMs: 5000, agora: () => Date.parse('2026-11-24T09:00:00Z') });
+    const d = repo('enabler/GM-30-outra'); baseNoHead(d, 'next'); aberto(d);
+    assert.equal(rodaEm(d, [viaNumero('next')]).ok, true);
+    assert.deepEqual(encerradasB(d, 'GM-30').map((e) => [e.dados.pr, e.dados.via]), [[41, 'titulo']]);
+    const d2 = repo('enabler/GM-30-outra'); baseNoHead(d2, 'next'); aberto(d2);
+    assert.equal(rodaEm(d2, [viaNumero('main')]).ok, true);
+    assert.equal(encerradasB(d2, 'GM-30').length, 0);
+  });
+
+  test('a exceção de virada de pré-versão segue valendo com a base configurada (MC2-f: tirar ehViradaDePreVersao da coleta ⇒ cai)', () => {
+    const d = repo(BR); baseNoHead(d, 'next');
+    assert.equal(medirB(d, [pr(43, 'next', { title: 'release(GM-30): 2.3.0-alpha.1' })]).ok, true);
+    assert.equal(encerradasB(d, 'GM-30').length, 0, 'PR de pré-versão na base next não encerra');
+    assert.ok(fatos(d, 'GM-30', 'pr').some((e) => e.dados.valor.numero === 43 && e.dados.valor.pre_versao === '2.3.0-alpha.1'));
+    const d2 = repo(BR); baseNoHead(d2, 'next');
+    assert.equal(medirB(d2, [pr(44, 'next')]).ok, true);
+    assert.deepEqual(encerradasB(d2, 'GM-30').map((e) => e.dados.pr), [44], 'controle: o mesmo PR sem pré-versão encerra');
+  });
+
+  test('o aviso da base (origin sem entrega.base, HEAD declara) sai em `avisos`, sem derrubar ok; sem aviso, o campo não existe', () => {
+    const d = repo(BR); baseNoHead(d, 'next');
+    const r = medirB(d, [pr(42, 'next')]);
+    assert.equal(r.ok, true);
+    assert.ok(Array.isArray(r.avisos) && r.avisos.some((a) => a.includes('origin/HEAD sem entrega.base')), JSON.stringify(r.avisos));
+    assert.equal(medirB(repo(BR), []).avisos, undefined);
+  });
+
+  test('base divergente origin x HEAD segue resolverBaseEntrega: origin (next) vence o HEAD (main)', () => {
+    const d = repo(BR); baseNoHead(d, 'next');
+    const bare = join(raizSegura(realpathSync(mkdtempSync(join(tmpdir(), 'base origin ')))), 'o.git');
+    git(d, 'init', '-q', '--bare', '-b', 'main', bare);
+    git(d, 'remote', 'add', 'origin', bare);
+    git(d, 'push', '-q', 'origin', 'HEAD:main'); // a origin declara next
+    baseNoHead(d, 'main'); // o HEAD local declara main (não publicado)
+    git(d, 'fetch', '-q', 'origin');
+    git(d, 'remote', 'set-head', 'origin', 'main');
+    assert.equal(medirB(d, [pr(39, 'main'), pr(40, 'next', { mergedAt: '2026-11-23T09:00:00Z' })]).ok, true);
+    assert.deepEqual(encerradasB(d, 'GM-30').map((e) => e.dados.pr), [40]);
+  });
+});
+
+// ── GM-20 T6 (D-G47): o medir grava o sha da encerrada e o PR em main que o contém ──────────────────────────────────────────────────────────
+// MUTAÇÕES: MC2-h `sha` fora da encerrada ⇒ cai · MC2-i `contem` fora do fato ⇒ cai · MC2-j busca da virada sem o sha da encerrada (qualquer PR em main) ⇒ cai o caso "outro PR".
+describe('medir: virada da base para main (D-G47, REQ-CRD-2)', () => {
+  const GH_ENC = join(AQUI, 'fixtures', 'gh-encerramento');
+  const SHA = 'a4fc50d7'.padEnd(40, '0');
+  const BR = 'enabler/GM-30-x';
+  const pr = (numero, base, extra = {}) => ({ number: numero, state: 'MERGED', baseRefName: base, headRefName: 'enabler/GM-30-x', title: 'enabler(GM-30): x', mergedAt: '2026-11-23T08:00:00Z', ...extra });
+  /** `gh` que responde `--search <sha>` com GH_VIRADA (o fixture só busca por título) e delega o resto ao gh falso da encerrada. */
+  const dirGh = () => {
+    const dir = mkdtempSync(join(tmpdir(), 'gh virada '));
+    writeFileSync(join(dir, 'gh'), `#!/usr/bin/env node
+const a = process.argv.slice(2); const i = a.indexOf('--search');
+if (i >= 0 && /^[0-9a-f]{40}$/.test(a[i + 1] ?? '')) { require('node:fs').appendFileSync(process.env.GH_LOG_VIRADA, a.join(' ') + '\\n'); process.stdout.write(process.env.GH_VIRADA ?? '[]'); process.exit(0); }
+const r = require('node:child_process').spawnSync(process.env.GH_REAL, a, { stdio: 'inherit', env: process.env }); process.exit(r.status ?? 1);
+`, { mode: 0o755 });
+    return dir;
+  };
+  const ambiente = (extra, virada) => {
+    const log = join(mkdtempSync(join(tmpdir(), 'gh log ')), 'v.log');
+    return { PATH: `${dirGh()}:${process.env.PATH}`, GH_REAL: join(GH_ENC, 'gh'), GH_PRS_EXTRA: JSON.stringify(extra), GH_VIRADA: JSON.stringify(virada), GH_LOG_VIRADA: log, log };
+  };
+  const baseNoHead = (d, base) => { writeFileSync(join(d, 'harness.config.json'), `${JSON.stringify({ entrega: { base } })}\n`); git(d, 'add', 'harness.config.json'); git(d, 'commit', '-q', '-m', 'base'); };
+  const rodar = (amb) => (cmd, args, { cwd, timeoutMs }) => spawnSync(cmd, args, { cwd, encoding: 'utf8', timeout: timeoutMs, env: { ...process.env, ...amb }, stdio: ['ignore', 'pipe', 'pipe'] });
+  const medirV = (d, amb) => medir(d, { rodar: rodar(amb), agentes: entrada([]), timeoutMs: 5000, agora: () => Date.parse('2026-11-24T09:00:00Z') });
+  const dirG = (d) => join(d, '.harness', 'entregas', 'GM-30');
+  const encerradas = (d) => ler(dirG(d)).filter((e) => e.tipo === 'entrega.encerrada');
+  const prsMedidos = (d) => ler(dirG(d)).filter((e) => e.tipo === 'fato.medido' && e.dados.chave === 'pr').map((e) => e.dados.valor);
+  const PLANO = { entrega: 'GM-30', tasks: [{ id: 'T1', deps: [], arquivos: ['a'] }] };
+  const CFG = { liberaTeto: false, julgaEmendas: false, autonomiaEntrega: false, base: 'next' };
+  const lote = (d) => loteDoDono(PLANO, ler(dirG(d)), CFG).map((i) => i.motivo);
+  const VIRADA_MOTIVO = 'no fim da entrega: levar next para main';
+
+  test('a encerrada grava o sha do commit de merge quando o gh o dá; sem `mergeCommit`, sem o campo', () => {
+    const d = repo(BR); baseNoHead(d, 'next');
+    assert.equal(medirV(d, ambiente([pr(31, 'next', { mergeCommit: { oid: SHA } })], [])).ok, true);
+    assert.deepEqual(encerradas(d).map((e) => e.dados.sha), [SHA]);
+    const d2 = repo(BR); baseNoHead(d2, 'next');
+    assert.equal(medirV(d2, ambiente([pr(31, 'next')], [])).ok, true);
+    assert.equal(encerradas(d2).length, 1);
+    assert.equal('sha' in encerradas(d2)[0].dados, false);
+    const d3 = repo(BR); baseNoHead(d3, 'next');
+    assert.equal(medirV(d3, ambiente([pr(31, 'next', { mergeCommit: { oid: 'xyz' } })], [])).ok, true, 'oid ilegível não falha a medição');
+    assert.equal('sha' in encerradas(d3)[0].dados, false);
+  });
+
+  test('encerrada com sha, base next: o medir busca o PR em main pelo sha e grava o fato pr com `contem`; o lembrete da virada sai SÓ então', () => {
+    const d = repo(BR); baseNoHead(d, 'next');
+    const amb1 = ambiente([pr(31, 'next', { mergeCommit: { oid: SHA } })], []);
+    assert.equal(medirV(d, amb1).ok, true);
+    assert.deepEqual(lote(d), [VIRADA_MOTIVO], 'encerrada e ainda sem a virada');
+    // 2ª medição: a busca por sha acha o PR da virada
+    const virada = [pr(50, 'main', { headRefName: 'next', title: 'release: 2.3.0 (next → main)', mergedAt: '2026-11-24T08:00:00Z' })];
+    const amb2 = ambiente([pr(31, 'next', { mergeCommit: { oid: SHA } })], virada);
+    assert.equal(medirV(d, amb2).ok, true);
+    assert.match(readFileSync(amb2.log, 'utf8'), new RegExp(`--base main --state merged --search ${SHA}`));
+    assert.deepEqual(prsMedidos(d).filter((v) => v.numero === 50).map((v) => [v.base, v.estado, v.contem]), [['main', 'mergeado', SHA]]);
+    assert.deepEqual(lote(d), []);
+  });
+
+  test('PR em main que a busca não devolve (não contém o sha) não tira o lembrete, mesmo medido pelo head (MC2-j)', () => {
+    const d = repo(BR); baseNoHead(d, 'next');
+    assert.equal(medirV(d, ambiente([pr(31, 'next', { mergeCommit: { oid: SHA } })], [])).ok, true);
+    const outro = pr(51, 'main'); // achado pelo head da entrega, sem relação de commit com a encerrada
+    assert.equal(medirV(d, ambiente([pr(31, 'next', { mergeCommit: { oid: SHA } }), outro], [])).ok, true);
+    assert.ok(prsMedidos(d).some((v) => v.numero === 51 && v.base === 'main'), 'o PR de título está medido');
+    assert.equal(prsMedidos(d).some((v) => 'contem' in v), false);
+    assert.deepEqual(lote(d), [VIRADA_MOTIVO]);
+  });
+
+  test('base main (ou sem sha na encerrada): nenhuma busca por sha', () => {
+    const d = repo(BR);
+    const amb = ambiente([pr(35, 'main', { mergeCommit: { oid: SHA } })], []);
+    assert.equal(medirV(d, amb).ok, true);
+    assert.equal(medirV(d, amb).ok, true);
+    assert.equal(existsSync(amb.log), false, 'base main não busca a virada');
+    const d2 = repo(BR); baseNoHead(d2, 'next');
+    const amb2 = ambiente([pr(31, 'next')], []);
+    assert.equal(medirV(d2, amb2).ok, true);
+    assert.equal(medirV(d2, amb2).ok, true);
+    assert.equal(existsSync(amb2.log), false, 'encerrada sem sha não busca');
+  });
+
+  test('P9 pelo painel.mjs real: medir x2 grava a encerrada com sha e o fato da virada, e o `loteDoDono` lê o diário gravado', () => {
+    const d = repo(BR); baseNoHead(d, 'next');
+    const PAINEL = join(AQUI, '..', 'scripts', 'painel.mjs');
+    const cli = (amb) => spawnSync(process.execPath, [PAINEL, 'medir', '--agentes'], { cwd: d, input: JSON.stringify(entrada([])), encoding: 'utf8', env: { ...process.env, ...amb } });
+    const enc = pr(31, 'next', { mergeCommit: { oid: SHA } });
+    assert.equal(cli(ambiente([enc], [])).status, 0);
+    assert.deepEqual(encerradas(d).map((e) => e.dados.sha), [SHA]);
+    assert.deepEqual(lote(d), [VIRADA_MOTIVO]);
+    assert.equal(cli(ambiente([enc], [pr(50, 'main', { headRefName: 'next', title: 'release', mergedAt: '2026-11-24T08:00:00Z' })])).status, 0);
+    assert.equal(lerEstrito(dirG(d)).ok, true, 'o diário gravado passa na leitura estrita (formas)');
+    assert.deepEqual(lote(d), []);
   });
 });

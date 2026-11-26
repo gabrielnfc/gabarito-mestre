@@ -155,6 +155,13 @@ function exigirSha64(o     , nome        )                {
   return typeof v === 'string' && HASH_RE.test(v) ? null : `campo \`${nome}\` inválido: esperado sha256 em hex minúsculo (64)`;
 }
 
+/** GM-20 D-G47: sha de commit git (`mergeCommit.oid`), opcional: 40 a 64 hex minúsculos. */
+const SHA_GIT_RE = /^[0-9a-f]{40,64}$/;
+function shaGitOpcional(o     , nome        )                {
+  const v = campo(o, nome);
+  return v === undefined || (typeof v === 'string' && SHA_GIT_RE.test(v)) ? null : `campo \`${nome}\` inválido: esperado sha de commit em hex minúsculo (40 a 64)`;
+}
+
 /** GM-15 T36 (emenda 25 m.4): `reverte`, quando presente, é o literal `true` (o desfazer do texto de emenda revertida pelo dono). */
 function exigirReverte(o     )                {
   const v = campo(o, 'reverte');
@@ -378,6 +385,8 @@ const FORMAS_FATO                                                               
     via: (o, n) => (campo(o, n) === undefined ? null : exigirEnum(o, n, VIAS_PR)),
     // GM-15 T34 (r.13p): a pré-versão semver citada no título ou no head do PR (o que a guarda lê para não dar a entrega como publicada pela virada alpha)
     pre_versao: (o, n) => (campo(o, n) === undefined ? null : textoLinha(o, n, 64)),
+    // GM-20 D-G47: o sha de merge da encerrada que este PR (em `main`) contém: o fato que tira da lista "levar <base> para main"
+    contem: shaGitOpcional,
   }],
   ['release', { tag: (o, n) => textoLinha(o, n) }],
   ['agente', { id: (o, n) => textoLinha(o, n), papel: (o, n) => textoLinha(o, n), estado: (o, n) => textoLinha(o, n) }],
@@ -465,10 +474,11 @@ function idEntrega(o     )                {
 const entregaEncerrada        = (o) => {
   const ver = campo(o, 'versao');
   return primeiro(
-    chaveExtra(o, ['entrega', 'pr', 'via', 'mergeado_em', 'versao'], '`entrega.encerrada` carrega só {entrega, pr, via, mergeado_em, versao?}'),
+    chaveExtra(o, ['entrega', 'pr', 'via', 'mergeado_em', 'versao', 'sha'], '`entrega.encerrada` carrega só {entrega, pr, via, mergeado_em, versao?, sha?}'),
     idEntrega(o), campo(o, 'pr') === undefined ? obrigatorio('pr') : inteiroPositivo(campo(o, 'pr')) ? null : 'campo `pr` inválido: esperado inteiro ≥ 1',
     exigirEnum(o, 'via', VIAS_ENCERRAMENTO), quando(o, 'mergeado_em'),
     ver === undefined || (typeof ver === 'string' && SEMVER_RE.test(ver)) ? null : 'campo `versao` inválido: esperado X.Y.Z (semver)',
+    shaGitOpcional(o, 'sha'),
   );
 };
 
@@ -570,6 +580,14 @@ function opcionalSha(o     )                {
   return typeof v === 'string' && SHA_RE.test(v) ? null : 'campo `sha` inválido: esperado sha de commit (40 ou 64 hex minúsculos)';
 }
 
+const EXECUTOR_TASK = 'orquestrador';
+const MOTIVO_EXECUTOR_MAX = 500;
+function executorDaTask(o     )                {
+  if (!Object.hasOwn(o, 'executor') || o.executor === undefined) return null;
+  if (o.executor !== EXECUTOR_TASK) return `campo \`executor\` inválido: só \`${EXECUTOR_TASK}\` ou ausente`;
+  return textoLinha(o, 'motivo', MOTIVO_EXECUTOR_MAX);
+}
+
 /** Tipos da E1/E2 que ganharam só campos opcionais: `dados` que não é objeto segue aceito (nada que existe hoje passa a ser recusado). */
 const REGRAS_OPCIONAIS                             = new Map               ([
   [
@@ -590,6 +608,8 @@ const REGRAS_OPCIONAIS                             = new Map               ([
           : `campo \`modelo\` inválido: esperado um de ${MODELOS_TASK.join(' | ')}`,
         // GM-14 T31 Emenda 12: `sha` do `iniciar revisor` (o do diff despachado); na leitura, ausente = diário 2.0.0.
         opcionalSha(o),
+        // GM-20 REQ-EXE-1 (DT10): `executor` só `orquestrador` e, com ele, `motivo` texto de 1 linha não vazio; ausente = diário 2.2.2. A recusa de revisor e correção é do CLI.
+        executorDaTask(o),
       );
     },
   ],

@@ -54,7 +54,7 @@ export function papelDoAgente(tipo         )                                    
  * `implementador` numa task em `corrigindo` vira `correcao`; 4. tipo sem papel do gabarito ⇒ o papel do estado da task; 5. sem task, ou sem papel
  * nenhum, o do tipo só para exibição (`spike`, `sombra`). Nunca lança; `description`/`type` que não são texto ⇒ sem task.
  */
-export function casarVivo(agente         , plano       , estados                                 )            {
+export function casarVivo(agente         , plano       , estados                                 , comHandback = false)            {
   const a = ehObjeto(agente) ? agente : {};
   const desc = typeof a.description === 'string' ? a.description.trim() : '';
   const tipo = papelDoAgente(a.type);
@@ -68,8 +68,12 @@ export function casarVivo(agente         , plano       , estados                
     if (casa && (task === null || id.length > task.length)) task = id;
   }
   if (task === null) return { task: null, papel: null, papelExibido: tipo };
-  const antigo = DESCRICAO_RE.exec(desc);
   const estado = estados.get(task);
+  // GM-20 REQ-FAN-3 (DT9): a task só é do agente depois de sair de `pendente` nesta entrega; sem estado conhecido (diário ilegível) casa como antes.
+  // Exceção da Task 0 (emenda 3 de REQ-FAN-3; teste `t0-pendente-com-spike-vivo-em-curso`): o spike vivo mede antes do `iniciar` e casa a T0 pendente,
+  // só se não houver hand-back dele em nenhuma entrega (`comHandback`; teste `spike-fantasma-outra-entrega-nao-casa`)
+  if (estado === 'pendente' && !(tipo === 'spike' && !comHandback)) return { task: null, papel: null, papelExibido: tipo };
+  const antigo = DESCRICAO_RE.exec(desc);
   const doEstado = estado === undefined ? undefined : PAPEL_DO_ESTADO[estado];
   let papel                   ;
   if (antigo !== null) papel = antigo[2]         ;
@@ -444,14 +448,35 @@ const familia = (modelo         )                => {
 const STATUS_ATIVO                      = new Set(['pending', 'running', 'waiting']);
                                                                 
 
-/**
- * Ids que já pararam: `encerrados` do mod (`SubagentStop`) e `custo.medicao` de `subagent:<id>` no diário (plano B). Qualquer dos dois vence o `status`.
- */
-export function idsEncerrados(eventos          , encerrados          )              {
-  const ids = new Set        ();
+/** GM-20: o hand-back (`custo.medicao` de `subagent:<id>`) mais recente de cada id no diário; `ts` ilegível vale `Infinity` (o hand-back fica, nunca cede). Regra única: a borda (`scripts/painel.mjs`) a importa, não a copia. */
+export function handbacksDoDiario(eventos          )                      {
+  const mapa = new Map                ();
   for (const e of Array.isArray(eventos) ? eventos : []) {
-    if (ehObjeto(e) && e.tipo === 'custo.medicao' && typeof e.agente === 'string' && e.agente.startsWith('subagent:') && e.agente.length > 9) ids.add(e.agente.slice(9));
+    if (!ehObjeto(e) || e.tipo !== 'custo.medicao' || typeof e.agente !== 'string' || !e.agente.startsWith('subagent:') || e.agente.length <= 9) continue;
+    const ms = Date.parse(e.ts);
+    const id = e.agente.slice(9);
+    mapa.set(id, Math.max(mapa.get(id) ?? -Infinity, Number.isFinite(ms) ? ms : Infinity));
   }
+  return mapa;
+}
+
+/** GM-20 REQ-FAN-1: `handbacks` da borda (`{id: ms}` das outras entregas e do `_sem-id`) somados aos do diário exibido; fora do contrato ⇒ ignorado. */
+function handbacksDe(eventos          , extra          )                      {
+  const mapa = handbacksDoDiario(eventos);
+  if (ehObjeto(extra)) {
+    for (const [id, ms] of Object.entries(extra)) {
+      if (id !== '' && typeof ms === 'number' && !Number.isNaN(ms)) mapa.set(id, Math.max(mapa.get(id) ?? -Infinity, ms));
+    }
+  }
+  return mapa;
+}
+
+/**
+ * Ids que já pararam: `encerrados` do mod (`SubagentStop`), `custo.medicao` de `subagent:<id>` no diário exibido (plano B) e `handbacks` das outras
+ * entregas lidas pela borda (GM-20). Qualquer deles vence o `status`; a retomada por transcript mais novo é de `resolverAtivos`.
+ */
+export function idsEncerrados(eventos          , encerrados          , handbacks          )              {
+  const ids = new Set        (handbacksDe(eventos, handbacks).keys());
   if (Array.isArray(encerrados)) for (const id of encerrados) if (typeof id === 'string' && id !== '') ids.add(id);
   return ids;
 }
@@ -479,6 +504,37 @@ function proximoNome(pacote             , usados                     )         {
   return 'agente';
 }
 
+/** Estados em que a task já não está em voo: o executor não a ocupa (a cobertura do orquestrador some). */
+const FORA_DE_VOO                        = ['integrada', 'adiada', 'cortada'];
+
+/**
+ * GM-20 REQ-EXE-1/2 (D-G44, DT10 a DT12): a regra ÚNICA de "task com o orquestrador", lida pelo `loop.mjs iniciar --executor` (o "1 por vez") e
+ * pelo painel (alerta, ATENÇÃO, dono no PLANO). `task` → `motivo` de toda task não integrada (nem fora do alvo) cujo ÚLTIMO evento de ciclo
+ * (`task.iniciada` ou `task.reaberta`) é um `task.iniciada` com `executor === 'orquestrador'` e `motivo` texto não vazio: vale o último, e
+ * `reabrir` ou um novo `iniciar` sem executor encerram. Recebe o diário já ordenado; entrada que não é lista ⇒ vazio, nunca lança.
+ */
+export function coberturaDoOrquestrador(ordenado         )                      {
+  const cobertura = new Map                ();
+  if (!Array.isArray(ordenado)) return cobertura;
+  const ultimo = new Map                ();
+  const fila = new Map                  ();
+  for (const e of ordenado             ) {
+    if (!ehObjeto(e) || !TIPOS_DE_TASK.includes(e.tipo          ) || !ehObjeto(e.dados) || typeof e.dados.task !== 'string') continue;
+    const ev = e                     ;
+    const task = (ev.dados                    ).task;
+    fila.set(task, [...(fila.get(task) ?? []), ev]);
+    if (ev.tipo === 'task.iniciada' || ev.tipo === 'task.reaberta') ultimo.set(task, ev);
+  }
+  for (const [task, ev] of ultimo) {
+    const d = ev.dados                           ;
+    if (ev.tipo !== 'task.iniciada' || d.executor !== 'orquestrador' || typeof d.motivo !== 'string' || d.motivo.trim() === '') continue;
+    const r = estadoDe(fila.get(task)            );
+    if ('invalido' in r || FORA_DE_VOO.includes(r.estado)) continue;
+    cobertura.set(task, d.motivo);
+  }
+  return cobertura;
+}
+
                                                                                            
                               
                                                        
@@ -490,6 +546,13 @@ function proximoNome(pacote             , usados                     )         {
                                              
                         
                                    
+     
+                                                                                                                                                          
+                                                                                                                                   
+     
+                                    
+                                                                                                                                                       
+                              
   
 
 /**
@@ -499,6 +562,12 @@ function proximoNome(pacote             , usados                     )         {
  */
 /** GM-15 T35 (r.11, D-G11 d): limite FIXO sem sinal de vida (C3). */
 export const SEM_SINAL_MS = 30 * 60_000;
+/** GM-20 REQ-FAN-2 (DT8): sem atividade no transcript há mais de 60 min (> p99 de 29,9 min medido) o agente sai; só com transcript legível. */
+export const SILENCIO_MS = 60 * 60_000;
+/** GM-20 emenda 4 (REQ-FAN-1): margem da retomada; medido: 86 de 639 hand-backs (13,5 %) têm o `mtime` até 100 ms depois do `ts`. */
+export const MARGEM_RETOMADA_MS = 1000;
+/** `atividadeMs` = `mtime` do transcript que a borda leu (`AgenteVivo` não o declara: o campo é só da borda para este arquivo). */
+const atividadeDe = (a         )                => (ehObjeto(a) && typeof a.atividadeMs === 'number' && Number.isFinite(a.atividadeMs) ? a.atividadeMs : null);
 /**
  * GM-15 T35 (r.11, C2, C3): agente da EQUIPE (só agente; processo de fundo é do SEGUNDO PLANO, D-G8) que a lista do mod ainda dá por vivo, mas está morto:
  * (a) a task casada já está integrada; ou (b) o mod mediu a última ação ao vivo dele (`acoes`, FIEL-11 b) e nem ela nem o último evento da task no diário
@@ -523,19 +592,33 @@ export function resolverAtivos(plano       , eventos                 , entrada  
   const lista           = Array.isArray(eventos) ? eventos : [];
   const ord = ordemSegura(lista);
   const estados = estadosDasTasks(plano, ord);
-  const vazio                 = { ativos: null, desconhecidos: 0, esperando: [], cobertos: new Set(), estados };
+  const cobertura = coberturaDoOrquestrador(ord ?? []);
+  const orquestrador = new Map                ([...cobertura].filter(([t]) => estados.get(t) === 'implementando'));
+  const vazio                 = { ativos: null, desconhecidos: 0, esperando: [], cobertos: new Set(), estados, orquestrador, desvio: cobertura };
   if (entrada.agentes === null || entrada.agentes === undefined) return vazio;
-  const fim = idsEncerrados(lista, entrada.encerrados);
-  const pares = nomesPorPapel(lista, entrada.pacote);
   const brutos = Array.isArray(entrada.agentes) ? (entrada.agentes             ) : [];
+  const extra = (entrada                           ).handbacks;
+  const fim = idsEncerrados(lista, entrada.encerrados, extra);
+  // GM-20 REQ-FAN-1: o agente retomado (transcript mexido DEPOIS do hand-back) volta; o `SubagentStop` do mod não cede
+  const handbacks = handbacksDe(lista, extra);
+  const doMod = new Set        (Array.isArray(entrada.encerrados) ? (entrada.encerrados             ).filter((x)              => typeof x === 'string') : []);
+  for (const a of brutos) {
+    const id = ehObjeto(a) && typeof a.id === 'string' ? a.id : '';
+    const atividade = atividadeDe(a);
+    const hb = handbacks.get(id);
+    if (id !== '' && !doMod.has(id) && hb !== undefined && atividade !== null && atividade > hb + MARGEM_RETOMADA_MS && !(typeof entrada.agoraMs === 'number' && atividade > entrada.agoraMs)) fim.delete(id);
+  }
+  const pares = nomesPorPapel(lista, entrada.pacote);
   let desconhecidos = 0;
   const ativos                                                                                             = [];
   brutos.forEach((a, i) => {
     const e = estadoDoVivo(a, fim);
     if (e === 'desconhecido') { desconhecidos++; return; }
     if (e === 'encerrado') return;
+    const atividade = atividadeDe(a);
+    if (atividade !== null && typeof entrada.agoraMs === 'number' && entrada.agoraMs - atividade > SILENCIO_MS) return; // GM-20 REQ-FAN-2
     const agente = a              ;
-    const casamento = casarVivo(agente, plano, estados);
+    const casamento = casarVivo(agente, plano, estados, typeof agente.id === 'string' && handbacks.has(agente.id));
     if (semSinalDeVida(agente, casamento, estados, lista, entrada)) return;
     ativos.push({ agente, id: typeof agente.id === 'string' ? agente.id : '', casamento, nome: null, i });
   });
@@ -563,13 +646,14 @@ export function resolverAtivos(plano       , eventos                 , entrada  
   }
   const cobertos = new Set        ();
   for (const x of ativos) if (x.casamento.task !== null && x.casamento.papel !== null) cobertos.add(`${x.casamento.task}:${x.casamento.papel}`);
+  for (const t of orquestrador.keys()) cobertos.add(`${t}:implementador`); // GM-20: o orquestrador cobre a task em `implementando`
   const esperando           = [];
   for (const t of plano.tasks) {
     const estado = estados.get(t.id);
     const papel = estado === undefined ? undefined : PAPEL_DO_ESTADO[estado];
     if (papel !== undefined && !cobertos.has(`${t.id}:${papel}`)) esperando.push(t.id);
   }
-  return { ativos: ativos.map((x) => ({ agente: x.agente, id: x.id, casamento: x.casamento, nome: x.nome           })), desconhecidos, esperando, cobertos, estados };
+  return { ativos: ativos.map((x) => ({ agente: x.agente, id: x.id, casamento: x.casamento, nome: x.nome           })), desconhecidos, esperando, cobertos, estados, orquestrador, desvio: cobertura };
 }
 
 /** `tok` ausente ou corrompido é `null` (nunca 0: zero é medida, e ausente não é medida); o `contexto` válido segue valendo. */

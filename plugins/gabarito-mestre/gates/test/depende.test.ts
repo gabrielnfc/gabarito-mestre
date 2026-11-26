@@ -516,10 +516,34 @@ test('proxima-entrega-pura: spec sem encerramento mais nova pelo nome; id insegu
   const specs = [sp('docs/a/2026-01-01-x.md', 'GM-1'), sp('docs/a/2026-03-01-y.md', 'GM-3', 'Painel `x` com_tema'), sp('docs/a/2026-02-01-z.md', 'GM-2'),
     sp('docs/a/2026-04-01-w.md', 'GM 4'), sp('docs/a/2026-05-01-v.md', null)];
   assert.deepEqual(proximaEntrega(specs, new Set(), []), { tipo: 'spec', texto: 'GM-3 Painel x com tema', acoes: [{ rotulo: 'seguir', comando: '/gabarito-mestre:gabarito-loop' }] });
-  assert.equal(proximaEntrega(specs, new Set(['GM-3']), []).texto, 'GM-2 T', 'a encerrada nunca é oferecida (M8b)');
+  assert.equal(proximaEntrega(specs, new Set(['GM-1']), []).texto, 'GM-3 Painel x com tema', 'a encerrada nunca é oferecida (M8b)');
+  assert.equal(proximaEntrega(specs, new Set(['GM-3']), []).tipo, 'nenhuma', 'GM-2 é mais antiga que a encerrada GM-3 (REQ-PRX-1)');
   assert.doesNotMatch(proximaEntrega(specs, new Set(), []).texto, REGEX_TECNICA);
   for (const torto of [null, 7, 'x', [null, 1, { pbi: 'GM-9' }]]) assert.equal(proximaEntrega(torto, new Set(), null).tipo, 'nenhuma');
   assert.deepEqual(proximaEntrega([], new Set(), 'diario torto'), { tipo: 'nenhuma', texto: 'nenhuma próxima anotada', acoes: [] });
+});
+
+// ── GM-20 T7 (REQ-PRX-1): a próxima ignora spec mais antiga que a última entregue ───────────────────────────────────────────────────────
+test('proxima-ignora-spec-antiga: corte = maior caminho de spec encerrada; candidatas só acima dele', () => {
+  const sp = (caminho: string, pbi: string) => ({ caminho, pbi, titulo: 'T', sha256: '', secoes: 1 });
+  const velha = proximaEntrega([sp('docs/s/2026-10-31-a.md', 'GM-9'), sp('docs/s/2026-11-10-b.md', 'GM-13')], new Set(['GM-13']), []);
+  assert.notEqual(velha.tipo, 'spec', 'GM-9 sem diário, anterior à GM-13 encerrada, não é a próxima');
+  assert.deepEqual(velha, { tipo: 'nenhuma', texto: 'nenhuma próxima anotada', acoes: [] });
+  const nova = proximaEntrega([sp('docs/s/2026-11-10-b.md', 'GM-13'), sp('docs/s/2026-11-11-c.md', 'GM-14')], new Set(['GM-13']), []);
+  assert.equal(nova.tipo, 'spec');
+  assert.equal(nova.texto, 'GM-14 T');
+  // a spec encerrada mais nova dita o corte, mesmo com outra encerrada mais antiga e uma candidata entre as duas
+  const meio = proximaEntrega([sp('docs/s/2026-01-01-a.md', 'GM-1'), sp('docs/s/2026-02-01-b.md', 'GM-2'), sp('docs/s/2026-03-01-c.md', 'GM-3')], new Set(['GM-1', 'GM-3']), []);
+  assert.equal(meio.tipo, 'nenhuma', 'GM-2 fica entre as encerradas, abaixo do corte');
+  // mesma data no nome: o corte compara por caminho, a candidata de caminho igual ao corte não existe (a encerrada sai)
+  const sem = proximaEntrega([sp('docs/s/2026-11-10-b.md', 'GM-13'), sp('docs/s/2026-11-10-c.md', 'GM-15')], new Set(['GM-13']), []);
+  assert.equal(sem.texto, 'GM-15 T', 'caminho acima do corte por ordem de nome');
+  // fronteira estrita: candidata com o mesmo caminho do corte não passa (só acima dele)
+  assert.equal(proximaEntrega([sp('docs/s/2026-11-10-b.md', 'GM-13'), sp('docs/s/2026-11-10-b.md', 'GM-14')], new Set(['GM-13']), []).tipo, 'nenhuma');
+  // sem nenhuma encerrada o comportamento é o de antes
+  assert.equal(proximaEntrega([sp('docs/s/2026-10-31-a.md', 'GM-9')], new Set(), []).texto, 'GM-9 T');
+  // encerrada sem spec na lista não corta nada
+  assert.equal(proximaEntrega([sp('docs/s/2026-10-31-a.md', 'GM-9')], new Set(['GM-77']), []).texto, 'GM-9 T');
 });
 
 // ── GM-15 T13 (REQ-AUT-1): o lote do dono, a mesma lista no `proxima` e no DEPENDE ─────────────────────────────────────────────────────────
@@ -551,7 +575,8 @@ test('lote-vazio-sem-item: sem teto, sem emenda, diário conhecido e autonomia d
   assert.deepEqual(loteDoDono(PLANO_LOTE, expandir([]), CFG_LIGADA), []);
   assert.deepEqual(loteDoDono(PLANO_LOTE, expandir([]), { ...CFG_DESLIGADA, base: 'main' }), [], 'base main: o pedido de revisão da entrega já é o item do dono');
   const encerrada: C = { t: 'entrega.encerrada', d: { entrega: 'GM-14', pr: 7, via: 'merge', mergeado_em: '2026-11-11T12:00:00Z' } };
-  assert.deepEqual(loteDoDono(PLANO_LOTE, expandir([encerrada]), CFG_DESLIGADA), [], 'entregue: nada a levar');
+  assert.deepEqual(motivos(loteDoDono(PLANO_LOTE, expandir([encerrada]), CFG_DESLIGADA)), ['no fim da entrega: levar next para main'], 'encerrada na next sem sha: a virada ainda é do dono (D-G47)');
+  assert.deepEqual(loteDoDono(PLANO_LOTE, expandir([encerrada]), { ...CFG_DESLIGADA, base: 'main' }), [], 'base main: encerrada encerra o lembrete como hoje');
   assert.deepEqual(loteDoDono({ entrega: 'GM-14', tasks: [] }, expandir([]), CFG_DESLIGADA), [], 'plano sem task: sem fim previsível');
   assert.deepEqual(motivos(dependeDe(APROVADA, expandir([]), [], OK, false, GIT, [])), ['nada depende de você']);
 });
@@ -690,4 +715,23 @@ test('sem-loop-dinamico-avisa-depende (REQ-POU-4): o painel decidiu que falta o 
   assert.deepEqual(motivos(dependeDe(APROVADA, [], [], OK, { pendente: false, id: null, loop: null, ligarLoop: true }, GIT)), [MOTIVO_LIGAR_LOOP]);
   // com o pedido de /clear e o loop desligado o item é 1 só (o de antes do /clear)
   assert.deepEqual(motivos(dependeDe(APROVADA, [], [], OK, { pendente: true, id: 'S1:2', loop: 'ausente', ligarLoop: true }, GIT)), [MOTIVO_LIGAR_ANTES_DO_CLEAR]);
+});
+
+// ── GM-20 T6 (D-G47, REQ-CRD-2): o lembrete da virada sai pelo PR em main que contém o sha da encerrada ─────────────────────────────────────
+// Mutações: MC2-d item sai com `entrega.encerrada` ⇒ lembrete-da-virada-fica-ate-o-pr-em-main · MC2-e PR em main sem o sha tira o item ⇒ idem
+const SHA_ENC = 'a'.repeat(40);
+const encComSha: C = { t: 'entrega.encerrada', d: { entrega: 'GM-14', pr: 7, via: 'head', mergeado_em: '2026-11-11T12:00:00Z', sha: SHA_ENC } };
+const prEm = (numero: number, base: string, extra: Record<string, unknown> = {}): C =>
+  ({ t: 'fato.medido', d: { chave: 'pr', fonte: 'gh', valor: { numero, estado: 'mergeado', branch: 'next', base, ...extra } } });
+const VIRADA = 'no fim da entrega: levar next para main';
+
+test('lembrete-da-virada-fica-ate-o-pr-em-main: base next, encerrada com sha ⇒ item; só sai com PR mergeado em main que contém o sha', () => {
+  assert.deepEqual(motivos(loteDoDono(PLANO_LOTE, expandir([encComSha]), CFG_DESLIGADA)), [VIRADA], 'encerrada, nenhum PR em main');
+  assert.deepEqual(motivos(loteDoDono(PLANO_LOTE, expandir([encComSha, prEm(9, 'main')]), CFG_DESLIGADA)), [VIRADA], 'PR em main sem `contem` não tira');
+  assert.deepEqual(motivos(loteDoDono(PLANO_LOTE, expandir([encComSha, prEm(9, 'main', { contem: 'b'.repeat(40) })]), CFG_DESLIGADA)), [VIRADA], 'contém OUTRO sha: não tira');
+  assert.deepEqual(motivos(loteDoDono(PLANO_LOTE, expandir([encComSha, prEm(9, 'next', { contem: SHA_ENC })]), CFG_DESLIGADA)), [VIRADA], 'base não é main: não tira');
+  assert.deepEqual(motivos(loteDoDono(PLANO_LOTE, expandir([encComSha, prEm(9, 'main', { contem: SHA_ENC, estado: 'aberto' })]), CFG_DESLIGADA)), [VIRADA], 'não mergeado: não tira');
+  assert.deepEqual(loteDoDono(PLANO_LOTE, expandir([encComSha, prEm(9, 'main', { contem: SHA_ENC })]), CFG_DESLIGADA), [], 'PR em main mergeado que contém o sha: sem item');
+  assert.deepEqual(loteDoDono(PLANO_LOTE, expandir([encComSha]), { ...CFG_DESLIGADA, base: 'main' }), [], 'base main: sem item, como hoje');
+  assert.deepEqual(loteDoDono(PLANO_LOTE, expandir([encComSha]), CFG_LIGADA), [], 'autonomia: sem item, como hoje');
 });

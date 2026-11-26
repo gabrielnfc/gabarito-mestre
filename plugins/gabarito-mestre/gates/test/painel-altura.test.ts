@@ -293,3 +293,51 @@ test('cortarComReserva-sem-recente: sem linha de RECENTE (prioridade 5) a reserv
   const com = [...ls, { prioridade: 5, ordem: 3, l: seg('recente') }];
   assert.ok(cortarComReserva(com, 3, reserva).linhas.some((l) => TEXTO(l) === 'decidiu'));
 });
+
+// ───────────────────────────── GM-20 T5 (REQ-SEP-1, DT14, M15): separadores reservados antes do corte, com o projeto na tela
+// Mutações: MS1-a `livres > 0` de volta (separador só nas sobras) ⇒ separadores-sobrevivem-ao-projeto · MS1-b prioridade abaixo das linhas de PBI ⇒ idem
+import { projetarPainel } from '../src/painel.ts';
+import { projetarProjeto } from '../src/projeto.ts';
+import type { ArvoreLida } from '../src/projeto.ts';
+// @ts-expect-error: fixture .mjs sem tipos
+import { arvore as arvoreAdotado } from './painel-fixtures/adotado.mjs';
+
+const T0_S = Date.parse('2026-11-11T12:00:00Z');
+const ehSep = (l: string): boolean => /^─+$/.test(l);
+/** Estado novo real (projetarPainel) com uma task em voo e o projeto da fixture adotada: 9 PBIs abertos. */
+function comProjetoGrande(): EstadoPainel {
+  const mkEv = (t: number, tipo: string, dados: unknown) => ({ seq: 0, ts: new Date(T0_S + t * 60_000).toISOString(), autor: 't', sessao: 's1', agente: 'orquestrador', tipo, dados, hash_anterior: null });
+  const eventos = [mkEv(0, 'task.iniciada', { task: 'T1', papel: 'implementador' })].map((x, i) => ({ ...x, seq: i + 1 }));
+  const plano = { entrega: 'GM-14', tasks: ['T1', 'T2', 'T3'].map((id) => ({ id, deps: [], arquivos: [] })) };
+  const entrada = {
+    decisaoEntrega: null, pausado: false, contexto: { percent: 40, tokens: null, window: null }, limites: { h5: null, d7: null }, x: 50, agentes: [],
+    pacote: { nome: 'Terra Média', lider: 'GANDALF', sabio: 'ELROND', nomes: ['ARAGORN', 'LEGOLAS', 'GIMLI', 'FRODO'] }, notificacao: null, agoraMs: T0_S + 3 * 3_600_000, fuso: 'UTC', titulo: null,
+    politica: { politica: 'continua', dias: null }, entregaId: 'GM-14', modeloSessao: null, specSha: null, tetoSombra: 26,
+    fatos: { branch: 'enabler/GM-14-clareza', idPadrao: '[A-Z]+-\\d+', specs: [], plano: { tasks: ['T1', 'T2', 'T3'] }, ledger: false, gh: 'ok', ultimas: [], sessao: 's1' },
+  };
+  const s = projetarPainel(plano as never, eventos as never, entrada as never);
+  const arv = arvoreAdotado() as ArvoreLida;
+  for (let n = 20; n < 30; n++) arv.cards.push({ arquivo: `PBI-${n}.md`, texto: `---\nid: "PBI-${n}"\ntipo: US\nstatus: Preparado\natualizadoEm: "2026-11-11"\n---\n# Item ${n}\n`, planoMd: null });
+  const projeto = projetarProjeto([arv], { agoraMs: T0_S + 3 * 3_600_000, fuso: 'UTC' });
+  return { ...s, projeto } as unknown as EstadoPainel;
+}
+
+test('separadores-sobrevivem-ao-projeto: projeto de muitos PBIs, 80 colunas, 25 linhas (lateral e acima) ⇒ ≥ 4 separadores, nunca passa do orçamento; sem projeto o mesmo número', () => {
+  const E = comProjetoGrande();
+  assert.ok((E as unknown as { projeto: { linhas: unknown[] } }).projeto.linhas.length >= 8, 'a fixture tem projeto grande');
+  for (const local of ['lateral', 'acima'] as const) {
+    const ls = renderPainel(E, { preset: 'esquadrao', tema: 'mono', narracao: true, largura: 80, altura: 25, orcamento: 25, local }).map(TEXTO);
+    assert.ok(ls.length <= 25, `${local}: ${ls.length} linhas`);
+    assert.ok(ls.filter(ehSep).length >= 4, `${local}: ${ls.filter(ehSep).length} separadores\n${ls.join('\n')}`);
+    assert.ok(ls.some((l) => /^PROJETO/.test(l)), `${local}: o projeto está na tela`);
+    // separador sempre entre linhas de texto (nunca no topo, no fim nem dobrado)
+    ls.forEach((l, i) => { if (ehSep(l)) assert.ok(i > 0 && i < ls.length - 1 && !ehSep(ls[i - 1]) && !ehSep(ls[i + 1]), `${local}: separador órfão na linha ${i + 1}`); });
+  }
+  // < 44 colunas segue sem separador
+  assert.equal(renderPainel(E, { preset: 'esquadrao', tema: 'mono', narracao: true, largura: 40, altura: 25, orcamento: 25, local: 'lateral' }).map(TEXTO).filter(ehSep).length, 0);
+  // orçamento apertado: o topo vence os separadores e o orçamento nunca estoura
+  for (let orc = 1; orc <= 25; orc++) {
+    const ls = renderPainel(E, { preset: 'esquadrao', tema: 'mono', narracao: true, largura: 80, altura: orc, orcamento: orc, local: 'lateral' }).map(TEXTO);
+    assert.ok(ls.length <= orc, `orçamento ${orc}: ${ls.length} linhas`);
+  }
+});

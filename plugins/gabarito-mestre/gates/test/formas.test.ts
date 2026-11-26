@@ -282,6 +282,20 @@ test('forma-iniciada-modelo-fora: modelo opcional, só haiku|sonnet|opus|fable',
   for (const m of ['gpt', 'Sonnet', 'opus ', '', null, 5, ['opus']]) ruim('task.iniciada', { task: 'T1', papel: 'implementador', modelo: m }, /modelo/);
 });
 
+test('forma-task-iniciada-executor (GM-20 REQ-EXE-1, ME1-d): `executor` só `orquestrador`, com `motivo` texto de 1 linha não vazio; sem `executor` nada muda', () => {
+  const base = { task: 'T1', papel: 'implementador' };
+  ok('task.iniciada', { ...base, executor: 'orquestrador', motivo: 'o subagent não tem a regra de contrato' });
+  ok('task.iniciada', { ...base, executor: 'orquestrador', motivo: 'm'.repeat(500) });
+  ok('task.iniciada', base); // o diário 2.2.2 segue válido
+  ok('task.iniciada', { ...base, modelo: 'opus' });
+  for (const e of ['humano', 'Orquestrador', 'orquestrador ', 'sombra', '', null, 5, true, ['orquestrador'], {}]) {
+    ruim('task.iniciada', { ...base, executor: e, motivo: 'm' }, /executor/);
+  }
+  for (const m of [undefined, '', '   ', '\n', 'a\nb', null, 5, ['m'], 'm'.repeat(501)]) {
+    ruim('task.iniciada', { ...base, executor: 'orquestrador', ...(m === undefined ? {} : { motivo: m }) }, /motivo/);
+  }
+});
+
 test('forma-integrada-mortas-maior-que-total: mutacoes {total, mortas} inteiros ≥ 0 com mortas ≤ total', () => {
   ok('task.integrada', { task: 'T1', mutacoes: { total: 5, mortas: 5 } });
   ok('task.integrada', { task: 'T1', mutacoes: { total: 5, mortas: 0 } });
@@ -798,6 +812,12 @@ test('formas-quatro-eventos: cada forma válida passa; cada campo lido, trocado,
   ok('entrega.encerrada', { ...ENC, via: 'titulo' });
   for (const m of ['ontem', '2026-11-15', '2026-02-30T10:00:00Z', 7]) ruim('entrega.encerrada', { ...ENC, mergeado_em: m }, /`mergeado_em`/);
   ok('entrega.encerrada', { ...ENC, versao: '2.1.0' });
+  // GM-20 D-G47: `sha` opcional (diário antigo sem ele segue válido), 40 a 64 hex minúsculos
+  ok('entrega.encerrada', { ...ENC, sha: 'a'.repeat(40) });
+  ok('entrega.encerrada', { ...ENC, sha: 'b'.repeat(64) });
+  for (const x of ['', 'A'.repeat(40), 'a'.repeat(39), 'g'.repeat(40), 7, null]) ruim('entrega.encerrada', { ...ENC, sha: x }, /`sha`/);
+  ok('fato.medido', fato('pr', { contem: 'c'.repeat(40) }));
+  for (const x of ['', 'x', 'C'.repeat(40), 7, null]) ruim('fato.medido', fato('pr', { contem: x }), /`contem`/);
   ok('entrega.encerrada', { ...ENC, versao: '2.1.0-alpha.1' });
   for (const v of ['2.1', 'v2.1.0', '', 7]) ruim('entrega.encerrada', { ...ENC, versao: v }, /`versao`/);
   // entrega.reaberta: `em` e `entrega` lidos
