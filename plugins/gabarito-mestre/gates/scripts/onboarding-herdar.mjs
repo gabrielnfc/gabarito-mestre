@@ -13,9 +13,9 @@
 
 import { lstatSync, readFileSync, readdirSync, realpathSync } from 'node:fs';
 import { isAbsolute, join } from 'node:path';
-import { lerEstrito } from '../dist/diario.js';
-import { cardDe, cardDesatualizado, ehColunaFl1, ehFeito, ehTerminal, padraoLegadoValido, planoLegadoDe, planoMdDoCard, terminaisValidos, worktreesDe } from '../dist/projeto.js';
+import { cardDe, ehColunaFl1, ehFeito, ehTerminal, padraoLegadoValido, planoLegadoDe, planoMdDoCard, terminaisValidos, worktreesDe } from '../dist/projeto.js';
 import { aplicarConfig, ArquivoInvalido } from './onboarding-config.mjs';
+import { projetoDoRepo } from './painel.mjs';
 
 /** Falha com código: o despachante a devolve como `{ok:false, erro, ...}` e rc 1. */
 export class Falha extends Error {
@@ -68,28 +68,20 @@ function lerConfig(raiz) {
   }
 }
 
-/** Todas as worktrees (a da raiz primeiro); falha do git ⇒ só a raiz. */
-function arvoresDe(raiz, rodar) {
-  let git;
+/** `git worktree list --porcelain` pelo `rodar` injetado; falha ⇒ `{ ok:false }` (o núcleo cai na raiz). */
+function listaDeWorktrees(raiz, rodar) {
   try {
     const r = rodar('git', ['worktree', 'list', '--porcelain'], { cwd: raiz, timeoutMs: 10000 });
-    git = r && !r.motivo && r.rc === 0 ? { ok: true, saida: r.stdout } : { ok: false, motivo: r?.motivo ?? 'erro' };
+    return r && !r.motivo && r.rc === 0 ? { ok: true, saida: r.stdout } : { ok: false, motivo: r?.motivo ?? 'erro' };
   } catch {
-    git = { ok: false, motivo: 'erro' };
+    return { ok: false, motivo: 'erro' };
   }
-  const real = (c) => { try { return realpathSync(c); } catch { return c; } };
-  return [...new Set(worktreesDe(git, real(raiz)).caminhos.map(real))];
 }
 
-/** Diário unido das árvores, na ordem do painel (ts, sessão, seq), para a regra `cardDesatualizado` (a mesma do painel, importada do núcleo). */
-function eventosDoDiario(arvores, id) {
-  const eventos = [];
-  for (const a of arvores) {
-    const r = lerEstrito(join(a, '.harness', 'entregas', id));
-    if (r.ok) eventos.push(...r.eventos);
-  }
-  const ms = (e) => Date.parse(e.ts) || 0;
-  return eventos.sort((x, y) => ms(x) - ms(y) || String(x.sessao).localeCompare(String(y.sessao)) || x.seq - y.seq);
+/** Todas as worktrees (a da raiz primeiro); falha do git ⇒ só a raiz. */
+function arvoresDe(raiz, rodar) {
+  const real = (c) => { try { return realpathSync(c); } catch { return c; } };
+  return [...new Set(worktreesDe(listaDeWorktrees(raiz, rodar), real(raiz)).caminhos.map(real))];
 }
 
 /** REQ-ADO-1: só lê. */
@@ -150,7 +142,11 @@ function detectar(raiz, cfg, rodar) {
   }
   const statusFora = [...contagem].map(([status, n]) => ({ status, n })).sort((x, y) => y.n - x.n || x.status.localeCompare(y.status));
 
-  const cardsDesatualizados = cards.filter((c) => cardDesatualizado(c, eventosDoDiario(arvores, c.id), statusFl1)).map((c) => ({ id: c.id, status: c.status }));
+  // REQ-CRD-1 (P9): a lista é a do painel (mesma projeção: ordem dos eventos, terminal, opção, status), nunca remontada aqui; sem FL1 não há card
+  const cardsDesatualizados = fl1 === null
+    ? []
+    : projetoDoRepo({ atual: raiz, cfg, idPadrao: typeof cfg?.fluxo?.idPadrao === 'string' ? cfg.fluxo.idPadrao : ID_PADRAO_DEFAULT, agoraMs: Date.now(), fuso: 'UTC', deps: { worktreeList: () => listaDeWorktrees(raiz, rodar) } })
+      .linhas.filter((l) => l.cardDesatualizado !== null && l.cardDesatualizado !== undefined).map((l) => ({ id: l.id, status: l.cardDesatualizado }));
 
   const oferecer = entreguesSemPlano.length > 0 || planosLegados.padrao !== null || statusFora.length > 0 || cardsDesatualizados.length > 0;
   return { oferecer, entreguesSemPlano, planosLegados, statusFora, cardsDesatualizados };

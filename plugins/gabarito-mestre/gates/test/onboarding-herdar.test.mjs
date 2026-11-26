@@ -223,3 +223,60 @@ test('herdar-e-painel-mesma-contagem-desatualizados: cardsDesatualizados do herd
   assert.deepEqual(r.j.cardsDesatualizados, doPainel);
   assert.deepEqual(doPainel, [{ id: 'PBI-7', status: 'Em execução' }]);
 });
+
+// ── GM-20 T11 r1: paridade herdar = painel nas bordas (ordem dos eventos, terminal, opção, sem status), pelo CLI real do herdar ──
+const AGORA_P9 = Date.parse('2026-11-20T12:00:00Z');
+const painelDe = (dir) => projetoDoRepo({ atual: dir, cfg: cfgDe(dir), idPadrao: '^PBI-\\d+$', agoraMs: AGORA_P9, fuso: 'UTC', deps: { worktreeList: () => ({ ok: false, motivo: 'teste' }) } });
+const desatDoPainel = (dir) => painelDe(dir).linhas.filter((l) => l.cardDesatualizado !== null && l.cardDesatualizado !== undefined).map((l) => ({ id: l.id, status: l.cardDesatualizado })).sort((a, b) => a.id.localeCompare(b.id, 'en', { numeric: true }));
+/** Grava um evento pelo `append` real do diário, depois do último da entrega. */
+async function anexar(dir, id, tipo, dados, minDepois = 1) {
+  const { append, lerEstrito } = await import('../dist/diario.js');
+  const pasta = join(dir, '.harness', 'entregas', id);
+  const le = lerEstrito(pasta);
+  const ult = le.ok && le.eventos.length > 0 ? le.eventos[le.eventos.length - 1] : null;
+  const ts = new Date((ult ? Date.parse(ult.ts) : Date.parse('2026-11-08T12:00:00Z')) + minDepois * 60000).toISOString();
+  const r = append(pasta, 'p9-borda', { ts, autor: 'fixture', agente: 'orquestrador', tipo, dados: { entrega: id, ...dados }, sessao: 'p9-borda' });
+  assert.ok(r.ok, `append ${tipo}: ${r.erro}`);
+}
+const gravarCard = (dir, id, status) => writeFileSync(join(dir, 'cards', `${id}.md`), `---\nid: "${id}"\ntipo: US\n${status === null ? '' : `status: ${status}\n`}atualizadoEm: "2026-11-12"\n---\n# ${id}\nFL1 · User Story. Plano: a escrever.\n`);
+const encerrar = (dir, id) => anexar(dir, id, 'entrega.encerrada', { pr: 1, via: 'head', mergeado_em: '2026-11-08T13:00:00.000Z' });
+
+test('herdar-e-painel-borda-reaberta: encerrada seguida de reaberta não é desatualizado, nem no herdar nem no painel (P9, ordem vem do núcleo)', async () => {
+  const dir = await projeto('p9-reab');
+  assert.deepEqual(desatDoPainel(dir).map((c) => c.id), ['PBI-7'], 'contexto: antes da reaberta o PBI-7 é desatualizado');
+  await anexar(dir, 'PBI-7', 'entrega.reaberta', { em: '2026-11-08T14:00:00.000Z' });
+  assert.deepEqual(desatDoPainel(dir), []);
+  assert.deepEqual(herdar(dir).j.cardsDesatualizados, []);
+});
+
+test('herdar-e-painel-borda-terminal: card Cancelado só com encerrada não é desatualizado em nenhuma camada (P9)', async () => {
+  const dir = await projeto('p9-term');
+  gravarCard(dir, 'PBI-30', 'Cancelado');
+  await encerrar(dir, 'PBI-30');
+  assert.ok(!painelDe(dir).linhas.some((l) => l.id === 'PBI-30'), 'contexto: o painel não tem linha do terminal sem medição');
+  const r = herdar(dir);
+  assert.deepEqual(r.j.cardsDesatualizados, desatDoPainel(dir));
+  assert.ok(!r.j.cardsDesatualizados.some((c) => c.id === 'PBI-30'));
+});
+
+test('herdar-e-painel-borda-opcao: card Bloqueado com opcoesComoContagem e só encerrada não é desatualizado em nenhuma camada (P9)', async () => {
+  const dir = await projeto('p9-opc');
+  const cfg = cfgDe(dir);
+  cfg.painel = { ...(cfg.painel ?? {}), projeto: { opcoesComoContagem: true } };
+  writeFileSync(join(dir, 'harness.config.json'), JSON.stringify(cfg, null, 2));
+  gravarCard(dir, 'PBI-31', 'Bloqueado');
+  await encerrar(dir, 'PBI-31');
+  assert.ok(!painelDe(dir).linhas.some((l) => l.id === 'PBI-31'), 'contexto: o painel trata Bloqueado como opção (sem linha)');
+  const r = herdar(dir);
+  assert.deepEqual(r.j.cardsDesatualizados, desatDoPainel(dir));
+  assert.ok(!r.j.cardsDesatualizados.some((c) => c.id === 'PBI-31'));
+});
+
+test('herdar-e-painel-borda-sem-status: card sem status e encerrada tem o mesmo status nas 2 camadas (P9)', async () => {
+  const dir = await projeto('p9-sem');
+  gravarCard(dir, 'PBI-32', null);
+  await encerrar(dir, 'PBI-32');
+  const doPainel = desatDoPainel(dir);
+  assert.deepEqual(doPainel.find((c) => c.id === 'PBI-32'), { id: 'PBI-32', status: '(sem status)' }, 'contexto: o painel diz (sem status)');
+  assert.deepEqual(herdar(dir).j.cardsDesatualizados, doPainel);
+});
