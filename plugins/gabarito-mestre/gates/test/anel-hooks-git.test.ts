@@ -8,7 +8,10 @@
  *  MH2-a casar só `--no-verify` exato ⇒ cai `--no-veri`
  *  MH2-b aplicar só ao orquestrador ⇒ cai o caso do subagente
  *  MH2-c tirar a regra das variáveis ⇒ `push-sem-hooks-por-variavel-pede` cai
- *  MH2-d procurar no `cru` em vez dos tokens ⇒ cai `git commit -m "--no-verify"` (push-comum-segue-livre)
+ *  MH2-e ignorar atribuições de `env`/`sudo` (pularFlags) ⇒ caem os casos `env GIT_CONFIG_*`
+ *  MH2-f mover a regra para depois do ramo push ⇒ cai o caso de remote não-origin
+ *  Fato medido (git 2.50.1): `push --no-veri` PULA o hook, como `--no-verify`; `--no-ve` é recusado (ambíguo). Prefixo `--no-veri` está certo.
+ *  MH2-dprocurar no `cru` em vez dos tokens ⇒ cai `git commit -m "--no-verify"` (push-comum-segue-livre)
  */
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
@@ -106,7 +109,21 @@ describe('REQ-HKS-2 push sem hooks', () => {
       'GIT_CONFIG_COUNT=1 git push origin feat/x',
       'GIT_CONFIG_KEY_3=core.hooksPath git status',
       'GIT_CONFIG_VALUE_12=/dev/null git log',
+      // r1 MAJOR-1: as atribuições depois de `env`/`sudo` também contam (mesmo ataque, vizinho trivial)
+      'env GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.hooksPath GIT_CONFIG_VALUE_0=/dev/null git push origin feat/x',
+      'sudo GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.hooksPath GIT_CONFIG_VALUE_0=/dev/null git push origin feat/x',
+      "env -i GIT_CONFIG_PARAMETERS=\"'core.hookspath=/dev/null'\" git commit -m x",
     ]) afirmaIntegridade('Bash', { command: c }, '.git/hooks');
+  });
+  test('env sem variável de config segue livre', () => {
+    for (const papel of ['orq', 'sub'] as const) {
+      const d = bash('env GIT_CONFIG_GLOBAL=/dev/null git push origin feat/x', papel);
+      assert.equal(d.classificacao.anel, null, papel);
+    }
+  });
+  // r1 MINOR-3: a regra vem ANTES do ramo `push`; senão remote não-origin mudaria o alvo para refs/remotes.
+  test('ordem: push sem hooks com remote não-origin mantém alvo .git/hooks', () => {
+    afirmaIntegridade('Bash', { command: ['git', 'push', '--no-verify', 'upstream', 'feat/x'].join(' ') }, '.git/hooks');
   });
   test('push-comum-segue-livre', () => {
     for (const c of ['git push origin feat/x', 'git push --verbose origin feat/x', 'git commit -m "--no-verify"', 'git log --grep=no-verify', 'GIT_CONFIG_GLOBAL=/dev/null git status']) {

@@ -378,6 +378,7 @@ function montar(b: Bruto, profundidade: number): Segmento[] {
   const pularFlags = (comValor: Set<string>) => {
     while (p < w.length && (w[p].startsWith('-') || atrib(w[p]))) {
       const f = w[p++];
+      if (atrib(f)) atribs.push(f); // atribuição depois de `env`/`sudo` vale para o comando (GM-22 r1, DT4)
       if (f === '--') break;
       if (comValor.has(f) && p < w.length) p++;
     }

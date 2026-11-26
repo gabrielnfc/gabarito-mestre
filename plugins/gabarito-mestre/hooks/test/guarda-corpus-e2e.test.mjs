@@ -30,6 +30,21 @@ const CASOS = [
   'segredo-env-orq',
   'integridade-config-sub-bash',
   'integridade-remote-set-head-sub',
+  // GM-22 T1 (REQ-HKS-1/2, P9): pelo hook real, nos 2 papéis
+  'integridade-hooks-githooks-edit-orq',
+  'integridade-hooks-githooks-edit-sub',
+  'integridade-hooks-husky-write-sub',
+  'integridade-hooks-githooks-rm-sub',
+  'integridade-hooks-push-no-verify-orq',
+  'integridade-hooks-push-no-verify-sub',
+  'integridade-hooks-push-no-veri-sub',
+  'integridade-hooks-push-git-config-count-orq',
+  'integridade-hooks-push-git-config-count-sub',
+  'integridade-hooks-commit-git-config-parameters-sub',
+  'integridade-hooks-env-git-config-orq',
+  'integridade-hooks-env-git-config-sub',
+  'integridade-hooks-push-no-verify-upstream-orq',
+  'integridade-hooks-push-no-verify-upstream-sub',
 ];
 
 const todos = ['guarda-bash', 'guarda-caminho', 'guarda-integridade', 'guarda-mcp']
@@ -74,7 +89,7 @@ function eventos(repo) {
 }
 
 describe('corpus ponta a ponta (dist/guarda.js real)', () => {
-  assert.equal(CASOS.length, 10);
+  assert.equal(CASOS.length, 24);
   for (const nome of CASOS) {
     test(nome, () => {
       const c = todos.find((x) => x.nome === nome);
