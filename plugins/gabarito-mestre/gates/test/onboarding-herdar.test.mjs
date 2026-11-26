@@ -17,7 +17,7 @@ import { existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, realpath
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { spawnSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { montarNoDisco } from './painel-fixtures/adotado.mjs';
 import { projetoDoRepo } from '../scripts/painel.mjs';
 import { ehFeito } from '../dist/projeto.js';
@@ -309,6 +309,65 @@ test('herdar-e-painel-borda-concluido-personalizado: card no concluído personal
   const l = painelDe(dir).linhas.find((x) => x.id === 'PBI-41');
   assert.ok(l, 'contexto: o painel tem a linha do PBI-41');
   assert.equal(l.status, 'Entregue ao cliente');
+  assert.equal(l.feito, true);
+  assert.ok(!desatDoPainel(dir).some((c) => c.id === 'PBI-41'));
+  assert.ok(!herdar(dir).j.cardsDesatualizados.some((c) => c.id === 'PBI-41'));
+});
+
+// ── GM-20 T11 r2: injeções do herdar no projetoDoRepo (atual, cfg, idPadrao, worktreeList, agoraMs/fuso) com 1 paridade cada; o painel aqui é o CLI real (git real) ──
+const PAINEL = join(AQUI, '..', 'scripts', 'painel.mjs');
+const desatDoPainelCli = (dir) => {
+  const t = spawnSync(process.execPath, [PAINEL, 'estado'], { cwd: dir, encoding: 'utf8' });
+  return JSON.parse(t.stdout).estado.projeto.linhas.filter((x) => x.cardDesatualizado !== null && x.cardDesatualizado !== undefined).map((x) => ({ id: x.id, status: x.cardDesatualizado })).sort((a, b) => a.id.localeCompare(b.id, 'en', { numeric: true }));
+};
+const encerradaDaFixture = (dir) => {
+  const pasta = join(dir, '.harness', 'entregas', 'PBI-7');
+  return readFileSync(join(pasta, readdirSync(pasta).find((f) => f.startsWith('events.'))), 'utf8').trim().split('\n').map((l) => JSON.parse(l)).find((e) => e.tipo === 'entrega.encerrada');
+};
+const escreverEncerrada = (pasta, id, enc, nome) => {
+  mkdirSync(join(pasta, '.harness', 'entregas', id), { recursive: true });
+  writeFileSync(join(pasta, '.harness', 'entregas', id, nome), `${JSON.stringify({ ...enc, seq: 1, hash_anterior: null, dados: { ...enc.dados, entrega: id } })}\n`);
+};
+
+test('herdar-e-painel-borda-worktree: encerrada só no diário de uma worktree real entra no herdar e no painel (P9, injeção worktreeList)', async () => {
+  const dir = await projeto('p9-wt');
+  execFileSync('git', ['config', 'user.name', 'Teste'], { cwd: dir });
+  execFileSync('git', ['config', 'user.email', 'teste@exemplo.invalid'], { cwd: dir });
+  const wt = `${dir}-wt`;
+  criados.push(wt);
+  execFileSync('git', ['worktree', 'add', '-q', '-b', 'wt41', wt], { cwd: dir, stdio: 'ignore' });
+  gravarCard(dir, 'PBI-41', 'Em execução');
+  escreverEncerrada(wt, 'PBI-41', encerradaDaFixture(dir), 'events.p9-wt.jsonl');
+  assert.ok(!existsSync(join(dir, '.harness', 'entregas', 'PBI-41')), 'contexto: a encerrada do PBI-41 não está na raiz');
+  assert.ok(existsSync(join(wt, '.harness', 'entregas', 'PBI-41', 'events.p9-wt.jsonl')), 'contexto: está na worktree');
+  assert.ok(execFileSync('git', ['worktree', 'list', '--porcelain'], { cwd: dir, encoding: 'utf8' }).includes(realpathSync(wt)), 'contexto: o git conhece a worktree');
+  const doPainel = desatDoPainelCli(dir);
+  assert.deepEqual(doPainel.map((c) => c.id), ['PBI-7', 'PBI-41']);
+  assert.deepEqual(herdar(dir).j.cardsDesatualizados, doPainel);
+});
+
+test('herdar-e-painel-borda-idpadrao: idPadrao da config vale nas 2 camadas (P9, injeção idPadrao)', async () => {
+  const dir = await projeto('p9-idp');
+  const cfg = cfgDe(dir);
+  cfg.fluxo.idPadrao = '^[A-Z0-9]+-\\d+$';
+  writeFileSync(join(dir, 'harness.config.json'), JSON.stringify(cfg, null, 2));
+  assert.ok(!new RegExp('^[A-Z]+-\\d+$').test('X2-1'), 'contexto: o padrão default não casa X2-1');
+  gravarCard(dir, 'X2-1', 'Em execução');
+  escreverEncerrada(dir, 'X2-1', encerradaDaFixture(dir), 'events.p9-idp.jsonl');
+  // o painel real lê a config da origin (commitada); aqui a mesma config chega por projetoDoRepo com o idPadrao dela
+  const doPainel = projetoDoRepo({ atual: dir, cfg: cfgDe(dir), idPadrao: cfgDe(dir).fluxo.idPadrao, agoraMs: AGORA_P9, fuso: 'UTC', deps: { worktreeList: () => ({ ok: false, motivo: 'teste' }) } }).linhas.filter((l) => l.cardDesatualizado !== null && l.cardDesatualizado !== undefined).map((l) => ({ id: l.id, status: l.cardDesatualizado })).sort((a, b) => a.id.localeCompare(b.id, 'en', { numeric: true }));
+  assert.ok(doPainel.some((c) => c.id === 'X2-1'), 'contexto: o painel lista X2-1');
+  assert.deepEqual(herdar(dir).j.cardsDesatualizados, doPainel);
+});
+
+test('herdar-e-painel-borda-concluido-normalizado: card em "concluido" (sem acento) com encerrada não é desatualizado nas 2 camadas (P9, ehFeito normaliza)', async () => {
+  const dir = await projeto('p9-conc-norm');
+  gravarCard(dir, 'PBI-41', 'concluido');
+  await encerrar(dir, 'PBI-41');
+  assert.ok(ehFeito('concluido', cfgDe(dir).fluxo.status?.FL1), 'contexto: ehFeito aceita a forma sem acento');
+  const l = painelDe(dir).linhas.find((x) => x.id === 'PBI-41');
+  assert.ok(l, 'contexto: o painel tem a linha do PBI-41');
+  assert.equal(l.status, 'concluido');
   assert.equal(l.feito, true);
   assert.ok(!desatDoPainel(dir).some((c) => c.id === 'PBI-41'));
   assert.ok(!herdar(dir).j.cardsDesatualizados.some((c) => c.id === 'PBI-41'));
