@@ -9,7 +9,9 @@
  *  MP1-d  `vercel` com qualquer subcomando (sem checar a lista) ⇒ `publicar-negativos` (env pull, logs) falha
  *  MR2    (r1) `publicar = true` no push implícito ⇒ `publicar-push-implicito-flag-fora` falha
  *  MR3    (r1) ignorar global do git antes do push, ou `-R`/`--repo` no gh ⇒ `publicar-outro-repo` falha
- *  MP1-f  (própria) tirar `candidatos prod === 1` ⇒ `publicar-mesmo-segmento-com-alvo-terceiro-e-false` falha
+ *  MP1-f  (própria) tirar `candidatos prod === 1` ⇒ `publicar-isola-alvo-prod-unico` falha (`git push origin $PROD_DB:main`: destino resolvido em runtime vira 2º candidato)
+ *  MS1    (c3r1) tirar a recusa de construção oculta (`construcaoOculta`) ⇒ `publicar-substituicao-recusa` e `publicar-construcao-por-construcao` falham
+ *  MS2    (c3r1) a recusa só trata crase (deixa `$(`, `<(`, heredoc, eval…) ⇒ `publicar-construcao-por-construcao` falha
  *  MR4    (r2) tirar a checagem de prefixo de ambiente (`semPrefixo` inteiro) ⇒ `publicar-familia-ambiente` falha; tirar só a linha de `atribs` ⇒ falham os casos `VAR=<x>/<cmd> <cmd>` (valor terminando em `/<cmd>` passa no 1º token, só a linha de `atribs` os barra)
  *  MV4    (c3) tirar `a !== ''` em `formaFechadaVercel` ⇒ `publicar-vercel-arg-vazio` falha
  *  MV1    (c2r1) vercel aceitar flag de alvo (`--cwd`/`--scope`/`--token`/`-A`/`-Q`/`-t`/`-S`/`--local-config`, `--x v` ou `--x=v`) ⇒ `publicar-familia-vercel-flags` falha
@@ -235,6 +237,14 @@ describe('classificar-publicar-formas', () => {
     assert.equal(c.publicar, false);
   });
 
+  // Isola a checagem `candidatos prod === 1`: a forma do push é fechada (refspec único, sem flag) e o destino é variável prod,
+  // então o segmento ganha 2 candidatos prod (o `main` do destino resolvido em runtime e a variável); só essa contagem barra.
+  test('publicar-isola-alvo-prod-unico: push com refspec cujo destino vem de variável prod é false', () => {
+    const c = bash('git push origin $PROD_DB:main');
+    assert.equal(c.ambiente, 'prod');
+    assert.equal(c.publicar, false);
+  });
+
   test('publicar-dois-publicares segue true', () => {
     assert.equal(bash('git push origin main && vercel --prod').publicar, true);
   });
@@ -246,6 +256,42 @@ describe('classificar-publicar-formas', () => {
     assert.equal(c.publicar, false);
     const ed: EntradaHook = { tool_name: 'Edit', tool_input: { file_path: '/repo/a.ts' }, session_id: 's', cwd: '/repo' };
     assert.equal(classificar(ed, CFG, ctx('main')).publicar, false);
+  });
+
+  // c3r1: a forma fechada só vale se o comando INTEIRO é lido inteiro; substituição injeta argumento que o leitor não vê.
+  test('publicar-substituicao-recusa: os 6 casos da sonda c3r1 e variantes são false', () => {
+    const casos: Array<[string, string]> = [
+      ['git push origin main `echo --force`', 'feat/x'],
+      ['gh pr merge 5 `echo --admin`', 'main'],
+      ['gh pr merge `echo 5 -R o/r`', 'main'],
+      ['vercel --prod `echo --scope=x`', 'feat/x'],
+      ['vercel promote `echo https://outro.vercel.app`', 'feat/x'],
+      ['vercel --prod ; `echo vercel --scope x --prod`', 'feat/x'],
+      ['git push origin main `true`', 'feat/x'],
+      ['git push origin main"`echo -f`"', 'feat/x'],
+    ];
+    for (const [cmd, br] of casos) assert.equal(bash(cmd, br).publicar, false, cmd);
+  });
+
+  test('publicar-construcao-por-construcao: cada construção que o leitor não vê inteira recusa a forma, em qualquer segmento', () => {
+    const construcoes = [
+      '`echo x`', '$(echo x)', '<(echo x)', '>(cat)', '<<EOF\nx\nEOF', '<<<x', 'eval x', 'source x', '. x', 'xargs echo', 'bash -c x', 'sh -c x',
+    ];
+    for (const k of construcoes) {
+      const c = k.replace(/\\n/g, '\n');
+      for (const [base, br] of [['git push origin main', 'feat/x'], ['gh pr merge 5 --squash', 'main'], ['vercel --prod', 'feat/x']]) {
+        assert.equal(bash(`${base} ${c}`, br).publicar, false, `${base} ${c}`);
+        assert.equal(bash(`${c} ; ${base}`, br).publicar, false, `${c} ; ${base}`);
+        assert.equal(bash(`${base} && ${c}`, br).publicar, false, `${base} && ${c}`);
+      }
+    }
+  });
+
+  test('publicar-controles-positivos: sem construção oculta segue true', () => {
+    assert.equal(bash('git push origin main').publicar, true);
+    assert.equal(bash('npm test && git push origin main').publicar, true);
+    assert.equal(bash('gh pr merge 5 --squash', 'main').publicar, true);
+    assert.equal(bash('vercel --prod').publicar, true);
   });
 
   test('publicar-anel: anel força false', () => {

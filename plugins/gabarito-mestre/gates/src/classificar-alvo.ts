@@ -50,6 +50,13 @@ const SUB_VERCEL_COM_ID = new Set(['redeploy', 'promote', 'rollback']);
 // Id de deploy sem `/`, `.` ou `:`: URL (outro time) ou caminho (outro projeto) não passam.
 const ID_DEPLOY = /^[A-Za-z0-9_-]+$/;
 
+// c3r1: a forma fechada vale só se o leitor vê o comando INTEIRO. Crase, `$(`, `<(`/`>(`, heredoc/herestring, eval, source/`.`, xargs e `sh -c`
+// injetam ou escondem argumentos (o leitor separa o segmento e o argumento some). Texto cru, um ponto só, antes das 3 formas; excesso só custa um `false`.
+const CONSTRUCAO_OCULTA = /`|\$\(|[<>]\(|<<|(^|[\s;&|(){}])(eval|source|xargs|\.)(?=[\s;&|(){}]|$)|(^|[\s;&|(){}])(?:\w*sh)\s+(?:-[A-Za-z]*c|--command)\b/;
+function construcaoOculta(comando: string): boolean {
+  return CONSTRUCAO_OCULTA.test(comando);
+}
+
 function formaFechadaVercel(s: Segmento): boolean {
   if (!semPrefixo(s)) return false;
   if (!s.args.every((a) => a !== '' && (!a.startsWith('-') || FLAGS_VERCEL_PUBLICAR.has(a)))) return false;
@@ -399,12 +406,10 @@ function classificarSegmento(s: Segmento, cfg: ConfigGuarda | null, ctx: Context
       candidatos.push({ ambiente: 'prod', alvo });
       escritaD3 = true;
       // `-R`/`--repo` aponta outro repositório: produção de terceiro, fora da forma `gh pr merge <n>` (DT1(b)).
-      // Forma fechada: `gh pr merge [<número>] [flags da lista]`, sem prefixo de ambiente; URL, owner/repo#n, branch, -R/--repo ficam fora.
+      // Forma fechada: `gh pr merge [<número>] [flags da lista]`, sem prefixo de ambiente (token antes de `pr merge` cai em `resto` e reprova); URL, owner/repo#n, branch, -R/--repo ficam fora.
       const resto = s.args.slice(2);
       publicar =
         semPrefixo(s) &&
-        s.args[0] === 'pr' &&
-        s.args[1] === 'merge' &&
         resto.every((a) => /^\d+$/.test(a) || FLAGS_GH_MERGE.has(a)) &&
         resto.filter((a) => /^\d+$/.test(a)).length <= 1;
     } else candidatos.push({ ambiente: 'desconhecido', alvo });
@@ -472,7 +477,7 @@ function classificarBash(entrada: EntradaHook, cfg: ConfigGuarda | null, ctx: Co
     destrutivo: topo.destrutivo,
     anel: null,
     segmentosProd: parciais.filter((x) => x.ambiente === 'prod').map((x) => x.cru),
-    publicar: parciais.some((x) => x.ambiente === 'prod') && parciais.filter((x) => x.ambiente === 'prod').every((x) => x.publicar),
+    publicar: !construcaoOculta(comando) && parciais.some((x) => x.ambiente === 'prod') && parciais.filter((x) => x.ambiente === 'prod').every((x) => x.publicar),
   };
 
   // O anel vem antes do ambiente.
