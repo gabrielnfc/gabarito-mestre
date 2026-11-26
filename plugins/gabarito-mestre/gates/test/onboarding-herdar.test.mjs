@@ -13,7 +13,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -279,4 +279,37 @@ test('herdar-e-painel-borda-sem-status: card sem status e encerrada tem o mesmo 
   const doPainel = desatDoPainel(dir);
   assert.deepEqual(doPainel.find((c) => c.id === 'PBI-32'), { id: 'PBI-32', status: '(sem status)' }, 'contexto: o painel diz (sem status)');
   assert.deepEqual(herdar(dir).j.cardsDesatualizados, doPainel);
+});
+
+test('herdar-e-painel-borda-sem-card: entrega encerrada sem card não é desatualizada nas 2 camadas (P9, REQ-CRD-1)', async () => {
+  const dir = await projeto('p9-semcard');
+  const pasta = join(dir, '.harness', 'entregas', 'PBI-7');
+  const enc = readFileSync(join(pasta, readdirSync(pasta).find((f) => f.startsWith('events.'))), 'utf8').trim().split('\n').map((l) => JSON.parse(l)).find((e) => e.tipo === 'entrega.encerrada');
+  assert.ok(enc, 'contexto: a fixture tem uma encerrada para copiar');
+  mkdirSync(join(dir, '.harness', 'entregas', 'PBI-40'), { recursive: true });
+  writeFileSync(join(dir, '.harness', 'entregas', 'PBI-40', 'events.p9-semcard.jsonl'), `${JSON.stringify({ ...enc, seq: 1, hash_anterior: null, dados: { ...enc.dados, entrega: 'PBI-40' } })}\n`);
+  assert.ok(!existsSync(join(dir, 'cards', 'PBI-40.md')), 'contexto: PBI-40 não tem card');
+  const l = painelDe(dir).linhas.find((x) => x.id === 'PBI-40');
+  assert.ok(l, 'contexto: o painel tem a linha do PBI-40');
+  assert.equal(l.feito, true);
+  assert.ok(l.cardDesatualizado === null || l.cardDesatualizado === undefined);
+  assert.ok(!desatDoPainel(dir).some((c) => c.id === 'PBI-40'));
+  assert.ok(!herdar(dir).j.cardsDesatualizados.some((c) => c.id === 'PBI-40'));
+  assert.deepEqual(herdar(dir).j.cardsDesatualizados, desatDoPainel(dir));
+});
+
+test('herdar-e-painel-borda-concluido-personalizado: card no concluído personalizado do FL1 com encerrada não é desatualizado nas 2 camadas (P9)', async () => {
+  const dir = await projeto('p9-concl');
+  const cfg = cfgDe(dir);
+  cfg.fluxo.status = { ...(cfg.fluxo.status ?? {}), FL1: { concluido: 'Entregue ao cliente' } };
+  writeFileSync(join(dir, 'harness.config.json'), JSON.stringify(cfg, null, 2));
+  assert.equal(cfgDe(dir).fluxo.status.FL1.concluido, 'Entregue ao cliente', 'contexto: o concluído é o personalizado');
+  gravarCard(dir, 'PBI-41', 'Entregue ao cliente');
+  await encerrar(dir, 'PBI-41');
+  const l = painelDe(dir).linhas.find((x) => x.id === 'PBI-41');
+  assert.ok(l, 'contexto: o painel tem a linha do PBI-41');
+  assert.equal(l.status, 'Entregue ao cliente');
+  assert.equal(l.feito, true);
+  assert.ok(!desatDoPainel(dir).some((c) => c.id === 'PBI-41'));
+  assert.ok(!herdar(dir).j.cardsDesatualizados.some((c) => c.id === 'PBI-41'));
 });
