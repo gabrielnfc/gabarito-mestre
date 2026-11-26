@@ -759,7 +759,7 @@ export function previa(itens, perguntasDoOnboarding, { fuso = fusoLocal(), calib
     linhas.push(`- ${i.item}: ${i.estado}${v ? ` ${v}` : ''} (fonte: ${i.fonte})${i.motivo ? `; motivo: ${i.motivo}` : ''}${extra}`);
   }
   linhas.push('', 'decido com você (default entre colchetes):');
-  const fixas = [['politica', 'política de entrega'], ['autonomia', 'autonomia em produção'], ['perfil', 'perfil de modelos']];
+  const fixas = [['politica', 'política de entrega'], ['autonomia', 'autonomia para publicar'], ['perfil', 'perfil de modelos']];
   for (const [id, nome] of fixas) {
     const p = ps[id];
     if (!p) continue;
