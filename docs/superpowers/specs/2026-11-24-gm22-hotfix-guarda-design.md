@@ -138,7 +138,7 @@ Permissão: muda a guarda (2 anéis maiores, autonomia menor). Nenhum caminho de
 
 | REQ | Task | Prova | Mutações |
 |---|---|---|---|
-| REQ-HKS-1, 2 | T1 | 6 testes + casos no corpus (e2e pelo hook real) | MH1-a a c, MH2-a a d |
+| REQ-HKS-1, 2 | T1 | 6 testes + casos no corpus + casos na lista de `hooks/test/guarda-corpus-e2e.test.mjs` (e2e pelo hook real roda lista fixa; arquivo no escopo da T1) _(Emenda 2026-11-26, review T1 r1 MAJOR-2)_ | MH1-a a c, MH2-a a d |
 | REQ-PUB-1 | T2 | 1 teste com casos positivos e negativos | MP1-a a d |
 | REQ-PUB-2, 3 | T3 | tabela + 3 testes de nível + processo real + 3 de motivo + 3 arquivos reescritos | MP2-a a f, MP3-a, b |
 | REQ-PUB-3 (compat), REQ-TXT-1 | T4 | `config-222-segue-valida` + 2 de texto + ajustes | MP3-c, MT1-a, b |
