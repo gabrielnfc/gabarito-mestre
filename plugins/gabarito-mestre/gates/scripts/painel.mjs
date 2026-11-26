@@ -37,7 +37,7 @@ import { dirEntrega, lerEstrito } from '../dist/diario.js';
 import { lerConfigEntrega, politicaEfetiva } from '../dist/entrega.js';
 import { estadoDe, ordenar, proximaAcao, TIPOS_DE_TASK } from '../dist/loop.js';
 import { decisoesDaSombra, entregueDe, etapasDasAnteriores, fechamentoDasAnteriores, projetarPainel, renderPainel, ritmoDasAnteriores, umaLinhaDe } from '../dist/painel.js';
-import { validarPacote, validarStdinAgentes, usoDoTranscript } from '../dist/painel-equipe.js';
+import { handbacksDoDiario, validarPacote, validarStdinAgentes, usoDoTranscript } from '../dist/painel-equipe.js';
 import { fusoValido } from '../dist/painel-hora.js';
 import { paraTexto } from '../dist/painel-texto.js';
 import { lerX } from '../dist/pouso.js';
@@ -593,15 +593,9 @@ function atividades(raiz, fontes) {
   return { ultimas, ultima: ultima === null ? null : { id: ultima.id, estado: estadoEmPalavras(ultima.dir, ultima.eventos) }, diarios, handbacks };
 }
 
-/** GM-20 REQ-FAN-1: acumula em `saida` o `ts` (ms) mais recente do hand-back (`custo.medicao` de `subagent:<id>`) de cada id; `ts` ilegível vale `Infinity`. */
+/** GM-20 REQ-FAN-1: acumula em `saida` o hand-back mais recente de cada id; a regra (o mais novo vale, `ts` ilegível vale `Infinity`) é `handbacksDoDiario` do núcleo, uma só. */
 function handbacksDe(eventos, saida) {
-  for (const e of eventos) {
-    if (e?.tipo !== 'custo.medicao' || typeof e.agente !== 'string' || !e.agente.startsWith('subagent:') || e.agente.length <= 9) continue;
-    const ms = Date.parse(e.ts);
-    const id = e.agente.slice(9);
-    if (!Number.isFinite(ms)) { saida[id] = Infinity; continue; } // alinhado ao núcleo: `ts` ilegível ⇒ o hand-back fica, o agente sai
-    if (!Object.hasOwn(saida, id) || ms > saida[id]) saida[id] = ms;
-  }
+  for (const [id, ms] of handbacksDoDiario(eventos)) saida[id] = Math.max(Object.hasOwn(saida, id) ? saida[id] : -Infinity, ms);
 }
 
 /** `gh` da entrega pelo `.harness/painel-medir.json` (T11; `estado` só lê): ausente ⇒ `nunca`; corrompido ⇒ `nunca` + fonte que falhou; `falhou` ⇒ o GitHub. */

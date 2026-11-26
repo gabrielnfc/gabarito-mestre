@@ -448,8 +448,8 @@ const familia = (modelo: unknown): string | null => {
 const STATUS_ATIVO: ReadonlySet<string> = new Set(['pending', 'running', 'waiting']);
 export type EstadoVivo = 'ativo' | 'encerrado' | 'desconhecido';
 
-/** GM-20: o hand-back (`custo.medicao` de `subagent:<id>`) mais recente de cada id no diário; `ts` ilegível vale `Infinity` (o hand-back fica, nunca cede). */
-function handbacksDoDiario(eventos: Evento[]): Map<string, number> {
+/** GM-20: o hand-back (`custo.medicao` de `subagent:<id>`) mais recente de cada id no diário; `ts` ilegível vale `Infinity` (o hand-back fica, nunca cede). Regra única: a borda (`scripts/painel.mjs`) a importa, não a copia. */
+export function handbacksDoDiario(eventos: Evento[]): Map<string, number> {
   const mapa = new Map<string, number>();
   for (const e of Array.isArray(eventos) ? eventos : []) {
     if (!ehObjeto(e) || e.tipo !== 'custo.medicao' || typeof e.agente !== 'string' || !e.agente.startsWith('subagent:') || e.agente.length <= 9) continue;

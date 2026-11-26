@@ -1796,10 +1796,10 @@ describe('agente fantasma (GM-20)', { timeout: 120_000 }, () => {
   const T_HB = Date.UTC(2026, 10, 9, 13, 0, 0);
   const EM_REVISAO = [['task.iniciada', { task: 'T1', papel: 'implementador' }], ['task.concluida', { task: 'T1', sha: 'a'.repeat(40) }], ['task.iniciada', { task: 'T1', papel: 'revisor' }]];
   /** Hand-back do agente `ghost01` no diário de OUTRA entrega (`entrega`, ex.: `GM-11` ou `_sem-id`), no instante `T_HB`. */
-  const handback = (m, entrega, id = 'ghost01') => {
+  const handback = (m, entrega, id = 'ghost01', ts = new Date(T_HB).toISOString()) => {
     const dir = join(m.repo, '.harness', 'entregas', entrega);
     mkdirSync(dir, { recursive: true });
-    const r = diario.append(dir, 'loop', { ts: new Date(T_HB).toISOString(), autor: 't@t.test', sessao: 'loop', agente: `subagent:${id}`, tipo: 'custo.medicao', dados: { papel: 'revisor', modelo: 'claude-opus-4-8', input_tokens: 1, output_tokens: 1 } });
+    const r = diario.append(dir, 'loop', { ts, autor: 't@t.test', sessao: 'loop', agente: `subagent:${id}`, tipo: 'custo.medicao', dados: { papel: 'revisor', modelo: 'claude-opus-4-8', input_tokens: 1, output_tokens: 1 } });
     assert.ok(r.ok, JSON.stringify(r));
   };
   const transcript = (m, id, mtimeMs) => {
@@ -1848,6 +1848,33 @@ describe('agente fantasma (GM-20)', { timeout: 120_000 }, () => {
     const agora = T_HB + 30 * 60_000;
     assert.equal(dono(quem(m, [agente({ transcript: transcript(m, 'ghost01', T_HB + 100) })], agora)).length, 0, '100 ms depois: segue fora');
     assert.equal(dono(quem(m, [agente({ transcript: transcript(m, 'ghost01', T_HB + 1001) })], agora)).length, 1, 'mais de 1 s: retomado');
+  });
+
+  test('handback-mais-novo-vale (CLI, regra única do núcleo): 2 hand-backs em outra entrega e o transcript entre eles ⇒ segue fora (vale o mais novo, em qualquer ordem)', () => {
+    const m = montar({ ...comEventos(EM_REVISAO) });
+    handback(m, 'GM-11', 'ghost01', new Date(T_HB).toISOString());
+    handback(m, 'GM-12', 'ghost01', new Date(T_HB + 10 * 60_000).toISOString());
+    const agora = T_HB + 30 * 60_000;
+    assert.equal(dono(quem(m, [agente({ transcript: transcript(m, 'ghost01', T_HB + 5 * 60_000) })], agora)).length, 0, 'entre os dois: o mais novo vale, segue fora');
+    assert.equal(dono(quem(m, [agente({ transcript: transcript(m, 'ghost01', T_HB + 10 * 60_000 + 2000) })], agora)).length, 1, 'depois do mais novo: retomado');
+    // a mesma entrega, hand-back mais novo gravado primeiro (ordem do diário não decide)
+    const m2 = montar({ ...comEventos(EM_REVISAO) });
+    handback(m2, 'GM-11', 'ghost01', new Date(T_HB + 10 * 60_000).toISOString());
+    handback(m2, 'GM-11', 'ghost01', new Date(T_HB).toISOString());
+    assert.equal(dono(quem(m2, [agente({ transcript: transcript(m2, 'ghost01', T_HB + 5 * 60_000) })], agora)).length, 0, 'ordem inversa: segue fora');
+  });
+
+  test('handback-ts-ilegivel (CLI, regra única do núcleo): hand-back de `ts` ilegível em outra entrega ⇒ o agente segue fora, mesmo com transcript novo e com outro hand-back legível antes ou depois', () => {
+    const agora = T_HB + 30 * 60_000;
+    const m = montar({ ...comEventos(EM_REVISAO) });
+    handback(m, 'GM-11', 'ghost01', 'ontem-de-tarde');
+    assert.equal(dono(quem(m, [agente({ transcript: transcript(m, 'ghost01', T_HB + 20 * 60_000) })], agora)).length, 0, 'ts ilegível: nunca cede');
+    handback(m, 'GM-12', 'ghost01', new Date(T_HB).toISOString());
+    assert.equal(dono(quem(m, [agente({ transcript: transcript(m, 'ghost01', T_HB + 20 * 60_000) })], agora)).length, 0, 'legível depois (outra entrega): segue fora');
+    const m2 = montar({ ...comEventos(EM_REVISAO) });
+    handback(m2, 'GM-10', 'ghost01', new Date(T_HB).toISOString());
+    handback(m2, 'GM-11', 'ghost01', 'ontem-de-tarde');
+    assert.equal(dono(quem(m2, [agente({ transcript: transcript(m2, 'ghost01', T_HB + 20 * 60_000) })], agora)).length, 0, 'legível antes (outra entrega): segue fora');
   });
 
   test('fantasma-silencio-60-min (CLI): o `mtime` do transcript legível decide; 60 exatos fica, 61 sai; sem transcript legível fica', () => {
