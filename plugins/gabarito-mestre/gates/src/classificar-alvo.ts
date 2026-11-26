@@ -41,6 +41,8 @@ const SQL_POR_EXECUTE = new Set(['mysql', 'mariadb']);
 const SUSPEITO = /(^|[.-])(prod|production|prd)([.-]|$)/i;
 // DT1: só estas flags mantêm o `git push` na forma de publicar; qualquer outra (--force, --delete, --all, -o …) é terceiro.
 const FLAGS_PUBLICAR = new Set(['-u', '--set-upstream', '-q', '--quiet', '-v', '--verbose', '--follow-tags', '--atomic', '--porcelain', '-n', '--dry-run']);
+// DT1(b): flags do `gh pr merge` sem efeito de alvo nem de política (sem valor). Fora: --admin (fura proteção), -b/-t/-F/--match-head-commit (valor livre), -R/--repo, URL.
+const FLAGS_GH_MERGE = new Set(['--merge', '-m', '--squash', '-s', '--rebase', '-r', '--auto', '--delete-branch', '-d']);
 const SUB_VERCEL_PUBLICAR = new Set(['', 'deploy', 'redeploy', 'promote', 'rollback']);
 const LOOPBACK = new Set(['localhost', '127.0.0.1', '::1', '0.0.0.0']);
 
@@ -252,6 +254,13 @@ function gravidade(a: Ambiente): number {
   return a === 'prod' ? 4 : a === 'homolog' ? 3 : a === 'desconhecido' ? 2 : 1;
 }
 
+// Forma fechada: o segmento começa direto no comando. Qualquer prefixo (VAR=…, env, sudo…) pode trocar o repositório/projeto alvo (GIT_DIR, GH_REPO…).
+function semPrefixo(s: Segmento): boolean {
+  if (s.atribs.length > 0) return false;
+  const primeiro = s.cru.trim().split(/\s+/)[0] ?? '';
+  return primeiro.split('/').pop() === s.cmd;
+}
+
 function classificarSegmento(s: Segmento, cfg: ConfigGuarda | null, ctx: Contexto): Parcial {
   const p = nada(s.cru);
   const pos = positionaisDe(s.args);
@@ -304,7 +313,7 @@ function classificarSegmento(s: Segmento, cfg: ConfigGuarda | null, ctx: Context
     if (alvoProd) {
       candidatos.push({ ambiente: 'prod', alvo: 'vercel' });
       if (!VERCEL_LEITURA.has(sub)) escritaD3 = true;
-      if (SUB_VERCEL_PUBLICAR.has(sub)) publicar = true;
+      if (SUB_VERCEL_PUBLICAR.has(sub) && semPrefixo(s)) publicar = true;
     }
   } else if (s.cmd === 'supabase') {
     const sub = subSemFlags(s.args, SUPABASE_COM_VALOR).slice(0, 2).join(' ');
@@ -329,7 +338,7 @@ function classificarSegmento(s: Segmento, cfg: ConfigGuarda | null, ctx: Context
       const posPush = posicionaisDePush(g.resto);
       // DT1(a): flags só da lista, remoto `origin` ou omitido, nenhum refspec com `+` ou `:` inicial.
       // Globais do git antes do push (`-C`, `--git-dir`, `--work-tree`, `-c`…) podem mudar o repositório alvo: fora da forma.
-      const semGlobais = s.args[0] === 'push';
+      const semGlobais = s.args[0] === 'push' && semPrefixo(s);
       const formaPublicar =
         semGlobais &&
         g.resto.every((a) => !a.startsWith('-') || FLAGS_PUBLICAR.has(a)) &&
@@ -373,7 +382,14 @@ function classificarSegmento(s: Segmento, cfg: ConfigGuarda | null, ctx: Context
       candidatos.push({ ambiente: 'prod', alvo });
       escritaD3 = true;
       // `-R`/`--repo` aponta outro repositório: produção de terceiro, fora da forma `gh pr merge <n>` (DT1(b)).
-      publicar = !s.args.some((a) => a.startsWith('-R') || a === '--repo' || a.startsWith('--repo='));
+      // Forma fechada: `gh pr merge [<número>] [flags da lista]`, sem prefixo de ambiente; URL, owner/repo#n, branch, -R/--repo ficam fora.
+      const resto = s.args.slice(2);
+      publicar =
+        semPrefixo(s) &&
+        s.args[0] === 'pr' &&
+        s.args[1] === 'merge' &&
+        resto.every((a) => /^\d+$/.test(a) || FLAGS_GH_MERGE.has(a)) &&
+        resto.filter((a) => /^\d+$/.test(a)).length <= 1;
     } else candidatos.push({ ambiente: 'desconhecido', alvo });
   }
 

@@ -10,6 +10,9 @@
  *  MR2    (r1) `publicar = true` no push implícito ⇒ `publicar-push-implicito-flag-fora` falha
  *  MR3    (r1) ignorar global do git antes do push, ou `-R`/`--repo` no gh ⇒ `publicar-outro-repo` falha
  *  MP1-f  (própria) tirar `candidatos prod === 1` ⇒ `publicar-mesmo-segmento-com-alvo-terceiro-e-false` falha
+ *  MR4    (r2) tirar a checagem de atribuição/prefixo de ambiente ⇒ `publicar-familia-ambiente` falha
+ *  MR5    (r2) gh aceitar URL / owner/repo#n (não só número puro) ⇒ `publicar-familia-gh-alvo` falha
+ *  MR6    (r2) gh aceitar flag fora da lista fechada ⇒ `publicar-familia-gh-flags` falha
  *  MP1-e  (própria) remoto fora de origin aceito ⇒ `publicar-negativos` (remoto outro) falha
  */
 import { test, describe } from 'node:test';
@@ -71,6 +74,58 @@ describe('classificar-publicar-formas', () => {
     ['git push origin feat/x', 'feat/x'],
     ['git status', 'main'],
   ];
+  test('publicar-familia-ambiente: qualquer prefixo (VAR=, env, sudo) antes do comando é false, ambiente segue prod', () => {
+    const casos: Array<[string, string]> = [
+      ['GIT_DIR=../outro/.git git push origin main', 'feat/x'],
+      ['GIT_WORK_TREE=../outro git push origin main', 'feat/x'],
+      ['FOO=1 git push origin main', 'feat/x'],
+      ['FOO=1 git push', 'main'],
+      ['env GIT_DIR=../outro/.git git push origin main', 'feat/x'],
+      ['env FOO=1 git push origin main', 'feat/x'],
+      ['sudo GIT_DIR=../outro/.git git push origin main', 'feat/x'],
+      ['GH_REPO=org/terceiro gh pr merge 5', 'main'],
+      ['env GH_REPO=org/terceiro gh pr merge 5', 'main'],
+      ['FOO=1 vercel --prod', 'feat/x'],
+      ['env VERCEL_ORG_ID=x vercel --prod', 'feat/x'],
+      ['VERCEL_PROJECT_ID=x vc deploy --prod', 'feat/x'],
+    ];
+    for (const [cmd, branch] of casos) {
+      const c = bash(cmd, branch);
+      assert.equal(c.publicar, false, cmd);
+      assert.equal(c.ambiente, 'prod', cmd);
+    }
+  });
+
+  test('publicar-familia-gh-alvo: URL, owner/repo#n, -R colado e globais são false', () => {
+    for (const cmd of [
+      'gh pr merge https://github.com/org/terceiro/pull/5',
+      'gh pr merge org/terceiro#5',
+      'gh pr merge 5 https://github.com/org/terceiro/pull/6',
+      'gh pr merge -Rorg/x 5',
+      'gh pr merge 5 -Rorg/x',
+      'gh pr merge 5 --repo=org/x',
+      'gh pr merge feature-branch',
+    ]) {
+      const c = bash(cmd, 'main');
+      assert.equal(c.publicar, false, cmd);
+      assert.equal(c.ambiente, 'prod', cmd);
+    }
+    // Flag global antes de `pr`: o leitor não acha `pr merge` (ambiente não é prod); publicar segue false.
+    for (const cmd of ['gh -R org/x pr merge 5', 'gh --repo org/x pr merge 5']) assert.equal(bash(cmd, 'main').publicar, false, cmd);
+  });
+
+  test('publicar-familia-gh-flags: só a lista fechada de flags sem efeito de alvo', () => {
+    for (const f of ['--merge', '-m', '--squash', '-s', '--rebase', '-r', '--auto', '--delete-branch', '-d']) {
+      assert.equal(bash(`gh pr merge 5 ${f}`, 'main').publicar, true, f);
+    }
+    assert.equal(bash('gh pr merge 5 --squash --delete-branch', 'main').publicar, true);
+    assert.equal(bash('gh pr merge --squash', 'main').publicar, true);
+    for (const f of ['--admin', '--body x', '-b x', '--subject x', '-t x', '--body-file f', '--match-head-commit abc', '--disable-auto', '--unknown']) {
+      assert.equal(bash(`gh pr merge 5 ${f}`, 'main').publicar, false, f);
+    }
+    assert.equal(bash('gh pr merge 5 6', 'main').publicar, false);
+  });
+
   test('publicar-negativos', () => {
     for (const [cmd, branch] of negativos) assert.equal(bash(cmd, branch).publicar, false, cmd);
   });
