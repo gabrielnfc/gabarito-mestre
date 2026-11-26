@@ -13,14 +13,14 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { montarNoDisco } from './painel-fixtures/adotado.mjs';
 import { projetoDoRepo } from '../scripts/painel.mjs';
-import { ehFeito } from '../dist/projeto.js';
+import { ehColunaFl1, ehFeito, ehTerminal } from '../dist/projeto.js';
 
 const AQUI = dirname(fileURLToPath(import.meta.url));
 const ONBOARDING = join(AQUI, '..', 'scripts', 'onboarding.mjs');
@@ -508,5 +508,71 @@ for (const [nome, valor] of [['vazio', ''], ['longo', longoRe]]) {
     const { antes, depois } = await foraDoPadrao(`p9-pl-${nome}`, valor);
     assert.equal(depois.planosLegados.sem, antes.planosLegados.sem, `herdar contou card que o painel não mostra: ${JSON.stringify(depois.planosLegados)}`);
     assert.deepEqual(depois.planosLegados, antes.planosLegados);
+  });
+}
+
+// ── GM-20 T11 ciclo 5: P9 do PIPELINE do herdar (árvores, .md, leitura segura, dedup por id, terminal, ordem, plano.json, contagem) contra o painel CLI real ──
+// 1 fixture com git real (raiz + worktree) e 3 casos de dedup do PBI-50 (raiz mais nova, worktree mais nova, empate); a derivação do painel vem das linhas do CLI.
+const cardEm = (id, status, dia) => `---\nid: "${id}"\ntipo: US\nstatus: ${status}\natualizadoEm: "${dia}"\n---\n# ${id}\nFL1 · User Story. Plano: a escrever.\n`;
+const doPainelDerivado = (dir) => {
+  const t = spawnSync(process.execPath, [PAINEL, 'estado'], { cwd: dir, encoding: 'utf8' });
+  const linhas = JSON.parse(t.stdout).estado.projeto.linhas;
+  const fl1 = cfgDe(dir).fluxo.status?.FL1;
+  const cont = new Map();
+  for (const l of linhas) {
+    const s = (l.status ?? '').trim();
+    if (s === '' || ehColunaFl1(s, fl1) || ehTerminal(s)) continue;
+    cont.set(s, (cont.get(s) ?? 0) + 1);
+  }
+  return {
+    ids: linhas.map((l) => l.id),
+    entreguesSemPlano: linhas.filter((l) => ehFeito(l.status, fl1) && l.plano !== 'json').map((l) => l.id),
+    statusFora: [...cont].map(([status, n]) => ({ status, n })).sort((x, y) => y.n - x.n || x.status.localeCompare(y.status)),
+  };
+};
+const CASOS_DEDUP = [
+  ['raiz-mais-nova', { raiz: ['Concluído', '2026-11-20'], wt: ['Aguardando cliente', '2026-11-01'] }],
+  ['worktree-mais-nova', { raiz: ['Aguardando cliente', '2026-11-01'], wt: ['Concluído', '2026-11-20'] }],
+  ['empate-fica-a-raiz', { raiz: ['Concluído', '2026-11-12'], wt: ['Aguardando cliente', '2026-11-12'] }],
+];
+for (const [nome, { raiz, wt: naWt }] of CASOS_DEDUP) {
+  test(`herdar-e-painel-pipeline-${nome}: card duplicado raiz x worktree real e o resto do pipeline dão o mesmo entreguesSemPlano e statusFora do painel CLI (P9)`, async () => {
+    const dir = await projeto(`p9-pipe-${nome}`);
+    execFileSync('git', ['config', 'user.name', 'Teste'], { cwd: dir });
+    execFileSync('git', ['config', 'user.email', 'teste@exemplo.invalid'], { cwd: dir });
+    const wt = `${dir}-wt`;
+    criados.push(wt);
+    execFileSync('git', ['worktree', 'add', '-q', '-b', `wt-${nome}`, wt], { cwd: dir, stdio: 'ignore' });
+    const grava = (base, id, st, dia) => writeFileSync(join(base, 'cards', `${id}.md`), cardEm(id, st, dia));
+    const cfg = cfgDe(dir); // quadro FL1 personalizado: "Entregue" é o concluído da config
+    cfg.fluxo.status = { FL1: { preparado: 'Preparado', em_execucao: 'Em execução', revisao: 'Revisão e teste', pronto: 'Pronto para liberar', concluido: 'Entregue' } };
+    writeFileSync(join(dir, 'harness.config.json'), JSON.stringify(cfg, null, 2));
+    grava(dir, 'PBI-48', 'Entregue', '2026-11-12'); // feito só pela config: entra em entreguesSemPlano, nunca em statusFora
+    grava(dir, 'PBI-47', 'Pausado', '2026-11-12'); // n=1, empata com "Aguardando cliente": desempate alfabético
+    grava(dir, 'PBI-58', 'Em revisão', '2026-11-12'); // "Em revisão" n=3 (com PBI-51 e PBI-59): maior contagem primeiro
+    grava(dir, 'PBI-59', 'Em revisão', '2026-11-12');
+    grava(dir, 'PBI-50', ...raiz);
+    grava(wt, 'PBI-50', ...naWt);
+    grava(wt, 'PBI-51', 'Em revisão', '2026-11-12'); // só na worktree (etapa: leitura das árvores)
+    grava(dir, 'PBI-52', 'Aguardando cliente', '2026-11-12');
+    grava(dir, 'PBI-100', 'Concluído', '2026-11-12'); // ordem numérica: PBI-60 (só na worktree) vem antes de PBI-100
+    grava(wt, 'PBI-60', 'Concluído', '2026-11-12');
+    grava(dir, 'PBI-57', 'Cancelado', '2026-11-12'); // terminal: nem entreguesSemPlano nem statusFora
+    writeFileSync(join(dir, 'cards', 'PBI-53.txt'), cardEm('PBI-53', 'Concluído', '2026-11-12')); // não é .md
+    mkdirSync(join(dir, 'outros'), { recursive: true });
+    writeFileSync(join(dir, 'outros', 'PBI-54-real.md'), cardEm('PBI-54', 'Concluído', '2026-11-12'));
+    symlinkSync('../outros/PBI-54-real.md', join(dir, 'cards', 'PBI-54.md')); // symlink: a leitura segura recusa
+    writeFileSync(join(dir, 'cards', 'PBI-55.md'), `${cardEm('PBI-55', 'Concluído', '2026-11-12')}${'x'.repeat(1024 * 1024 + 16)}\n`); // passa de 1 MiB: recusado
+    grava(dir, 'PBI-56', 'Concluído', '2026-11-12'); // plano.json só na worktree: não é "sem plano"
+    mkdirSync(join(wt, '.harness', 'entregas', 'PBI-56'), { recursive: true });
+    writeFileSync(join(wt, '.harness', 'entregas', 'PBI-56', 'plano.json'), JSON.stringify({ entrega: 'PBI-56', tasks: [{ id: 'T1', deps: [], arquivos: [] }] }));
+    const doPainel = doPainelDerivado(dir);
+    for (const id of ['PBI-51', 'PBI-60', 'PBI-100', 'PBI-50', 'PBI-56']) assert.ok(doPainel.ids.includes(id), `contexto: o painel real mostra ${id}`);
+    for (const id of ['PBI-53', 'PBI-54', 'PBI-55', 'PBI-57']) assert.ok(!doPainel.ids.includes(id), `contexto: o painel real não mostra ${id}`);
+    assert.ok(!doPainel.entreguesSemPlano.includes('PBI-56'), 'contexto: o painel vê o plano.json da worktree (plano json)');
+    assert.ok(doPainel.entreguesSemPlano.indexOf('PBI-60') < doPainel.entreguesSemPlano.indexOf('PBI-100'), 'contexto: ordem numérica no painel');
+    const j = herdar(dir).j;
+    assert.deepEqual(j.entreguesSemPlano, doPainel.entreguesSemPlano);
+    assert.deepEqual(j.statusFora, doPainel.statusFora);
   });
 }
