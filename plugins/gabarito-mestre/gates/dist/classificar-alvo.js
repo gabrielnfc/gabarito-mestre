@@ -30,15 +30,18 @@ import { anelDeBash, anelDeCaminho, MARCA_INTERRUPTOR, destinoDeRefspec, lerGit,
                                               
 const ORDEM              = ['prod', 'homolog', 'teste'];
 
-                                                                                                                                         
+                                                                                                                                                            
 
-const NEUTRO                = { ambiente: 'desconhecido', acao: 'leitura', alvo: '', destrutivo: false, anel: null, segmentosProd: [] };
+const NEUTRO                = { ambiente: 'desconhecido', acao: 'leitura', alvo: '', destrutivo: false, anel: null, segmentosProd: [], publicar: false };
 
 const REDE = new Set(['curl', 'wget', 'http', 'https', 'xh', 'ssh', 'scp', 'rsync', 'nc', 'telnet']);
 const BANCO = new Set(['psql', 'pg_dump', 'pg_dumpall', 'pg_restore', 'mysql', 'mysqldump', 'mariadb', 'mariadb-dump', 'mongosh', 'mongo', 'redis-cli']);
 // Clientes cujo SQL vem em `-e/--execute` (e não em `-c/--command`).
 const SQL_POR_EXECUTE = new Set(['mysql', 'mariadb']);
 const SUSPEITO = /(^|[.-])(prod|production|prd)([.-]|$)/i;
+// DT1: só estas flags mantêm o `git push` na forma de publicar; qualquer outra (--force, --delete, --all, -o …) é terceiro.
+const FLAGS_PUBLICAR = new Set(['-u', '--set-upstream', '-q', '--quiet', '-v', '--verbose', '--follow-tags', '--atomic', '--porcelain', '-n', '--dry-run']);
+const SUB_VERCEL_PUBLICAR = new Set(['', 'deploy', 'redeploy', 'promote', 'rollback']);
 const LOOPBACK = new Set(['localhost', '127.0.0.1', '::1', '0.0.0.0']);
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -242,7 +245,7 @@ function rank(p         )         {
 }
 
 function nada(cru        )          {
-  return { ambiente: 'desconhecido', acao: 'execucao', alvo: '', destrutivo: false, prodEscrita: false, cru };
+  return { ambiente: 'desconhecido', acao: 'execucao', alvo: '', destrutivo: false, prodEscrita: false, cru, publicar: false };
 }
 
 function gravidade(a          )         {
@@ -288,6 +291,7 @@ function classificarSegmento(s          , cfg                     , ctx         
   }
 
   let escritaD3 = false;
+  let publicar = false;
   const branchesProd = cfg.ambientes.prod?.branches ?? [];
 
   if (s.cmd === 'vercel' || s.cmd === 'vc') {
@@ -300,6 +304,7 @@ function classificarSegmento(s          , cfg                     , ctx         
     if (alvoProd) {
       candidatos.push({ ambiente: 'prod', alvo: 'vercel' });
       if (!VERCEL_LEITURA.has(sub)) escritaD3 = true;
+      if (SUB_VERCEL_PUBLICAR.has(sub)) publicar = true;
     }
   } else if (s.cmd === 'supabase') {
     const sub = subSemFlags(s.args, SUPABASE_COM_VALOR).slice(0, 2).join(' ');
@@ -321,11 +326,18 @@ function classificarSegmento(s          , cfg                     , ctx         
       p.acao = 'escrita';
       const atual = ctx.branchAtual;
       const refspecs = posicionaisDePush(g.resto).slice(1);
+      const posPush = posicionaisDePush(g.resto);
+      // DT1(a): flags só da lista, remoto `origin` ou omitido, nenhum refspec com `+` ou `:` inicial.
+      const formaPublicar =
+        g.resto.every((a) => !a.startsWith('-') || FLAGS_PUBLICAR.has(a)) &&
+        (posPush[0] === undefined || posPush[0] === 'origin') &&
+        refspecs.every((r) => !r.startsWith('+') && !r.startsWith(':'));
       const todasAsBranches = g.resto.includes('--mirror') || g.resto.includes('--all');
       const implicito = ()       => {
         if (atual !== null && branchesProd.includes(atual)) {
           candidatos.push({ ambiente: 'prod', alvo: atual });
           escritaD3 = true;
+          publicar = formaPublicar;
         } else candidatos.push({ ambiente: 'desconhecido', alvo: atual ?? 'HEAD' });
       };
       if (todasAsBranches && branchesProd.length > 0) {
@@ -345,6 +357,7 @@ function classificarSegmento(s          , cfg                     , ctx         
           else if (branchesProd.includes(nome)) {
             candidatos.push({ ambiente: 'prod', alvo: nome });
             escritaD3 = true;
+            if (formaPublicar) publicar = true;
           }
         }
       }
@@ -356,6 +369,7 @@ function classificarSegmento(s          , cfg                     , ctx         
     if (ctx.branchAtual !== null && branchesProd.includes(ctx.branchAtual)) {
       candidatos.push({ ambiente: 'prod', alvo });
       escritaD3 = true;
+      publicar = true;
     } else candidatos.push({ ambiente: 'desconhecido', alvo });
   }
 
@@ -377,6 +391,8 @@ function classificarSegmento(s          , cfg                     , ctx         
     } else p.acao = 'execucao';
   }
   p.prodEscrita = escolhido.ambiente === 'prod' && escritaD3;
+  // `publicar` vale só se o segmento é prod pela própria forma e sem outro alvo prod no mesmo segmento (DT3: destrutivo já fica fora pela lista de flags).
+  p.publicar = publicar && escolhido.ambiente === 'prod' && candidatos.filter((c) => c.ambiente === 'prod').length === 1;
   return p;
 }
 
@@ -419,6 +435,7 @@ function classificarBash(entrada             , cfg                     , ctx    
     destrutivo: topo.destrutivo,
     anel: null,
     segmentosProd: parciais.filter((x) => x.ambiente === 'prod').map((x) => x.cru),
+    publicar: parciais.some((x) => x.ambiente === 'prod') && parciais.filter((x) => x.ambiente === 'prod').every((x) => x.publicar),
   };
 
   // O anel vem antes do ambiente.
@@ -428,7 +445,7 @@ function classificarBash(entrada             , cfg                     , ctx    
   // Kill switch (REQ-POU-2): só o anel de caminho protege `.harness/PAUSAR`; citar o caminho num texto não é alvo.
   const anel = anelDeBash(segmentos, ctx, cwd, subagent, estado);
   const comEstado = estado.cdPerdido ? { ...base, cdPerdido: true } : base;
-  if (anel) return { ...comEstado, ambiente: 'desconhecido', acao: anel.escrita ? 'escrita' : 'leitura', alvo: reduzirAlvo(anel.alvo), anel: anel.anel };
+  if (anel) return { ...comEstado, ambiente: 'desconhecido', acao: anel.escrita ? 'escrita' : 'leitura', alvo: reduzirAlvo(anel.alvo), anel: anel.anel, publicar: false };
   return comEstado;
 }
 
@@ -452,6 +469,7 @@ function classificarMcp(entrada             , cfg                     )         
     destrutivo: sql !== null && sqlDestrutivo(sql),
     anel: null,
     segmentosProd: ambiente === 'prod' ? [nome] : [],
+    publicar: false,
   };
 }
 

@@ -103,6 +103,12 @@ export type Classificacao = {
   anel: 'segredo' | 'integridade' | null;
   /** Q26/Q6: todo segmento `prod`, de qualquer ação (Bash: o segmento cru; MCP: o nome da tool). */
   segmentosProd: string[];
+  /**
+   * GM-22 (DT1): há segmento prod e TODO segmento prod é uma das 3 formas fechadas de publicar
+   * (`git push` a branch prod sem `+`/`:`/flags fora da lista, `gh pr merge` em prod, `vercel` deploy/promote/rollback).
+   * Fail-closed: o que não está na lista é produção de terceiro. Anel ⇒ `false`. Ainda não muda decisão (T3).
+   */
+  publicar: boolean;
   /** Q17: a cadeia de `cd` passou de LIMITE_CD e a guarda perdeu o diretório corrente (só Bash). */
   cdPerdido?: boolean;
 };
