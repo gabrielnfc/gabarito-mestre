@@ -346,11 +346,17 @@ test('herdar-e-painel-borda-worktree: encerrada só no diário de uma worktree r
   assert.deepEqual(herdar(dir).j.cardsDesatualizados, doPainel);
 });
 
+const commitarConfig = (dir) => {
+  const g = (...a) => execFileSync('git', ['-c', 'user.name=F', '-c', 'user.email=f@e.invalid', '-c', 'commit.gpgsign=false', ...a], { cwd: dir, stdio: 'ignore' });
+  g('add', 'harness.config.json'); g('commit', '-qm', 'idp'); g('push', '-q', 'origin', 'main'); g('fetch', '-q', 'origin');
+};
+
 test('herdar-e-painel-borda-idpadrao: idPadrao da config vale nas 2 camadas (P9, injeção idPadrao)', async () => {
   const dir = await projeto('p9-idp');
   const cfg = cfgDe(dir);
   cfg.fluxo.idPadrao = '^[A-Z0-9]+-\\d+$';
   writeFileSync(join(dir, 'harness.config.json'), JSON.stringify(cfg, null, 2));
+  commitarConfig(dir); // origin = local: o herdar e o painel leem o idPadrao da origin/HEAD
   assert.ok(!new RegExp('^[A-Z]+-\\d+$').test('X2-1'), 'contexto: o padrão default não casa X2-1');
   gravarCard(dir, 'X2-1', 'Em execução');
   escreverEncerrada(dir, 'X2-1', encerradaDaFixture(dir), 'events.p9-idp.jsonl');
@@ -412,5 +418,33 @@ test('herdar-e-painel-terminais-da-config: terminais personalizado na cfg vale n
   assert.deepEqual(cfgDe(dir).fluxo.status.terminais, ['Aguardando cliente'], 'contexto: o terminal é o personalizado');
   const doPainel = desatDoPainel(dir);
   assert.deepEqual(idsDe(doPainel), ['PBI-7'], 'contexto: o painel já não lista PBI-50');
+  assert.deepEqual(herdar(dir).j.cardsDesatualizados, doPainel);
+});
+
+// ── GM-20 T11 ciclo 3: o idPadrao que o herdar injeta passa pela MESMA normalização do painel (idPadraoDe); paridade com o CLI real do painel ──
+async function idPadraoNaOrigin(rotulo, valor) {
+  const dir = await projeto(rotulo);
+  const cfg = cfgDe(dir);
+  cfg.fluxo.idPadrao = valor;
+  writeFileSync(join(dir, 'harness.config.json'), JSON.stringify(cfg, null, 2));
+  commitarConfig(dir);
+  gravarCard(dir, 'pbi-9', 'Em execução');
+  escreverEncerrada(dir, 'pbi-9', encerradaDaFixture(dir), 'events.p9-idp-norm.jsonl');
+  return dir;
+}
+
+test('herdar-e-painel-idpadrao-vazio: idPadrao "" vale o default nas 2 camadas, pbi-9 fora (P9, normalização única)', async () => {
+  const dir = await idPadraoNaOrigin('p9-idp-vazio', '');
+  const doPainel = desatDoPainelCli(dir);
+  assert.deepEqual(idsDe(doPainel), ['PBI-7'], 'contexto: o painel real cai no default');
+  assert.deepEqual(herdar(dir).j.cardsDesatualizados, doPainel);
+});
+
+test('herdar-e-painel-idpadrao-longo: idPadrao com mais de 200 caracteres vale o default nas 2 camadas (P9, normalização única)', async () => {
+  const longo = `^(?:${'x|'.repeat(100)}[a-z]+-\\d+|[A-Z]+-\\d+)$`;
+  assert.ok(longo.length > 200, 'contexto: passa de 200');
+  const dir = await idPadraoNaOrigin('p9-idp-longo', longo);
+  const doPainel = desatDoPainelCli(dir);
+  assert.deepEqual(idsDe(doPainel), ['PBI-7'], 'contexto: o painel real cai no default');
   assert.deepEqual(herdar(dir).j.cardsDesatualizados, doPainel);
 });

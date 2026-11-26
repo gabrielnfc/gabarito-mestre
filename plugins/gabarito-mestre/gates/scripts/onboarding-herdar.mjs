@@ -14,6 +14,7 @@
 import { lstatSync, readFileSync, readdirSync, realpathSync } from 'node:fs';
 import { isAbsolute, join } from 'node:path';
 import { cardDe, ehColunaFl1, ehFeito, ehTerminal, padraoLegadoValido, planoLegadoDe, planoMdDoCard, terminaisValidos, worktreesDe } from '../dist/projeto.js';
+import { idPadraoDe } from '../lib/config.mjs';
 import { aplicarConfig, ArquivoInvalido } from './onboarding-config.mjs';
 import { projetoDoRepo } from './painel.mjs';
 
@@ -145,7 +146,7 @@ function detectar(raiz, cfg, rodar) {
   // REQ-CRD-1 (P9): a lista é a do painel (mesma projeção: ordem dos eventos, terminal, opção, status), nunca remontada aqui; sem FL1 não há card
   const cardsDesatualizados = fl1 === null
     ? []
-    : projetoDoRepo({ atual: raiz, cfg, idPadrao: typeof cfg?.fluxo?.idPadrao === 'string' ? cfg.fluxo.idPadrao : ID_PADRAO_DEFAULT, agoraMs: Date.now(), fuso: 'UTC', deps: { worktreeList: () => listaDeWorktrees(raiz, rodar) } })
+    : projetoDoRepo({ atual: raiz, cfg, idPadrao: idPadraoDe(raiz), agoraMs: Date.now(), fuso: 'UTC', deps: { worktreeList: () => listaDeWorktrees(raiz, rodar) } })
       .linhas.filter((l) => l.cardDesatualizado !== null && l.cardDesatualizado !== undefined).map((l) => ({ id: l.id, status: l.cardDesatualizado }));
 
   const oferecer = entreguesSemPlano.length > 0 || planosLegados.padrao !== null || statusFora.length > 0 || cardsDesatualizados.length > 0;
