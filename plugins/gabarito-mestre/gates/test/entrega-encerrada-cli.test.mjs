@@ -354,3 +354,38 @@ test('versao-nunca-truncada (r1 MAJOR-3): o caso real, tag v2.1.0-alpha.2, encer
   assert.match(l, /^GABARITO · GM-15 entregue \(versão 2\.1\.0-alpha\.2\) · nenhuma próxima anotada$/);
   assert.doesNotMatch(l, /versão 2\.1\.0\)/);
 });
+
+/**
+ * GM-20 review final r1 MAJOR-1 (D-G47, emenda 1 de REQ-CRD-2): base `next`, entrega encerrada com sha e nenhum PR em main que o contenha ⇒ o
+ * lembrete "levar next para main" segue no DEPENDE do painel, o mesmo item do `lote` de `loop.mjs proxima` (uma regra só: `loteDoDono`).
+ * Fixture de `.claude-tmp/gm20/rf-virada.mjs`: repo com origin, config de origin com `entrega.base: next`, plano de 1 task. Lê a SAÍDA real do painel.
+ */
+test('virada-segue-depois-da-encerrada: painel.mjs estado/texto mantêm "levar next para main" como o lote do proxima', () => {
+  const base = realpathSync(mkdtempSync(join(tmpdir(), 'rf-virada-')));
+  const d = join(raizSegura(base), 'repo');
+  mkdirSync(d, { recursive: true });
+  const BR = 'feat/GM-12-painel';
+  git(d, 'init', '-q', '-b', BR);
+  mkdirSync(join(d, 'docs'));
+  writeFileSync(join(d, 'docs', 'spec.md'), '# T\n\nc\n');
+  writeFileSync(join(d, 'harness.config.json'), JSON.stringify({ entrega: { base: 'next', autonomia: false }, sombra: { julga_emendas: false, libera_teto: false } }));
+  git(d, 'add', '.');
+  git(d, 'commit', '-q', '-m', 'i');
+  const bare = join(base, 'origin.git');
+  mkdirSync(bare);
+  git(bare, 'init', '-q', '--bare', '-b', BR);
+  git(d, 'remote', 'add', 'origin', bare);
+  git(d, 'push', '-q', 'origin', BR);
+  git(d, 'remote', 'set-head', 'origin', BR);
+  mkdirSync(dirDe(d, 'GM-12'), { recursive: true });
+  writeFileSync(join(dirDe(d, 'GM-12'), 'plano.json'), JSON.stringify({ entrega: 'GM-12', spec: 'docs/spec.md', tasks: [{ id: 'T1', titulo: 'a', deps: [], arquivos: ['src/t1.txt'] }] }));
+  w(d, 'GM-12', 'loop', 'task.iniciada', { task: 'T1', papel: 'implementador' }, '2026-11-09T12:00:01.000Z');
+  w(d, 'GM-12', 'painel', 'entrega.encerrada', { entrega: 'GM-12', pr: 31, via: 'head', mergeado_em: '2026-11-09T12:30:00Z', sha: 'a'.repeat(40) }, '2026-11-09T12:00:02.000Z', 'painel');
+  const VIRADA = 'no fim da entrega: levar next para main';
+  const l = spawnSync(process.execPath, [join(AQUI, '..', 'scripts', 'loop.mjs'), 'proxima'], { cwd: d, encoding: 'utf8', env: env() });
+  const lote = JSON.parse(l.stdout.trim().split('\n').at(-1)).lote.map((i) => i.motivo);
+  assert.deepEqual(lote, [VIRADA], 'o proxima mantém o lembrete');
+  const e = estado(d);
+  assert.deepEqual(e.depende.map((i) => i.motivo), lote, 'o DEPENDE do painel lista o mesmo lote');
+  assert.ok(texto(d, 100).some((x) => /para main/.test(x)), 'o texto do painel mostra o lembrete');
+});

@@ -343,7 +343,7 @@ const CONHECIDOS: ReadonlySet<string> = new Set(TIPOS_EVENTO);
  * (a) task `no_teto` (ordem do plano) que a Sombra não pode liberar: `sombra.libera_teto` desligado em origin ou um freio (`freioDaLiberacao`: abordagens esgotadas ou
  * orçamento 3×; GM-15 T36, sem limite numérico de liberações); (b) emenda aberta com `sombra.julga_emendas` desligado; (c) o plugin atrás do diário
  * (evento de tipo que este plugin não conhece, aprendizado 585); (d) por último, `next ⇒ main` no fim da entrega: base diferente de `main`, sem
- * `entrega.autonomia` e sem `entrega.encerrada`. `loop.mjs proxima` o devolve em `lote` e `dependeDe` o mostra igual. Puro, nunca lança; diário que
+ * `entrega.autonomia` e sem o PR em main com o sha da encerrada (D-G47, `lembreteDaVirada`). `loop.mjs proxima` o devolve em `lote` e `dependeDe` o mostra igual. Puro, nunca lança; diário que
  * não ordena ⇒ lote vazio (o PAROU e o "?" do DEPENDE já cobrem).
  */
 export function loteDoDono(plano: Plano | null, eventos: Evento[], cfg: ConfigLote): ItemDepende[] {
@@ -376,6 +376,15 @@ export function loteDoDono(plano: Plano | null, eventos: Evento[], cfg: ConfigLo
     .filter((p) => p.origem === 'sombra' && /^[A-Za-z0-9._-]{1,60}$/.test(p.req) && !rejeitadoPeloDono(p.seq))
     .map((p) => item(`decidir a redação da Sombra rejeitada (emenda ${p.seq}, ${p.req}): a Sombra não repropõe nessa âncora`));
   const versao = evs.some((e) => !CONHECIDOS.has(e.tipo)) ? [item(motivoPluginAtras(typeof c.versaoPlugin === 'string' ? c.versaoPlugin : undefined), [{ rotulo: 'atualizar', comando: '/plugin' }])] : [];
+  const main = lembreteDaVirada(tasks.length, evs, c);
+  return [...teto, ...emendas, ...redacoes, ...versao, ...main];
+}
+
+/**
+ * GM-20 D-G47 (REQ-CRD-2; review final r1 MAJOR-1): o lembrete `next ⇒ main` do fim da entrega, a regra ÚNICA de `loteDoDono` (o `proxima`) e do painel
+ * com a entrega encerrada (o único item do lote que sobrevive à `entrega.encerrada`, REQ-ENT-1 d ii). `evs` já ordenados.
+ */
+function lembreteDaVirada(nTasks: number, evs: Evento[], c: Record<string, unknown>): ItemDepende[] {
   const base = typeof c.base === 'string' && c.base !== '' ? c.base : 'main';
   // GM-20 D-G47 (REQ-CRD-2): encerrada na base ≠ main NÃO tira o lembrete da virada; tira o PR em main, mergeado, que o `painel medir` viu conter o sha da encerrada
   // (`fato.medido pr` com `contem`). Encerrada sem sha (dono, gh sem `mergeCommit`) mantém o item: não há fato que prove a virada.
@@ -386,9 +395,18 @@ export function loteDoDono(plano: Plano | null, eventos: Evento[], cfg: ConfigLo
     const v = obj(d.valor);
     return d.chave === 'pr' && v.base === 'main' && v.estado === 'mergeado' && v.contem === shaEnc;
   });
-  const main = tasks.length > 0 && base !== 'main' && c.autonomiaEntrega !== true && !viradaFeita
+  return nTasks > 0 && base !== 'main' && c.autonomiaEntrega !== true && !viradaFeita
     ? [item(`no fim da entrega: levar ${higienizar(base)} para main`)] : [];
-  return [...teto, ...emendas, ...redacoes, ...versao, ...main];
+}
+
+/** O lembrete da virada (`lembreteDaVirada`) a partir do diário cru, para o painel com a entrega encerrada. Puro, nunca lança; diário que não ordena ⇒ []. */
+export function viradaDoDono(plano: Plano | null, eventos: Evento[], cfg: ConfigLote): ItemDepende[] {
+  try {
+    const ord = Array.isArray(eventos) ? ordenar(eventos) : { ok: false as const };
+    if (!ord.ok) return [];
+    const n = Array.isArray(plano?.tasks) ? (plano as Plano).tasks.filter((t) => typeof t?.id === 'string').length : 0;
+    return lembreteDaVirada(n, ord.eventos, obj(cfg));
+  } catch { return []; }
 }
 
 /**

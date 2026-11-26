@@ -8,7 +8,7 @@
 
 import { pontaDaSpec, projetarEmendas, shaAceito } from './emenda.ts';
 import { cmp, contarConsultas, duracoes, EM_TRABALHO, mediana, projetarDecisoes } from './diario-puro.ts';
-import { dependeDe, loopDesligado, loteDoDono } from './depende.ts';
+import { dependeDe, loopDesligado, loteDoDono, viradaDoDono } from './depende.ts';
 import { origemDe } from './origem.ts';
 import { loteRecomendadas, perguntasAbertas } from './perguntas.ts';
 import { leituraPropria, noTeto, pousoPendente, type Medicao } from './pouso-pendente.ts';
@@ -1184,10 +1184,14 @@ function projetarNovo(plano: Plano | null, eventos: Evento[] | null, entrada: En
   const extrasLoop = { loop: loopDinamico, contexto: contextoAlto, ligarLoop };
   // o pedido de /clear é da sessão, não da entrega: entra nos dois ramos (r1 MAJOR-2)
   const pedidoClear = entrada.pousoPendente === true ? { pendente: true, id: null, ...extrasLoop } : { pendente: pousoDe.pendente, id: clear.id, ...extrasLoop };
-  let depende = zera ? dependeDe(null as unknown as typeof trilha, [], [], { falhou: fontes }, pedidoClear, { branch: null, idPadrao: fatos.idPadrao }) : dependeDe(trilha, lista, legado.depende, { falhou: fontes }, pedidoClear,
-    { branch: typeof fatos.branch === 'string' ? fatos.branch : null, idPadrao: fatos.idPadrao },
-    // GM-15 T13 (REQ-AUT-1): o lote do dono, o mesmo de `proxima` (mesma função e mesma config de origin); sem `configLote` (o mod) fica o DEPENDE de antes
-    entrada.configLote !== undefined ? loteDoDono(plano, lista, entrada.configLote) : undefined);
+  // GM-15 T13 (REQ-AUT-1): o lote do dono, o mesmo de `proxima` (mesma função e mesma config de origin); sem `configLote` (o mod) fica o DEPENDE de antes.
+  // GM-20 review final r1 MAJOR-1 (D-G47): com a entrega encerrada, do lote só sobrevive o lembrete da virada (REQ-ENT-1 d ii), pela regra de `loteDoDono` (`viradaDoDono`).
+  const comLote = entrada.configLote !== undefined;
+  let depende = zera
+    ? dependeDe(null as unknown as typeof trilha, [], [], { falhou: fontes }, pedidoClear, { branch: null, idPadrao: fatos.idPadrao }, comLote ? viradaDoDono(plano, lista, entrada.configLote!) : undefined)
+    : dependeDe(trilha, lista, legado.depende, { falhou: fontes }, pedidoClear,
+      { branch: typeof fatos.branch === 'string' ? fatos.branch : null, idPadrao: fatos.idPadrao },
+      comLote ? loteDoDono(plano, lista, entrada.configLote!) : undefined);
   // GM-15 T8 (review r1 MAJOR-1): a próxima com botão vira item do DEPENDE (o mod já desenha os botões dos itens); nunca é item da encerrada
   if (entregue !== null && proxima !== null && Array.isArray(proxima.acoes) && proxima.acoes.length > 0) {
     depende = [...depende.filter((i) => i.motivo !== NADA), { nivel: 'dono', motivo: motivoDaProxima(proxima.texto), acoes: proxima.acoes.map((a) => ({ ...a })) }];
