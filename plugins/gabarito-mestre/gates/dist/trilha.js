@@ -168,11 +168,11 @@ export function encerramentoDe(eventos          , id        )               {
                                                                                                                                                           
 
 /**
- * GM-15 T3 (REQ-ENT-1 a, b, c): este PR pode encerrar a entrega `id`? PR com `base: 'main'` (fato sem `base` nunca encerra), mergeado, head casando
+ * GM-15 T3 (REQ-ENT-1 a, b, c): este PR pode encerrar a entrega `id`? PR com a `base` da entrega (GM-20 REQ-CRD-2: parâmetro, `main` por omissão; fato sem `base` nunca encerra), mergeado, head casando
  * o ID (`via: 'head'`) ou título casando (`via: 'titulo'`), que ainda não encerrou; depois de `entrega.reaberta`, só com `mergeado_em` posterior a `em`.
  */
-export function podeEncerrar(eventos          , id        , pr          )          {
-  if (pr === null || typeof pr !== 'object' || pr.estado !== 'mergeado' || pr.base !== 'main' || !Number.isInteger(pr.numero)) return false;
+export function podeEncerrar(eventos          , id        , pr          , base = 'main')          {
+  if (pr === null || typeof pr !== 'object' || pr.estado !== 'mergeado' || pr.base !== base || !Number.isInteger(pr.numero)) return false;
   if (pr.via === 'head') { if (idDaBranch(pr.branch ?? null, escapar(id)) !== id) return false; }
   else if (pr.via !== 'titulo') return false;
   const enc = encerramentoDe(eventos, id);

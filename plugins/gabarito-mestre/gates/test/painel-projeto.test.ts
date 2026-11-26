@@ -41,6 +41,7 @@ import { planoMdDoCard, projetarProjeto, ROTULO_FASE_NAO_MEDIDA, ROTULO_FORA_DO_
 import type { ArvoreLida, EstadoProjeto } from '../src/projeto.ts';
 import type { AgenteVivo, EntradaPainel, EstadoPainel, Evento, OpcoesRender, Plano, TipoEvento } from '../src/tipos.ts';
 import type { FatosTrilha } from '../src/trilha.ts';
+import { arvore as arvoreAdotado, montarNoDisco } from './painel-fixtures/adotado.mjs';
 // @ts-expect-error: script .mjs sem tipos
 import { estadoDoPainel, main } from '../scripts/painel.mjs';
 
@@ -115,10 +116,10 @@ const SEP = /^─+$/;
 const cru = (s: EstadoPainel, o: Partial<OpcoesRender> = {}): string[] =>
   paraTexto(renderPainel(s, { preset: 'esquadrao', tema: 'mono', narracao: true, largura: 120, ...o }), 'mono').split('\n').filter((l) => l !== '');
 const linhas = (s: EstadoPainel, o: Partial<OpcoesRender> = {}): string[] => cru(s, o).filter((l) => !SEP.test(l));
-const doProjeto = (ls: string[]): string[] => ls.filter((l) => /^PROJETO|^PBIs |^ {2}[✓●○?] PBI-|^ {2}[✓●○?] GM-|^ {2}previsão|^ {2}~\d+ tasks estimadas|^ {2}✓ \d+ feitos?$|· \d+ abertos?$/.test(l));
-/** Linhas do projeto em ≥ 72 colunas: totais, previsão (a), previsão estimada (b) quando há PBI sem plano aberto, e 1 por PBI. */
+const doProjeto = (ls: string[]): string[] => ls.filter((l) => /^PROJETO|^PBIs |^ {2}[✓●○?] PBI-|^ {2}[✓●○?] GM-|^ {2}previsão|^ {2}✓ \d+ feitos?$|· \d+ abertos?$/.test(l));
+/** Linhas do projeto em ≥ 72 colunas: totais, UMA linha de previsão (GM-20 DT13), e 1 por PBI. */
 const nLinhasProjeto = (pr: EstadoProjeto): number =>
-  2 + (pr.totais.previsao.estimada !== null ? 1 : 0) + (pr.totais.feitos > 0 ? 1 : 0) + pr.linhas.filter((l) => !l.feito).length + pr.grupos.length;
+  2 + (pr.totais.feitos > 0 ? 1 : 0) + pr.linhas.filter((l) => !l.feito).length + pr.grupos.length;
 
 // ───────────────────────────── render: a visão de projeto
 
@@ -129,11 +130,13 @@ test('projeto-n-pbis-feitas-total: totais (N de M PBIs feitos, % e restantes) e 
   const tot = ls.find((l) => /^PROJETO/.test(l)) as string;
   assert.ok(tot, ls.join('\n'));
   const t = pr.totais;
-  assert.match(tot, new RegExp(`^PROJETO {2}${t.feitos} de ${t.pbis} PBIs feitos · ${t.pct}% das tasks \\(${t.integradas} de ${t.tasks}, \\+${t.estimadas} estimadas\\) · ${t.restantes} restantes`));
+  // GM-20: o % exibido é o `pctComEstimadas`; sem estimada (o .md concluído de PBI-1 saiu da conta) não há "+N estimadas"
+  assert.equal(t.estimadas, 0);
+  assert.match(tot, new RegExp(`^PROJETO {2}${t.feitos} de ${t.pbis} PBIs feitos · ${t.pctComEstimadas}% das tasks \\(${t.integradas} de ${t.tasks}\\) · ${t.restantes} restantes`));
   assert.equal(t.pbis, 6);
   assert.equal(t.feitos, 1);
-  assert.equal(nLinhasProjeto(pr), 9, 'fixture GM-15: 2 totais + estimada + feitos + 5 abertos');
-  assert.equal(doProjeto(ls).length, 9);
+  assert.equal(nLinhasProjeto(pr), 8, 'fixture GM-15: 2 totais (previsão numa linha) + feitos + 5 abertos');
+  assert.equal(doProjeto(ls).length, 8);
   // 1 linha por PBI ABERTO, na ordem do projeto (o feito sai do desenho, REQ-PRJ-3 a); id, título do card e o texto da linha (o que o núcleo diz)
   const porPbi = ls.filter((l) => /^ {2}[✓●○?] PBI-/.test(l));
   assert.deepEqual(porPbi.map((l) => /PBI-\d/.exec(l)?.[0]), ['PBI-2', 'PBI-3', 'PBI-4', 'PBI-5', 'PBI-6']);
@@ -147,7 +150,7 @@ test('projeto-n-pbis-feitas-total: totais (N de M PBIs feitos, % e restantes) e 
   // o feito: exatamente 1 linha "✓ 1 feito", logo depois da última linha de totais
   assert.equal(ls.filter((l) => /^ {2}✓ 1 feito$/.test(l)).length, 1, ls.join('\n'));
   const iFeito = ls.findIndex((l) => /^ {2}✓ 1 feito$/.test(l));
-  assert.match(ls[iFeito - 1], /^ {2}~\d+ tasks estimadas/);
+  assert.match(ls[iFeito - 1], /^ {2}previsão com plano .* · com estimativa do resto ~/);
   assert.match(ls[iFeito + 1], /^ {2}● PBI-2 /);
   assert.match(porPbi.find((l) => l.includes('PBI-2 ')) as string, /^ {2}● /);
   assert.match(porPbi.find((l) => l.includes('PBI-3 ')) as string, /^ {2}○ /);
@@ -182,8 +185,9 @@ test('projeto-previsao-medida-e-estimada: a previsão marca "(medida)"; a parte 
   assert.ok(p.medida !== null, 'a fixture tem task integrada (ritmo medido)');
   assert.ok(p.estimada !== null, 'a fixture tem PBI sem plano aberto');
   const ls = linhas(comProjeto(estadoComPlano([ini(0, 'T1')]), pr));
-  assert.ok(ls.includes(`  previsão ${p.medida.hora} (medida)`), ls.join('\n'));
-  assert.ok(ls.includes(`  ${p.estimada.texto}`), ls.join('\n'));
+  assert.equal(ls.filter((l) => /^ {2}previsão/.test(l)).length, 1, 'uma linha só de previsão');
+  assert.ok(ls.includes(`  previsão com plano ${p.medida.hora} · com estimativa do resto ~${p.estimada.hora} (~${Math.round(p.estimada.tasks)} tasks em ${p.estimada.pbisSemPlano} PBIs sem medida)`), ls.join('\n'));
+  assert.ok(!ls.some((l) => /^ {2}~\d+ tasks/.test(l)), ls.join('\n'));
   assert.match(p.estimada.texto, /^~\d+ tasks estimadas em \d+ PBIs sem plano, até ~/);
   // sem task integrada em nenhuma entrega ⇒ "?" com o motivo (≥ 100 colunas), nunca um horário inventado
   const semRitmo = projetarProjeto([{ caminho: '/r', cards: [{ arquivo: 'PBI-1.md', texto: '---\nid: "PBI-1"\nstatus: Em execução\n---\n# A\n', planoMd: null },
@@ -225,7 +229,7 @@ test('projeto-corta-antes-da-entrega: com pouca altura as linhas do projeto saem
   assert.ok(recente.length > 0, cheio.join('\n'));
   assert.ok(cheio.some((l) => /^[├└]─ ● /.test(l)));
   // orçamento que tira SÓ as linhas por PBI: o PLANO, os agentes, o RECENTE e os totais do projeto ficam
-  const sem = linhas(s, { orcamento: cheio.length - 5 });
+  const sem = linhas(s, { orcamento: cru(s).length - 5 });
   assert.equal(sem.filter((l) => /^ {2}[✓●○?] PBI-/.test(l)).length, 0, `as linhas por PBI saem primeiro: ${sem.join('\n')}`);
   assert.equal(sem.filter((l) => /^PROJETO/.test(l)).length, 1);
   assert.equal(sem.filter((l) => /^ {2}✓ 1 feito$/.test(l)).length, 1, 'o feito (6.95) fica quando só as linhas de PBI (6.96) saem');
@@ -234,7 +238,7 @@ test('projeto-corta-antes-da-entrega: com pouca altura as linhas do projeto saem
   assert.equal(sem.filter((l) => /^(\d\d:\d\d|\?) [✓✗●○?] /.test(l)).length, recente.length, 'o RECENTE não perde linha por causa do projeto');
   assert.ok(sem.some((l) => /^CI ●/.test(l)) && sem.some((l) => /orquestra/.test(l)), 'o rodapé e o nome do orquestrador (6.x do E4) ficam: o projeto cai antes deles');
   // mais as linhas dos totais: caem os totais do projeto, nada da entrega (o RECENTE e os agentes seguem)
-  const apertado = linhas(s, { orcamento: cheio.length - nLinhasProjeto(pr) });
+  const apertado = linhas(s, { orcamento: cru(s).length - nLinhasProjeto(pr) });
   assert.equal(doProjeto(apertado).length, 0, apertado.join('\n'));
   assert.equal(apertado.filter((l) => /^(\d\d:\d\d|\?) [✓✗●○?] /.test(l)).length, recente.length);
   assert.ok(apertado.some((l) => /^CI ●/.test(l)) && apertado.some((l) => /^[├└]─ ● /.test(l)));
@@ -324,7 +328,11 @@ test('agente-fora-do-loop: agente vivo sem `loop.mjs iniciar` (task pendente ou 
   const fora = ag.filter((l) => l.includes(ROTULO_FORA_DO_LOOP));
   assert.equal(fora.length, 2, `T3 pendente e o sem task: ${ag.join('\n')}`);
   assert.ok(ag.every((l) => !/sem task/.test(l)), ag.join('\n'));
-  assert.ok(!ag.some((l) => / T3 /.test(l)), 'a T3 não foi iniciada: não é "T3"');
+  // GM-20 REQ-FAN-3 (spec): task pendente não casa; a linha é a de agente sem task (rótulo "fora do loop" + a description do despacho), não a da task T3
+  const t3 = ag.filter((l) => /T3 implementador/.test(l));
+  assert.equal(t3.length, 1, ag.join('\n'));
+  assert.ok(t3[0].includes(ROTULO_FORA_DO_LOOP), t3[0]);
+  assert.ok(ag.filter((l) => / T2 /.test(l)).every((l) => !l.includes(ROTULO_FORA_DO_LOOP)), 'a T2 iniciada segue com a task, sem o rótulo');
   // estreito (44): o rótulo também, sem cortar o nome do agente
   const est = linhas(comProjeto(s, null), { largura: 60 }).filter((l) => /^[├└]─? ● /.test(l));
   assert.ok(est.some((l) => l.includes(ROTULO_FORA_DO_LOOP)), est.join('\n'));
@@ -426,7 +434,7 @@ test('cli-script-real-texto-e-estado: o script rodado pela flag real sai com rc 
   assert.deepEqual(j.estado.projeto.linhas.map((l: { id: string }) => l.id), ['PBI-1', 'PBI-2', 'PBI-3', 'PBI-4']);
   const t = rodar(repo, ['texto', '--largura', '120']);
   assert.equal(t.rc, 0, t.stdout + t.stderr);
-  assert.match(t.stdout, /^PROJETO {2}1 de 4 PBIs feitos · \? das tasks \(0 de 0\) · 0 restantes · 4 sem plano, fora da conta/m);
+  assert.match(t.stdout, /^PROJETO {2}1 de 4 PBIs feitos · \? das tasks \(0 de 0\) · 0 restantes · 3 sem plano, fora da conta/m); // GM-20 REQ-PCT-3: o PBI feito sem plano não conta (eram 4)
   assert.match(t.stdout, /^fase não medida/m, 'a entrega PBI-2 sem plano.json: "fase não medida"');
   assert.doesNotMatch(t.stdout, /FASE \d de 7/);
   assert.equal(rodar(repo, ['texto', '--nao-existe']).rc, 2);
@@ -580,7 +588,7 @@ const cardS = (id: string, status: string | null, epic: string | null = null) =>
 const projetoS = (cards: ReturnType<typeof cardS>[], extra: Record<string, unknown> = {}): EstadoProjeto =>
   projetarProjeto([{ caminho: '/r', cards, entregas: [] }], { ...OPC, ...extra } as typeof OPC);
 const estS = (pr: EstadoProjeto | null): EstadoPainel => comProjeto(estadoComPlano([ini(0, 'T1')]), pr);
-const LINHA_PROJ = /^PROJETO|^PBIs |^ {2,4}[✓●○?] PBI-|^ {2}previsão|^ {2}~\d+ tasks estimadas|^ {2}✓ \d+ feitos?$|· \d+ abertos?$/;
+const LINHA_PROJ = /^PROJETO|^PBIs |^ {2,4}[✓●○?] PBI-|^ {2}previsão|^ {2}✓ \d+ feitos?$|· \d+ abertos?$/;
 const doProj = (ls: string[]): string[] => ls.filter((l) => LINHA_PROJ.test(l));
 const LIGADA = { opcoesComoContagem: true };
 const FEITO_RE = /^ {2}✓ \d+ feitos?$/;
@@ -703,25 +711,25 @@ test('projeto-altura-7-linhas: com pouca altura saem as linhas de PBI, depois fe
   assert.equal(cheio.filter((l) => PBI.test(l)).length, 3);
   assert.equal(cheio.filter((l) => CAB.test(l)).length, 2);
   // 1: saem só as 3 linhas de PBI (6.96); feitos e cabeçalhos ficam
-  const a = linhas(s, { orcamento: cheio.length - 3 });
+  const a = linhas(s, { orcamento: cru(s).length - 3 });
   assert.equal(a.filter((l) => PBI.test(l)).length, 0, a.join('\n'));
   assert.equal(a.filter((l) => FEITO_RE.test(l)).length, 1);
   assert.equal(a.filter((l) => CAB.test(l)).length, 2);
   assert.equal(a.filter((l) => /^PROJETO/.test(l)).length, 1);
   entregaOk(a);
   // 1b: com 1 linha a mais cortada, sai um cabeçalho (6.95, o último), nunca o feito antes dele: o feito tem a prioridade de cabeçalho, não a de PBI
-  const a2 = linhas(s, { orcamento: cheio.length - 4 });
+  const a2 = linhas(s, { orcamento: cru(s).length - 4 });
   assert.equal(a2.filter((l) => PBI.test(l)).length, 0, a2.join('\n'));
   assert.equal(a2.filter((l) => FEITO_RE.test(l)).length, 1, a2.join('\n'));
   assert.equal(a2.filter((l) => CAB.test(l)).length, 1, a2.join('\n'));
   // 2: saem também o feito e os 2 cabeçalhos (6.95); os totais ficam
-  const b = linhas(s, { orcamento: cheio.length - 6 });
+  const b = linhas(s, { orcamento: cru(s).length - 6 });
   assert.equal(b.filter((l) => FEITO_RE.test(l) || CAB.test(l) || PBI.test(l)).length, 0, b.join('\n'));
   assert.equal(b.filter((l) => /^PROJETO/.test(l)).length, 1);
   assert.equal(b.filter((l) => /^ {2}previsão/.test(l)).length, 1);
   entregaOk(b);
   // 3: por último os totais; a entrega intacta
-  const c = linhas(s, { orcamento: cheio.length - nLinhasProjeto(pr) });
+  const c = linhas(s, { orcamento: cru(s).length - nLinhasProjeto(pr) });
   assert.equal(doProj(c).length, 0, c.join('\n'));
   entregaOk(c);
   // orçamento 7 e 80 colunas (o aceite): nada de linha de PBI, e o corte nunca come a entrega por causa do projeto
@@ -770,7 +778,7 @@ test('teto-de-linhas-propriedade: 40 a 200 colunas × 0 a 100 PBIs, chave ligada
         const tot = pj.find((l) => /^PROJETO|^PBIs /.test(l)) as string;
         assert.ok(tot, `${rotulo}: ${ls.join('\n')}`);
         if (w >= 72) {
-          const teto = 2 + (pr.totais.previsao.estimada !== null ? 1 : 0) + (pr.totais.feitos > 0 ? 1 : 0) + abertos + pr.grupos.length;
+          const teto = 2 + (pr.totais.feitos > 0 ? 1 : 0) + abertos + pr.grupos.length;
           assert.ok(pj.length <= teto, `${rotulo}: ${pj.length} > ${teto}`);
           assert.ok(tot.startsWith(`PROJETO  ${pr.totais.feitos} de ${pr.totais.pbis} PBIs feitos`), `${rotulo}: ${tot}`);
           assert.equal(pj.filter((l) => FEITO_RE.test(l)).length, pr.totais.feitos > 0 ? 1 : 0, rotulo);
@@ -798,12 +806,11 @@ test('regressao-fixture-gm15: com a chave desligada as mesmas linhas de hoje, ex
   assert.equal(pr.totais.opcoes, 0);
   const ls = linhas(estS(pr));
   const dp = doProj(ls);
-  assert.equal(dp.length, 9);
+  assert.equal(dp.length, 8);
   assert.match(dp[0], /^PROJETO {2}1 de 6 PBIs feitos/);
-  assert.match(dp[1], /^ {2}previsão /);
-  assert.match(dp[2], /^ {2}~\d+ tasks estimadas/);
-  assert.equal(dp[3], '  ✓ 1 feito');
-  assert.deepEqual(dp.slice(4).map((l) => /PBI-\d/.exec(l)?.[0]), ['PBI-2', 'PBI-3', 'PBI-4', 'PBI-5', 'PBI-6']);
+  assert.match(dp[1], /^ {2}previsão com plano .* · com estimativa do resto ~/);
+  assert.equal(dp[2], '  ✓ 1 feito');
+  assert.deepEqual(dp.slice(3).map((l) => /PBI-\d/.exec(l)?.[0]), ['PBI-2', 'PBI-3', 'PBI-4', 'PBI-5', 'PBI-6']);
   assert.equal(pr.grupos.length, 0);
   assert.ok(!ls.some((l) => /EPIC|sem Epic|opç/.test(l)));
 });
@@ -910,4 +917,243 @@ test('borda-status-fl1-ilegivel-avisa: `fluxo.status.FL1` que não é objeto avi
   assert.equal(pr.totais.opcoes, 1, 'o quadro padrão vale');
   const ok = montarRepo({ painel: OPCOES_ON });
   assert.deepEqual(prDe(ok.repo).avisos, [], 'ausente não avisa');
+});
+
+// ───────────────────────────── GM-20 T1 (D-G42, REQ-PCT-2): o % exibido soma as estimadas. Fixture comum: painel-fixtures/adotado.mjs
+// Mutações: MP2-a `nn(tt.pct)` de volta ⇒ render-pct-com-estimadas · MP2-b somar estimadas na previsão ⇒ previsao-sem-estimadas
+//           MP2-c cortar `+N estimadas` por caractere ⇒ render-projeto-propriedade-larguras
+//           MR1 exclusão só pelo status do card ⇒ pct-concluido-por-encerramento-com-plano-md-fora-das-duas-pontas
+
+/** A fixture adotada MAIS um PBI concluído com `plano.json` (2 tasks) sem registro no diário ⇒ 2 estimadas no projeto. */
+function adotadoComEstimadas(): ArvoreLida {
+  const a = arvoreAdotado() as ArvoreLida;
+  a.cards.push({ arquivo: 'PBI-11.md', texto: '---\nid: "PBI-11"\ntipo: US\nstatus: Concluído\natualizadoEm: "2026-11-06"\n---\n# Concluído com plano.json\n', planoMd: null });
+  a.entregas.push({ id: 'PBI-11', plano: { ok: true, bruto: { entrega: 'PBI-11', tasks: [{ id: 'T1', deps: [], arquivos: [] }, { id: 'T2', deps: [], arquivos: [] }] } }, eventos: [] });
+  return a;
+}
+const projetoAdotado = (a: ArvoreLida = arvoreAdotado() as ArvoreLida): EstadoProjeto => projetarProjeto([a], OPC);
+const totaisDe = (s: EstadoPainel, largura: number): string[] => linhas(s, { largura }).filter((l) => /^PROJETO|^PBIs /.test(l));
+
+test('render-pct-com-estimadas: a linha 1 mostra o pctComEstimadas (não o pct medido) e "+N estimadas" quando N > 0', () => {
+  const pr = projetoAdotado(adotadoComEstimadas());
+  assert.equal(pr.totais.pct, 60);
+  assert.equal(pr.totais.pctComEstimadas, 80);
+  assert.equal(pr.totais.estimadas, 2);
+  const tot = totaisDe(comProjeto(estadoComPlano([ini(0, 'T1')]), pr), 100)[0];
+  assert.match(tot, /80% das tasks \(6 de 10, \+2 estimadas\)/, tot);
+  assert.ok(!tot.includes('60%'), tot);
+  // sem estimada o texto "+N estimadas" some, e o % exibido é o medido (iguais)
+  const sem = totaisDe(comProjeto(estadoComPlano([ini(0, 'T1')]), projetoAdotado()), 100)[0];
+  assert.match(sem, /75% das tasks \(6 de 8\)/, sem);
+  assert.ok(!sem.includes('estimadas'), sem);
+  // render antigo/campo ausente: lê `pctComEstimadas ?? pct` (aqui o pct medido 60 presente; o "?" de % ausente é coberto no teste de propriedade)
+  const antigo = { ...pr, totais: { ...pr.totais, pctComEstimadas: undefined as unknown as number } };
+  assert.match(totaisDe(comProjeto(estadoComPlano([ini(0, 'T1')]), antigo), 100)[0], /60% das tasks/);
+});
+
+test('pct-concluido-por-encerramento-com-plano-md-fora-das-duas-pontas: o concluído por `entrega.encerrada` (card ainda "Em execução") com plano .md sai da conta, com ou sem task medida', () => {
+  // MR1: restringir a exclusão ao status do card (`/Conclu/.test(l.status)`) ⇒ cai (este é o caso do relato: card desatualizado + plano antigo)
+  const ev = (seq: number, tipo: string, dados: Record<string, unknown>) => ({ seq, sessao: 's', hash_anterior: null, ts: `2026-11-09T10:0${seq}:00.000Z`, autor: 'x', agente: 'orquestrador', tipo, dados });
+  const md = '# Plano\n\n### Task 1: a\n\nt\n\n### Task 2: b\n\nt\n\n### Task 3: c\n\nt\n';
+  const card = (id: string) => ({ arquivo: `${id}.md`, texto: `---\nid: "${id}"\ntipo: US\nstatus: Em execução\natualizadoEm: "2026-11-09"\n---\n# Card desatualizado ${id}\nFL1 · User Story. Plano: \`docs/superpowers/plans/${id}.md\`.\n`, planoMd: md });
+  const base = projetoAdotado().totais;
+  const a = arvoreAdotado() as ArvoreLida;
+  a.cards.push(card('PBI-12'), card('PBI-13'));
+  // PBI-12: encerrada, sem task medida; PBI-13: encerrada COM 1 task integrada medida (a DT1 diz que o .md não tem diário, mas o código lê: sai igual, literal da D-G42)
+  a.entregas.push({ id: 'PBI-12', plano: null, eventos: [ev(1, 'entrega.encerrada', { entrega: 'PBI-12', pr: 12, via: 'head' })] });
+  a.entregas.push({ id: 'PBI-13', plano: null, eventos: [ev(1, 'task.iniciada', { task: 'T1', papel: 'implementador' }), ev(2, 'task.concluida', { task: 'T1' }), ev(3, 'task.integrada', { task: 'T1' }), ev(4, 'entrega.encerrada', { entrega: 'PBI-13', pr: 13, via: 'head' })] });
+  const pr = projetarProjeto([a], OPC);
+  for (const id of ['PBI-12', 'PBI-13']) {
+    const l = pr.linhas.find((x) => x.id === id);
+    assert.ok(l !== undefined && l.feito === true && l.plano === 'md' && l.tasks !== null, `${id} é feito, plano .md, com tasks na linha`);
+  }
+  assert.equal(pr.totais.feitos, base.feitos + 2);
+  for (const k of ['tasks', 'integradas', 'estimadas', 'restantes'] as const) assert.equal(pr.totais[k], base[k], `${k}: o concluído .md fica fora da conta`);
+});
+
+test('previsao-sem-estimadas: as estimadas entram no % exibido e nunca na previsão medida', () => {
+  const com = projetoAdotado(adotadoComEstimadas()).totais;
+  const sem = projetoAdotado().totais;
+  assert.equal(com.restantes, sem.restantes, 'restantes (a base da previsão) não soma as estimadas');
+  assert.deepEqual(com.previsao.medida, sem.previsao.medida);
+});
+
+// GM-20 T4 (REQ-PRV-1, DT13): uma linha de previsão
+const comPrevisao = (pr: EstadoProjeto, previsao: Record<string, unknown>): EstadoProjeto => ({ ...pr, totais: { ...pr.totais, previsao } }) as unknown as EstadoProjeto;
+const PREV = (tasks: number, pbis: number) => ({ ritmoS: 600, medida: { restanteS: 3600, hora: '27/11 14:30' }, estimada: { restanteS: 9000, hora: '30/11 18:45', pbisSemPlano: pbis, tasksPorPbi: 3, tasks, texto: `~${tasks} tasks estimadas em ${pbis} PBIs sem plano, até ~30/11 18:45` }, motivo: null });
+const prevLinhas = (s: EstadoPainel, largura: number): string[] => linhas(s, { largura }).filter((l) => /^ {2}previsão|^ {2}~\d+ tasks/.test(l));
+
+test('uma-linha-de-previsao: medida e estimada saem em 1 linha, encurtada por variantes sem cortar hora; sem estimada o texto de hoje; abaixo de 72 nada muda', () => {
+  const base = projetoDaFixture();
+  const completa = '  previsão com plano 27/11 14:30 · com estimativa do resto ~30/11 18:45 (~213 tasks em 60 PBIs sem medida)';
+  const semParen = '  previsão com plano 27/11 14:30 · com estimativa do resto ~30/11 18:45';
+  const soMedida = '  previsão 27/11 14:30 (medida)';
+  const s = comProjeto(estadoComPlano([ini(0, 'T1')]), comPrevisao(base, PREV(213, 60)));
+  assert.deepEqual(prevLinhas(s, 120), [completa]);
+  assert.ok(!linhas(s, { largura: 120 }).some((l) => /^ {2}~\d+ tasks/.test(l)), '0 linhas "~N tasks"');
+  const vistas = new Set<string>();
+  for (let w = 72; w <= 120; w++) {
+    const pl = prevLinhas(s, w);
+    assert.equal(pl.length, 1, `w=${w}: ${pl.join(' | ')}`);
+    assert.ok([completa, semParen, soMedida].includes(pl[0]), `w=${w} variante cortada por caractere: ${pl[0]}`);
+    assert.ok(colunas(pl[0]) <= w, `w=${w} estourou: ${pl[0]}`);
+    assert.equal(pl[0], [completa, semParen, soMedida].find((v) => colunas(v) <= w), `w=${w} não é a mais longa que cabe`);
+    vistas.add(pl[0]);
+  }
+  assert.ok(vistas.has(completa) && vistas.has(semParen), 'a completa e a sem parêntese aparecem entre 72 e 120 (a 3ª só entra abaixo do que o render ≥ 72 alcança)');
+  // só medida (sem PBI sem plano): o texto de hoje
+  const so = comProjeto(estadoComPlano([ini(0, 'T1')]), comPrevisao(base, { ...PREV(0, 0), estimada: null }));
+  assert.deepEqual(prevLinhas(so, 120), [soMedida]);
+  // nenhuma: texto de hoje, com motivo
+  const nada = comProjeto(estadoComPlano([ini(0, 'T1')]), comPrevisao(base, { ritmoS: null, medida: null, estimada: null, motivo: 'x' }));
+  assert.deepEqual(prevLinhas(nada, 120), ['  previsão ? (sem ritmo medido)']);
+  // estimada sem medida (estado que o núcleo não produz, mas o render lê): sem hora inventada, o "?" de hoje
+  const semMed = comProjeto(estadoComPlano([ini(0, 'T1')]), comPrevisao(base, { ...PREV(213, 60), medida: null }));
+  assert.deepEqual(prevLinhas(semMed, 120), ['  previsão ? (sem fonte)']);
+  // abaixo de 72: 1 linha de totais, com a hora estimada como sempre
+  for (let w = 44; w < 72; w++) {
+    assert.equal(prevLinhas(s, w).length, 0, `w=${w}`);
+    assert.match(totaisDe(s, w)[0], /~30\/11 18:45 estimada|PBIs/, `w=${w}`);
+  }
+  assert.match(totaisDe(s, 60)[0], /^PROJETO \d+\/\d+ PBIs · \d+% · ~30\/11 18:45 estimada/);
+});
+
+test('render-projeto-propriedade-larguras: de 44 a 120 colunas, o número novo nunca é cortado e ausente nunca vira 0', () => {
+  const comEst = comProjeto(estadoComPlano([ini(0, 'T1')]), projetoAdotado(adotadoComEstimadas()));
+  // projeto sem nenhuma task em plano: % ausente
+  const vazio = projetarProjeto([{ caminho: '/x', cards: arvoreAdotado().cards.slice(0, 1).concat(arvoreAdotado().cards.slice(5, 6)).map((c: { arquivo: string; texto: string }) => ({ ...c, planoMd: null })), entregas: [] }], OPC);
+  assert.equal(vazio.totais.pct, null);
+  const semPct = comProjeto(estadoComPlano([ini(0, 'T1')]), vazio);
+  for (let w = 44; w <= 120; w++) {
+    for (const l of totaisDe(comEst, w)) {
+      // "+N estimadas" só inteiro: todo "+<dígito>" da linha é o início de "+N estimadas" completo
+      assert.equal((l.match(/\+\d/g) ?? []).length, (l.match(/\+\d+ estimadas/g) ?? []).length, `w=${w} número solto: ${l}`);
+      assert.ok(colunas(l) <= w, `w=${w} estourou a largura: ${l}`);
+      // o % do projeto, quando aparece, é o com estimadas: 80 (nunca o 60 medido)
+      assert.ok(!/(^|[^\d])60%/.test(l), `w=${w} % sem estimadas: ${l}`);
+    }
+    for (const l of totaisDe(semPct, w)) {
+      assert.ok(!/(^|[^\d])0%/.test(l), `w=${w} ausente virou 0%: ${l}`);
+      assert.ok(l.includes('?'), `w=${w} ausente sem "?": ${l}`);
+    }
+  }
+  // escala real (40 de 103 PBIs, 97 de 310 tasks, +213 estimadas): a linha 1 chega à borda e "+213 estimadas" nunca é cortado por caractere
+  const real = comProjeto(estadoComPlano([ini(0, 'T1')]), { ...projetoAdotado(), totais: { ...projetoAdotado().totais, pbis: 103, feitos: 40, foraDaConta: 9, tasks: 310, integradas: 97, estimadas: 213, restantes: 0, pct: 31, pctComEstimadas: 100 } });
+  let viuInteiro = false, viuSumido = false;
+  for (let w = 44; w <= 120; w++) {
+    for (const l of totaisDe(real, w)) {
+      assert.ok(colunas(l) <= w, `w=${w} estourou a largura: ${l}`);
+      assert.equal((l.match(/\+\d/g) ?? []).length, (l.match(/\+213 estimadas/g) ?? []).length, `w=${w} "+213 estimadas" cortado: ${l}`);
+      if (w >= 72) assert.ok(!/estimad/.test(l.replace(/\+213 estimadas/g, '')), `w=${w} rótulo cortado: ${l}`);
+    }
+    if (w >= 72) {
+      const tem = totaisDe(real, w)[0].includes('+213 estimadas');
+      if (tem) viuInteiro = true; else viuSumido = true;
+    }
+  }
+  assert.ok(viuInteiro && viuSumido, 'a escala real exercita as duas formas (inteiro e sumido) entre 72 e 120');
+  // GM-20 T2 (DT5): "N encerrados sem entrega" entra inteiro ou some inteiro, o número nunca é cortado; com N = 0 o texto não existe
+  const realEnc = comProjeto(estadoComPlano([ini(0, 'T1')]), { ...projetoAdotado(), totais: { ...projetoAdotado().totais, pbis: 103, feitos: 40, foraDaConta: 9, terminais: 12, tasks: 310, integradas: 97, estimadas: 0, restantes: 213, pct: 31, pctComEstimadas: 31 } });
+  let encInteiro = false, encSumido = false;
+  for (let w = 44; w <= 120; w++) {
+    for (const l of totaisDe(realEnc, w)) {
+      assert.ok(colunas(l) <= w, `w=${w} estourou a largura: ${l}`);
+      assert.equal((l.match(/encerrad/g) ?? []).length, (l.match(/12 encerrados sem entrega/g) ?? []).length, `w=${w} "encerrados" cortado: ${l}`);
+      assert.ok(!/(^|[^\d])2 encerrados/.test(l), `w=${w} número cortado: ${l}`);
+    }
+    if (w >= 44) (totaisDe(realEnc, w).some((l) => l.includes('12 encerrados sem entrega')) ? (encInteiro = true) : (encSumido = true));
+    for (const l of totaisDe(comEst, w)) assert.ok(!/encerrad/.test(l), `w=${w} sem terminal não escreve "encerrados": ${l}`);
+  }
+  // GM-20 T4 (REQ-PRV-1): escala real (centenas de tasks e de PBIs) — a linha de previsão chega à borda e a hora nunca é cortada
+  const realPrev = comProjeto(estadoComPlano([ini(0, 'T1')]), comPrevisao({ ...projetoAdotado(), totais: { ...projetoAdotado().totais, pbis: 310, feitos: 140, tasks: 903, integradas: 410, estimadas: 0, restantes: 493, pct: 45, pctComEstimadas: 45 } } as EstadoProjeto, PREV(1480, 207)));
+  const longa = '  previsão com plano 27/11 14:30 · com estimativa do resto ~30/11 18:45 (~1480 tasks em 207 PBIs sem medida)';
+  let prevInteira = false, prevCurta = false;
+  for (let w = 72; w <= 120; w++) {
+    const pl = prevLinhas(realPrev, w);
+    assert.equal(pl.length, 1, `w=${w}: ${pl.join(' | ')}`);
+    assert.ok(colunas(pl[0]) <= w, `w=${w} estourou: ${pl[0]}`);
+    assert.equal((pl[0].match(/\d\d:\d\d/g) ?? []).length, /com estimativa/.test(pl[0]) ? 2 : 1, `w=${w} hora cortada: ${pl[0]}`);
+    if (pl[0] === longa) prevInteira = true; else prevCurta = true;
+    if (/\(~/.test(pl[0])) assert.equal(pl[0], longa, `w=${w} parêntese cortado: ${pl[0]}`);
+  }
+  assert.ok(prevInteira && prevCurta, 'a previsão exercita a forma inteira e as curtas entre 72 e 120');
+  assert.ok(encInteiro && encSumido, 'a escala real exercita as duas formas do "encerrados sem entrega"');
+  // 1 terminal: singular
+  const um = comProjeto(estadoComPlano([ini(0, 'T1')]), { ...projetoAdotado(), totais: { ...projetoAdotado().totais, terminais: 1 } });
+  assert.ok(totaisDe(um, 120)[0].includes('· 1 encerrado sem entrega'), totaisDe(um, 120)[0]);
+
+  // o render do projeto lido da fixture: Superado e Cancelado não têm linha, o total diz "2 encerrados sem entrega" quando cabe
+  const desenhado = linhas(comProjeto(estadoComPlano([ini(0, 'T1')]), projetoAdotado()), { largura: 120 });
+  assert.ok(!desenhado.some((l) => /PBI-4|PBI-10/.test(l)), 'terminal sem linha');
+  assert.ok(desenhado.some((l) => /8 PBIs feitos|de 8 PBIs/.test(l) && l.includes('2 encerrados sem entrega')), desenhado.filter((l) => /^PROJETO/.test(l)).join('|'));
+  // o texto novo aparece inteiro de 72 colunas em diante (a linha de contagens) e some inteiro abaixo (o resumo de 1 linha não o traz)
+  for (let w = 44; w <= 120; w++) {
+    const tem = totaisDe(comEst, w).some((l) => /\+2 estimadas\)/.test(l));
+    assert.equal(tem, w >= 72, `w=${w}: "+2 estimadas" ${tem ? 'presente' : 'ausente'}`);
+    assert.ok(totaisDe(comEst, w).some((l) => /80%/.test(l)), `w=${w}: o % exibido é o com estimadas`);
+  }
+});
+
+test('fixture-adotado-em-disco-igual-a-memoria: o repositório de montarNoDisco, lido pelo CLI real, dá os mesmos totais da árvore em memória; terminais e planosLegados entram na config', async () => {
+  const base = realpathSync(mkdtempSync(join(tmpdir(), 'adotado-')));
+  await montarNoDisco(base, { terminais: ['Cancelado'], planosLegados: { x: 1 } });
+  const cfg = JSON.parse(readFileSync(join(base, 'harness.config.json'), 'utf8'));
+  assert.deepEqual(cfg.fluxo.status, { terminais: ['Cancelado'] });
+  assert.deepEqual(cfg.fluxo.planosLegados, { x: 1 });
+  const r = rodar(base, ['estado']);
+  assert.equal(r.rc, 0, r.stdout + r.stderr);
+  const t = JSON.parse(r.stdout).estado.projeto.totais;
+  // a config da fixture (só "Cancelado" é terminal) chega ao núcleo: a memória usa a mesma lista
+  const m = projetarProjeto([arvoreAdotado() as ArvoreLida], { ...OPC, terminais: ['Cancelado'] }).totais;
+  for (const k of ['pbis', 'feitos', 'foraDaConta', 'terminais', 'tasks', 'integradas', 'estimadas', 'restantes', 'pct', 'pctComEstimadas'] as const) assert.equal(t[k], m[k], k);
+  // sem as chaves opcionais a config só aponta o FL1
+  const b2 = realpathSync(mkdtempSync(join(tmpdir(), 'adotado-')));
+  await montarNoDisco(b2);
+  assert.deepEqual(JSON.parse(readFileSync(join(b2, 'harness.config.json'), 'utf8')), { fluxo: { mapeamento: { FL1: 'cards/' } } });
+});
+
+// ───────────────────────────── GM-20 T11 (REQ-CRD-1): render do card desatualizado ─────────────────────────────
+// MUTAÇÃO: tirar o sufixo do render ⇒ card-desatualizado-render; sufixo cortado depois do id ⇒ idem (largura mínima).
+const SUFIXO_DESAT = '(card desatualizado)';
+/** A fixture adotada com o título de PBI-7 longo (40 colunas no render): o sufixo não cabe nas larguras estreitas. */
+const adotadoTituloLongo = (): ArvoreLida => {
+  const a = arvoreAdotado() as ArvoreLida;
+  a.cards = a.cards.map((c) => (c.arquivo === 'PBI-7.md' ? { ...c, texto: c.texto.replace('# Exportação de dados', '# Exportação completa de dados para o cliente final') } : c));
+  return a;
+};
+const linhaPbi7 = (s: EstadoPainel, largura: number): string | undefined => linhas(s, { largura }).find((l) => /^ {2}✓ PBI-7( |$)/.test(l));
+
+test('card-desatualizado-render: 100 colunas mostra "(card desatualizado)" na linha de PBI-7; na largura mínima o sufixo sai antes do id; PBI-8 e feitos limpos sem sufixo', () => {
+  const pr = projetarProjeto([adotadoTituloLongo()], OPC);
+  const s = comProjeto(estadoComPlano([ini(0, 'T1')]), pr);
+  const l100 = linhaPbi7(s, 100);
+  assert.ok(l100 !== undefined && l100.endsWith(SUFIXO_DESAT), `100 col: ${l100}\n${linhas(s, { largura: 100 }).join('\n')}`);
+  assert.equal(linhas(s, { largura: 100 }).filter((l) => l.includes(SUFIXO_DESAT)).length, 1, 'só o PBI-7');
+  // a linha de "N feitos" segue como era
+  assert.ok(linhas(s, { largura: 100 }).some((l) => FEITO_RE.test(l)));
+  // largura mínima da visão de projeto (72): o sufixo já saiu e o id ficou
+  const l72 = linhaPbi7(s, 72);
+  assert.ok(l72 !== undefined, 'o id fica');
+  assert.ok(!l72.includes('(card'), `72 col: ${l72}`);
+  // sem desatualizado: nenhuma linha de PBI feito
+  const limpo = comProjeto(estadoComPlano([ini(0, 'T1')]), projetoS([cardS('PBI-1', 'Concluído'), cardS('PBI-2', 'Em execução'), cardS('PBI-3', 'Em execução')]));
+  assert.ok(linhas(limpo, { largura: 100 }).every((l) => !/^ {2}✓ PBI-/.test(l) && !l.includes(SUFIXO_DESAT)));
+  // campo ausente (estado antigo): não quebra e não desenha
+  const antigo = { ...pr, linhas: pr.linhas.map((l) => { const { cardDesatualizado: _x, ...resto } = l; return resto as typeof l; }) };
+  assert.ok(linhas(comProjeto(estadoComPlano([ini(0, 'T1')]), antigo as EstadoProjeto), { largura: 100 }).every((l) => !l.includes(SUFIXO_DESAT)));
+});
+
+test('render-projeto-propriedade-larguras-desatualizado: de 44 a 120 colunas, a linha cabe, o sufixo é inteiro ou some, e o id nunca é cortado antes dele', () => {
+  const s = comProjeto(estadoComPlano([ini(0, 'T1')]), projetarProjeto([adotadoTituloLongo()], OPC));
+  let comSufixo = false, semSufixo = false;
+  for (let w = 44; w <= 120; w++) {
+    for (const l of linhas(s, { largura: w })) {
+      assert.ok(colunas(l) <= w, `w=${w} estourou: ${l}`);
+      assert.equal((l.match(/\(card/g) ?? []).length, (l.match(/\(card desatualizado\)/g) ?? []).length, `w=${w} sufixo cortado: ${l}`);
+    }
+    const l = linhaPbi7(s, w);
+    if (w >= 72) assert.ok(l !== undefined, `w=${w} sem o id de PBI-7`);
+    if (l !== undefined) { if (l.includes(SUFIXO_DESAT)) comSufixo = true; else semSufixo = true; }
+  }
+  assert.ok(comSufixo && semSufixo, 'as duas formas aparecem entre 72 e 120');
 });

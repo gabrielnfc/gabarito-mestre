@@ -115,9 +115,12 @@ export function montarRegistro(entrega: string, eventos: Evento[], specSha: stri
   });
 
   // 5. Desvios e 6. Descobertas
-  const desvios = lista.filter((e) => e.tipo === 'desvio');
+  // GM-20 REQ-EXE-3: o `task.iniciada` com `executor` (a task que o orquestrador executou) é desvio visível na review; mesma seção, na ordem do diário
+  const executadaPeloOrquestrador = (e: Evento): boolean => e.tipo === 'task.iniciada' && ehObjeto(e.dados) && Object.hasOwn(e.dados, 'executor');
+  const desvios = lista.filter((e) => e.tipo === 'desvio' || executadaPeloOrquestrador(e));
   desvios.forEach(exigirValido);
   const linhasDesvios = desvios.map((e) => {
+    if (e.tipo === 'task.iniciada') return `- ${ref(e)} · ${limpa(campo(e.dados, 'task'), 64)} executada pelo orquestrador: ${limpa(campo(e.dados, 'motivo'))}`;
     const arq = campo(e.dados, 'arquivos');
     const arquivos = Array.isArray(arq) && arq.length > 0 ? ` · arquivos: ${arq.map((a) => limpa(a, 200)).join(', ')}` : '';
     return `- ${ref(e)} · task ${limpa(campo(e.dados, 'task'), 64)} · ${limpa(campo(e.dados, 'req'), 64)} · ${limpa(campo(e.dados, 'causa'), 32)} · ${limpa(campo(e.dados, 'evidencia'))}${arquivos}`;

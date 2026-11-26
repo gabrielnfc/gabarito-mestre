@@ -83,7 +83,8 @@ const PAPEL_VIVO: Record<string, string> = { implementando: 'implementador', em_
 
 test('glifo-por-estado: 9 estados × agente vivo do papel certo / ninguém (B3)', () => {
   const esperado: Record<string, [string, string]> = {
-    pendente: ['●', '○'], implementando: ['●', '◐'], concluida: ['◐', '◐'], em_revisao: ['●', '◐'], reprovada: ['◐', '◐'],
+    // GM-20 REQ-FAN-3: agente em task pendente não casa a task (○ com ou sem agente)
+    pendente: ['○', '○'], implementando: ['●', '◐'], concluida: ['◐', '◐'], em_revisao: ['●', '◐'], reprovada: ['◐', '◐'],
     corrigindo: ['●', '◐'], aprovada: ['◐', '◐'], no_teto: ['✗', '✗'], integrada: ['✓', '✓'],
   };
   for (const [estado, itens] of Object.entries(ATE)) {

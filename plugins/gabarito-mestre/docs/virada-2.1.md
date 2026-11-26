@@ -40,6 +40,6 @@ Rode o onboarding (`gabarito-instalar`) para ligar a medição.
 
 ## Limites desta versão
 
-- A herança das regras de repositórios da 1.x (`onboarding.mjs herdar`) chega na 2.2; não existe na 2.1.0.
+- Esta nota prometia a herança das regras de repositórios da 1.x (`onboarding.mjs herdar`, "chega na 2.2"); ela nunca foi feita e está no backlog. Hoje `herdar` é o passo de adoção do `--atualizar`: só lê, e `--gravar` grava só `fluxo.planosLegados` e `fluxo.status.terminais`; nenhum card é escrito.
 - Sem o mod, não há painel, push de aviso nem `/clear` automático: o loop pede a você, em uma linha, que digite `/clear`.
 - Os limites declarados do painel e do chat (o que foi medido e o que não foi) estão em `commands/gabarito.md`, seção "O que só o mod entende".

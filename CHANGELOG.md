@@ -3,6 +3,31 @@
 Formato: [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/). Versionamento: [SemVer](https://semver.org/lang/pt-BR/).
 Usuários do plugin só recebem atualização quando `version` muda.
 
+## [2.3.0] — 2026-11-26
+
+Projeto que adotou o gabarito com entregas antigas (GM-20, D-G41 a D-G46).
+
+### Corrigido
+
+- % das tasks: PBI concluído sem `plano.json` sai das duas pontas; a tela mostra o % com as estimadas. "N sem plano" conta só abertos.
+- Plano antigo: `fluxo.planosLegados` liga planos `.md` por padrão com `{PBI}`; plano sem task contável aparece "plano (formato anterior)".
+- Status terminal (`Superado`, `Cancelado`, `Descartado`, ou `fluxo.status.terminais`) sai das contas: "N encerrados sem entrega".
+- Entrega encerra pela base configurada (`entrega.base`), não só por `main`.
+- Entrega encerrada com card fora de "concluído": conta como feita e o painel avisa "card desatualizado".
+- Agente com hand-back em outra entrega, ou sem atividade há mais de 60 min, sai da EQUIPE; agente de outra entrega não marca task pendente como em curso.
+- Uma linha de previsão; separadores mantidos com o projeto na tela.
+- A "próxima" não aponta spec mais antiga que a última entrega encerrada.
+
+### Adicionado
+
+- `loop.mjs iniciar <task> implementador --executor orquestrador --motivo "…"`: tira o alerta "sem agente", mostra o desvio no painel e no registro; 1 por vez.
+- Passo de adoção no `gabarito-instalar --atualizar` (`onboarding.mjs herdar`): acha PBIs entregues sem `plano.json`, propõe o padrão de planos antigos e os status terminais. Só grava com "sim".
+
+### Limites declarados
+
+- O plugin não atualiza o status do card: "card desatualizado" é só aviso; quem move o card é o time.
+- Teste rodado numa worktree ainda grava no diário do checkout principal (backlog, prioridade alta).
+
 ## [2.2.2] — 2026-11-23
 
 Patch interno (GM-19, D-G40): testes mais rápidos e sem repetição. Nada muda no comportamento do plugin para quem usa.

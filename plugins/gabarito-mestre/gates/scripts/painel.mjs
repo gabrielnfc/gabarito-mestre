@@ -37,14 +37,14 @@ import { dirEntrega, lerEstrito } from '../dist/diario.js';
 import { lerConfigEntrega, politicaEfetiva } from '../dist/entrega.js';
 import { estadoDe, ordenar, proximaAcao, TIPOS_DE_TASK } from '../dist/loop.js';
 import { decisoesDaSombra, entregueDe, etapasDasAnteriores, fechamentoDasAnteriores, projetarPainel, renderPainel, ritmoDasAnteriores, umaLinhaDe } from '../dist/painel.js';
-import { validarPacote, validarStdinAgentes, usoDoTranscript } from '../dist/painel-equipe.js';
+import { handbacksDoDiario, validarPacote, validarStdinAgentes, usoDoTranscript } from '../dist/painel-equipe.js';
 import { fusoValido } from '../dist/painel-hora.js';
 import { paraTexto } from '../dist/painel-texto.js';
 import { lerX } from '../dist/pouso.js';
 import { sessoesDeRetomada } from '../dist/pouso-pendente.js';
 import { encerramentoDe, idDaBranch, trilhaDe } from '../dist/trilha.js';
 import { proximaEntrega } from '../dist/depende.js';
-import { cardDe, planoMdDoCard, projetarProjeto, worktreesDe } from '../dist/projeto.js';
+import { cardDe, padraoLegadoValido, planoLegadoDe, planoMdDoCard, projetarProjeto, terminaisValidos, worktreesDe } from '../dist/projeto.js';
 import { temOnboarding } from './cartao-sessao.mjs';
 import { carregarPlano, checkoutDaSessao, configDoLote, contexto, lerDiarioEstrito, lerSpec, lerSpecs, medicaoDoPouso } from './loop.mjs';
 import { decisaoDe, pausado, prepararLeitura } from './entrega.mjs';
@@ -208,6 +208,18 @@ function caminhoDoTranscript(item) {
   }
 }
 
+/** GM-20 REQ-FAN-2: o `mtime` (ms) do transcript JÁ validado por `caminhoDoTranscript` (mesma lstat); sem transcript legível ⇒ `null` e a regra de silêncio não vale. */
+function atividadeDoItem(item) {
+  const caminho = caminhoDoTranscript(item);
+  if (caminho === null) return null;
+  try {
+    const ms = lstatSync(caminho).mtimeMs;
+    return Number.isFinite(ms) ? ms : null;
+  } catch {
+    return null;
+  }
+}
+
 function usoDoItem(item) {
   const caminho = caminhoDoTranscript(item);
   if (caminho === null) return null;
@@ -296,8 +308,21 @@ function commitMsDe(caminho, rel) {
   }
 }
 
+/** GM-20 REQ-LEG-1/3: plano antigo do card sem ponteiro, por `fluxo.planosLegados` (padrões já válidos); 2 arquivos ou mais para o mesmo PBI ⇒ não liga e avisa. */
+function legadoDoCard(caminho, textoCard, idRe, legados, avisos) {
+  const card = cardDe('', textoCard, idRe);
+  if (card === null || existsFile(join(caminho, '.harness', 'entregas', card.id, 'plano.json'))) return null; // plano.json da entrega vale: o padrão nem é avaliado
+  const achados = [];
+  for (const { padrao, dir, nomes } of legados) for (const n of planoLegadoDe(nomes(caminho), padrao, card.id) ?? []) achados.push(dir === '' ? n : `${dir}/${n}`);
+  const unicos = [...new Set(achados)];
+  if (unicos.length > 1) { const a = `${card.id}: plano antigo ambíguo (${unicos.length} arquivos)`; if (!avisos.includes(a)) avisos.push(a); return null; }
+  if (unicos.length === 0) return null;
+  const texto = lerTextoSeguro(join(caminho, unicos[0]));
+  return texto === null ? null : { caminho: unicos[0], texto };
+}
+
 /** O que a borda lê de UMA árvore, no formato de `ArvoreLida` (projeto.ts): cards de `fluxo.mapeamento.FL1`, o plano .md do card, `plano.json` e o diário de cada entrega. */
-function lerArvoreDoProjeto(caminho, fl1, idRe) {
+function lerArvoreDoProjeto(caminho, fl1, idRe, legados = [], avisos = []) {
   const cards = [];
   if (fl1 !== null) {
     let nomes = [];
@@ -306,7 +331,7 @@ function lerArvoreDoProjeto(caminho, fl1, idRe) {
       const texto = lerTextoSeguro(join(caminho, fl1, arquivo));
       if (texto === null) continue;
       const md = relativoSeguro(planoMdDoCard(texto));
-      cards.push({ arquivo, texto, planoMd: md === null ? null : lerTextoSeguro(join(caminho, md)) });
+      cards.push({ arquivo, texto, planoMd: md === null ? null : lerTextoSeguro(join(caminho, md)), planoLegado: md === null ? legadoDoCard(caminho, texto, idRe, legados, avisos) : null });
     }
   }
   const entregas = [];
@@ -369,17 +394,34 @@ export function projetoDoRepo({ atual, cfg, idPadrao, agoraMs, fuso, deps = {} }
   const real = (c) => { try { return realpathSync(c); } catch { return c; } };
   const wt = worktreesDe((deps.worktreeList ?? worktreeListDoGit)(atual), real(atual));
   const caminhos = [...new Set(wt.caminhos.map(real))];
-  const arvores = caminhos.map((c) => lerArvoreDoProjeto(c, fl1, idRe));
-  const avisos = wt.aviso === null ? [] : [wt.aviso];
+  const avisosLeg = [];
+  const legados = [];
+  const brutos = cfg?.fluxo?.planosLegados;
+  if (brutos !== undefined) {
+    for (const padrao of Array.isArray(brutos) ? brutos : [brutos]) {
+      const v = padraoLegadoValido(padrao);
+      if (v === null) { const a = `planosLegados: padrão inválido "${String(padrao).slice(0, 80)}"`; if (!avisosLeg.includes(a)) avisosLeg.push(a); continue; }
+      const lidos = new Map();
+      legados.push({ padrao, dir: v.dir, nomes: (c) => { if (!lidos.has(c)) { try { lidos.set(c, readdirSync(join(c, v.dir))); } catch { lidos.set(c, []); } } return lidos.get(c); } });
+    }
+  }
+  const arvores = caminhos.map((c) => lerArvoreDoProjeto(c, fl1, idRe, legados, avisosLeg));
+  const avisos = [...(wt.aviso === null ? [] : [wt.aviso]), ...avisosLeg];
   // GM-16 T4: o que a config diz chega ao núcleo (que nunca lê config, D-G27). Ausente cai no padrão; ilegível avisa e cai no padrão, nunca "ok".
   let statusFl1 = cfg?.fluxo?.status?.FL1;
   if (statusFl1 !== undefined && (typeof statusFl1 !== 'object' || statusFl1 === null || Array.isArray(statusFl1))) {
     avisos.push('fluxo.status.FL1 ilegível: vale o quadro padrão');
     statusFl1 = undefined;
   }
+  // GM-20 DT5: `fluxo.status.terminais` (lista de textos) substitui o padrão; forma inválida avisa e cai no padrão, nunca "ok"
+  let terminais = cfg?.fluxo?.status?.terminais;
+  if (terminais !== undefined && terminaisValidos(terminais) === null) {
+    avisos.push('fluxo.status.terminais inválido: valem Superado, Cancelado e Descartado');
+    terminais = undefined;
+  }
   const vinculo = cfg?.fluxo?.vinculoPbiEpic;
   const titulosEpic = vinculo?.tipo === 'frontmatter' ? titulosDosEpics(atual, cfg?.fluxo?.mapeamento?.FL2, avisos) : {};
-  return projetarProjeto(arvores, { agoraMs, fuso, idPadrao: idRe, avisos, statusFl1, opcoesComoContagem: cfg?.painel?.projeto?.opcoesComoContagem === true, vinculo, titulosEpic });
+  return projetarProjeto(arvores, { agoraMs, fuso, idPadrao: idRe, avisos, statusFl1, terminais, opcoesComoContagem: cfg?.painel?.projeto?.opcoesComoContagem === true, vinculo, titulosEpic });
 }
 
 // ─────────────────────────────────────────────────────────────── pacote de nomes
@@ -427,12 +469,14 @@ function agentesDe(bruto, nomes = {}) {
   for (const it of bruto) {
     if (!ehObj(it) || typeof it.id !== 'string' || it.id === '' || vistos.has(it.id)) continue;
     vistos.add(it.id);
+    const atividadeMs = atividadeDoItem(it);
     saida.push({
       id: it.id,
       type: typeof it.type === 'string' ? it.type : '',
       description: typeof it.description === 'string' ? it.description : '',
       status: typeof it.status === 'string' ? it.status : 'desconhecido', // status desconhecido conta como vivo
       uso: usoDoItem(it),
+      ...(atividadeMs === null ? {} : { atividadeMs }),
       ...(Object.hasOwn(nomes, it.id) ? { nome: nomes[it.id].nome, vistoEm: nomes[it.id].vistoEm } : {}),
     });
   }
@@ -514,10 +558,11 @@ function atividades(raiz, fontes) {
     nomes = readdirSync(base).filter((n) => !n.startsWith('_')).sort();
   } catch (e) {
     if (!ausenteFs(e)) fontes.push(FONTE.entregas);
-    return { ultimas: [], ultima: null, diarios: [] };
+    return { ultimas: [], ultima: null, diarios: [], handbacks: {} };
   }
   const ultimas = [];
   const diarios = [];
+  const handbacks = Object.create(null);
   let ultima = null;
   for (const id of nomes) {
     const dir = join(base, id);
@@ -525,6 +570,7 @@ function atividades(raiz, fontes) {
     const lido = lerEstrito(dir);
     if (!lido.ok) { fontes.push(FONTE.diarioDe(id)); continue; }
     diarios.push({ id, eventos: lido.eventos });
+    handbacksDe(lido.eventos, handbacks);
     const vistos = new Set();
     let maior = null;
     for (const e of lido.eventos) {
@@ -535,7 +581,21 @@ function atividades(raiz, fontes) {
     }
     if (maior !== null && (ultima === null || maior > ultima.data)) ultima = { id, data: maior, dir, eventos: lido.eventos };
   }
-  return { ultimas, ultima: ultima === null ? null : { id: ultima.id, estado: estadoEmPalavras(ultima.dir, ultima.eventos) }, diarios };
+  // GM-20 REQ-FAN-1: o `_sem-id` (fora do filtro acima) só entra aqui, para estes ids; ausente ≠ corrompido
+  const semId = join(base, '_sem-id');
+  let temSemId = false;
+  try { temSemId = lstatSync(semId).isDirectory(); } catch (e) { if (!ausenteFs(e)) fontes.push(FONTE.diarioDe('_sem-id')); }
+  if (temSemId) {
+    const lido = lerEstrito(semId);
+    if (lido.ok) handbacksDe(lido.eventos, handbacks);
+    else fontes.push(FONTE.diarioDe('_sem-id'));
+  }
+  return { ultimas, ultima: ultima === null ? null : { id: ultima.id, estado: estadoEmPalavras(ultima.dir, ultima.eventos) }, diarios, handbacks };
+}
+
+/** GM-20 REQ-FAN-1: acumula em `saida` o hand-back mais recente de cada id; a regra (o mais novo vale, `ts` ilegível vale `Infinity`) é `handbacksDoDiario` do núcleo, uma só. */
+function handbacksDe(eventos, saida) {
+  for (const [id, ms] of handbacksDoDiario(eventos)) saida[id] = Math.max(Object.hasOwn(saida, id) ? saida[id] : -Infinity, ms);
 }
 
 /** `gh` da entrega pelo `.harness/painel-medir.json` (T11; `estado` só lê): ausente ⇒ `nunca`; corrompido ⇒ `nunca` + fonte que falhou; `falhou` ⇒ o GitHub. */
@@ -688,7 +748,7 @@ export function estadoDoPainel(cwd, opts = {}) {
     if (raiz !== null) {
       try { specs = lerSpecs(sessaoRaiz, idPadrao); } catch (e) { if (typeof e?.erro !== 'string') throw e; fontes.push(FONTE.specs); }
     }
-    const ativ = raiz === null ? { ultimas: [], ultima: null, diarios: [] } : atividades(raiz, fontes);
+    const ativ = raiz === null ? { ultimas: [], ultima: null, diarios: [], handbacks: {} } : atividades(raiz, fontes);
     // GM-15 T8 (REQ-ENT-1 d): a entrega encerrada que o painel mostra: a da branch (ou `--entrega`); sem ela, a última conhecida (a do "sem entrega em
     // curso · última"). A próxima: spec com PBI sem encerramento mais nova ⇒ ideias anotadas na entregue ⇒ nenhuma (regra de `proximaEntrega`).
     const daEntregue = id !== null ? { id, eventos } : ativ.ultima === null ? null : { id: ativ.ultima.id, eventos: ativ.diarios.find((x) => x.id === ativ.ultima.id)?.eventos ?? null };
@@ -783,7 +843,7 @@ export function estadoDoPainel(cwd, opts = {}) {
       limites: { h5: numero(sessao.h5), d7: numero(sessao.d7) },
       x: x.x,
       agentes,
-      ...(extras !== null ? { encerrados: extras.valor.encerrados, acoes: extras.valor.acoes, segundoPlano: extras.valor.segundoPlano } : {}),
+      ...(extras !== null ? { handbacks: ativ.handbacks, encerrados: extras.valor.encerrados, acoes: extras.valor.acoes, segundoPlano: extras.valor.segundoPlano } : {}),
       pacote,
       notificacao: notificacaoDe(sessao.notificacao),
       agoraMs,

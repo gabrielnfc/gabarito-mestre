@@ -9,7 +9,7 @@ import { test, describe, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { raizSegura } from './_raiz-segura.mjs';
 import {
-  mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, realpathSync, appendFileSync, copyFileSync, existsSync, symlinkSync, statSync, renameSync,
+  mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, realpathSync, appendFileSync, copyFileSync, existsSync, symlinkSync, statSync, renameSync, utimesSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
@@ -20,11 +20,12 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import * as diario from '../dist/diario.js';
 import { renderPainel } from '../dist/painel.js';
 import { paraTexto } from '../dist/painel-texto.js';
-import { estadoDoPainel, lerArgs, lerCauda, lerDiarioEstavel, lerEntradaAgentes, main, sessaoDoMod } from '../scripts/painel.mjs';
+import { estadoDoPainel, projetoDoRepo, lerArgs, lerCauda, lerDiarioEstavel, lerEntradaAgentes, main, sessaoDoMod } from '../scripts/painel.mjs';
 import { aprovarSpec } from '../scripts/loop.mjs';
 import { medir } from '../scripts/painel-medir.mjs';
 import { prepararLeitura as prepararLeituraReal } from '../scripts/entrega.mjs';
 import { fecharPendenciasNoDiario } from './_adaptador-helpers.mjs';
+import { montarNoDisco } from './painel-fixtures/adotado.mjs';
 import { estadoParaDesenho, linhasDaPane } from '../../mod/painel.mjs';
 import { readFileSync as lerArqVersao } from 'node:fs';
 const VERSAO_PLUGIN = JSON.parse(lerArqVersao(new URL('../package.json', import.meta.url), 'utf8')).version;
@@ -1665,5 +1666,245 @@ describe('GM-15 T19: sinal do loop no painel', { timeout: 60_000 }, () => {
     let out = ''; // sem arquivo: sessão que nunca gravou sinal
     assert.equal(main(['texto', '--sessao', 'S7'], m.repo, IO({ saida: (t) => { out += t; } })), 0, out);
     assert.match(out, /ligar o loop automático/, 'sem arquivo');
+  });
+});
+
+// ───────────────────────────── GM-20 T2 (DT5, REQ-TER-1/2, P9): status terminal pelo CLI real, sobre a fixture comum em disco
+// Mutações: MT1-a (sem o `continue`) ⇒ pbis 10 · MT2-a (mescla com o padrão) ⇒ "Arquivado" + Superado ⇒ terminais 3 · borda sem `terminais` ⇒ config ignorada ⇒ pbis 8
+describe('status-terminal-cli: o painel real lê fluxo.status.terminais da config de origin/HEAD', () => {
+  const projetoDe = async (opcoes) => {
+    const dir = join(novoTmp('terminal-'), 'proj');
+    await montarNoDisco(dir, opcoes);
+    const r = spawnSync(process.execPath, [SCRIPT, 'estado'], { cwd: dir, encoding: 'utf8', timeout: 60_000 });
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    const j = JSON.parse(r.stdout);
+    const t = spawnSync(process.execPath, [SCRIPT, 'texto', '--largura', '120'], { cwd: dir, encoding: 'utf8', timeout: 60_000 });
+    assert.equal(t.status, 0, t.stdout + t.stderr);
+    return { projeto: j.estado.projeto, avisos: j.avisos, texto: t.stdout };
+  };
+
+  test('sem config: Superado e Cancelado saem das contas e viram "2 encerrados sem entrega" na linha 1; sem linha deles', async () => {
+    const { projeto, texto } = await projetoDe();
+    assert.equal(projeto.totais.pbis, 8);
+    assert.equal(projeto.totais.terminais, 2);
+    assert.equal(projeto.totais.opcoes, 0);
+    assert.deepEqual(projeto.linhas.filter((l) => l.id === 'PBI-4' || l.id === 'PBI-10'), []);
+    assert.match(texto, /PROJETO .*8 PBIs.*2 encerrados sem entrega/, texto);
+    assert.ok(!/PBI-4|PBI-10/.test(texto), texto);
+  });
+
+  test('com a lista na config: ["Arquivado"] substitui o padrão (Superado e Cancelado voltam); ["Cancelado"] tira só o PBI-10', async () => {
+    const a = await projetoDe({ terminais: ['Arquivado'] });
+    assert.equal(a.projeto.totais.terminais, 0);
+    assert.equal(a.projeto.totais.pbis, 10);
+    assert.deepEqual(a.avisos.filter((x) => /terminais/.test(x)), []);
+    const c = await projetoDe({ terminais: ['Cancelado'] });
+    assert.equal(c.projeto.totais.terminais, 1);
+    assert.equal(c.projeto.totais.pbis, 9);
+    assert.match(c.texto, /1 encerrado sem entrega/, c.texto);
+  });
+
+  test('lista inválida na config: vale o padrão e o painel avisa "fluxo.status.terminais inválido"', async () => {
+    for (const ruim of ['Superado', [1, 2], null]) {
+      const { projeto, avisos } = await projetoDe({ terminais: ruim });
+      assert.equal(projeto.totais.terminais, 2, JSON.stringify(ruim));
+      assert.equal(projeto.totais.pbis, 8);
+      assert.ok(avisos.some((x) => x.startsWith('fluxo.status.terminais inválido')), `${JSON.stringify(ruim)}: ${avisos.join(' | ')}`);
+    }
+  });
+});
+
+// ───────────────────────────── GM-20 T3 (REQ-LEG-1/2/3): plano no formato anterior pelo CLI real, sobre a fixture comum em disco
+// Mutações: ML1-a (borda sem o fallback) ⇒ PBI-3 "feito, sem plano" · ML3-b (ambíguo liga o 1º) ⇒ sem aviso e plano md · ML3-a (aceita `..`) ⇒ sem aviso de padrão inválido
+describe('plano-legado-cli: o painel real lê fluxo.planosLegados e liga o plano antigo', () => {
+  const PADRAO = 'docs/superpowers/plans/*-{PBI}-*.md';
+  const projetoDe = async (opcoes, extra = () => {}) => {
+    const dir = join(novoTmp('legado-'), 'proj');
+    await montarNoDisco(dir, opcoes);
+    extra(dir);
+    const r = spawnSync(process.execPath, [SCRIPT, 'estado'], { cwd: dir, encoding: 'utf8', timeout: 60_000 });
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    const j = JSON.parse(r.stdout);
+    return { projeto: j.estado.projeto, avisos: j.avisos };
+  };
+  const l = (p, id) => p.linhas.find((x) => x.id === id);
+
+  test('sem a chave: PBI-3 segue "feito, sem plano"; com o padrão: plano md com 2 tasks estimadas, fora do %', async () => {
+    const sem = await projetoDe();
+    assert.equal(l(sem.projeto, 'PBI-3').texto, 'feito, sem plano');
+    const com = await projetoDe({ planosLegados: [PADRAO] });
+    const p3 = l(com.projeto, 'PBI-3');
+    assert.equal(p3.plano, 'md');
+    assert.deepEqual(p3.tasks, { total: 2, integradas: 0, estimadas: 2, restantes: 0, fora: 0 });
+    assert.equal(com.projeto.totais.tasks, sem.projeto.totais.tasks, 'concluído .md não entra no %');
+    assert.equal(l(com.projeto, 'PBI-9').texto, 'plano (formato anterior)');
+    assert.deepEqual(com.avisos.filter((x) => /planosLegados|ambíguo/.test(x)), []);
+  });
+
+  test('padrões inseguros (.., absoluto, **, * em pasta) são ignorados com aviso; o válido da mesma lista vale', async () => {
+    const ruins = ['../x/*-{PBI}.md', '/etc/{PBI}.md', 'docs/**/{PBI}.md', 'docs/*/{PBI}.md'];
+    const { projeto, avisos } = await projetoDe({ planosLegados: [...ruins, PADRAO] });
+    for (const r of ruins) assert.ok(avisos.includes(`planosLegados: padrão inválido "${r}"`), `${r}: ${avisos.join(' | ')}`);
+    assert.equal(l(projeto, 'PBI-3').plano, 'md');
+  });
+
+  test('2 arquivos para o mesmo PBI: não liga e avisa "plano antigo ambíguo (2 arquivos)"; PBI-1 não casa PBI-10', async () => {
+    // `{PBI}*` (sem literal depois do id): só a fronteira `(?!\d)` impede PBI-1 de casar PBI-10-b.md (ML3-c)
+    const { projeto, avisos } = await projetoDe({ planosLegados: ['docs/superpowers/plans/*-{PBI}*.md'] }, (dir) => {
+      writeFileSync(join(dir, 'docs/superpowers/plans/2026-11-03-PBI-3-copia.md'), '### Task 1: x\n');
+      writeFileSync(join(dir, 'docs/superpowers/plans/2026-11-03-PBI-10-b.md'), '### Task 1: x\n');
+    });
+    assert.ok(avisos.includes('PBI-3: plano antigo ambíguo (2 arquivos)'), avisos.join(' | '));
+    assert.equal(l(projeto, 'PBI-3').texto, 'feito, sem plano');
+    assert.equal(l(projeto, 'PBI-1').plano, null, 'PBI-1 não casa PBI-10');
+  });
+
+  test('aviso repetido não duplica: padrão inválido 2x na lista e ambíguo em 2 worktrees saem uma vez só', async () => {
+    const a = join(novoTmp('legado-'), 'a');
+    const b = join(novoTmp('legado-'), 'b');
+    for (const d of [a, b]) {
+      await montarNoDisco(d, { planosLegados: [PADRAO] });
+      writeFileSync(join(d, 'docs/superpowers/plans/2026-11-03-PBI-3-copia.md'), '### Task 1: x\n');
+    }
+    const cfg = { fluxo: { mapeamento: { FL1: 'cards/' }, planosLegados: ['../x/{PBI}.md', '../x/{PBI}.md', PADRAO] } };
+    const lista = `worktree ${a}\n\nworktree ${b}\n`;
+    const r = projetoDoRepo({ atual: a, cfg, idPadrao: '^PBI-\\d+$', agoraMs: Date.parse('2026-11-20T12:00:00Z'), fuso: 'UTC', deps: { worktreeList: () => ({ ok: true, saida: lista }) } });
+    const conta = (t) => r.avisos.filter((x) => x === t).length;
+    assert.equal(conta('PBI-3: plano antigo ambíguo (2 arquivos)'), 1, r.avisos.join(' | '));
+    assert.equal(conta('planosLegados: padrão inválido "../x/{PBI}.md"'), 1, r.avisos.join(' | '));
+  });
+
+  test('PBI com plano.json na entrega: os 2 arquivos legados não geram aviso de ambíguo', async () => {
+    const { avisos } = await projetoDe({ planosLegados: [PADRAO] }, (dir) => {
+      writeFileSync(join(dir, 'docs/superpowers/plans/2026-11-03-PBI-5-a.md'), '### Task 1: x\n');
+      writeFileSync(join(dir, 'docs/superpowers/plans/2026-11-03-PBI-5-b.md'), '### Task 1: x\n');
+    });
+    assert.deepEqual(avisos.filter((x) => /PBI-5.*ambíguo/.test(x)), []);
+  });
+
+  test('`{PBI}` na pasta é padrão inválido (aviso) e `*{PBI}` exige fronteira à esquerda (XPBI-3 não casa PBI-3)', async () => {
+    const { avisos } = await projetoDe({ planosLegados: ['docs/{PBI}/plano.md', 'docs/superpowers/plans/*{PBI}-legado.md'] }, (dir) => {
+      writeFileSync(join(dir, 'docs/superpowers/plans/XPBI-3-legado.md'), '### Task 1: x\n');
+    });
+    assert.ok(avisos.includes('planosLegados: padrão inválido "docs/{PBI}/plano.md"'), avisos.join(' | '));
+    assert.deepEqual(avisos.filter((x) => /ambíguo/.test(x)), [], 'XPBI-3 não casa PBI-3: um único arquivo (o legado de 2026-11-02) liga');
+  });
+});
+
+// ---- GM-20 T8 (REQ-FAN-1, 2): agente fantasma pelo CLI real; a fixture do spike B refeita aqui (repo-fantasma e repo-fantasma2) ----
+describe('agente fantasma (GM-20)', { timeout: 120_000 }, () => {
+  const T_HB = Date.UTC(2026, 10, 9, 13, 0, 0);
+  const EM_REVISAO = [['task.iniciada', { task: 'T1', papel: 'implementador' }], ['task.concluida', { task: 'T1', sha: 'a'.repeat(40) }], ['task.iniciada', { task: 'T1', papel: 'revisor' }]];
+  /** Hand-back do agente `ghost01` no diário de OUTRA entrega (`entrega`, ex.: `GM-11` ou `_sem-id`), no instante `T_HB`. */
+  const handback = (m, entrega, id = 'ghost01', ts = new Date(T_HB).toISOString()) => {
+    const dir = join(m.repo, '.harness', 'entregas', entrega);
+    mkdirSync(dir, { recursive: true });
+    const r = diario.append(dir, 'loop', { ts, autor: 't@t.test', sessao: 'loop', agente: `subagent:${id}`, tipo: 'custo.medicao', dados: { papel: 'revisor', modelo: 'claude-opus-4-8', input_tokens: 1, output_tokens: 1 } });
+    assert.ok(r.ok, JSON.stringify(r));
+  };
+  const transcript = (m, id, mtimeMs) => {
+    const d = join(novoTmp('painel fantasma '), 'sessao', 'subagents');
+    mkdirSync(d, { recursive: true });
+    const p = join(d, `agent-${id}.jsonl`);
+    copyFileSync(FIXTURE, p);
+    if (mtimeMs !== undefined) utimesSync(p, new Date(mtimeMs), new Date(mtimeMs));
+    return p;
+  };
+  const agente = (extra = {}) => ({ id: 'ghost01', type: 'gabarito-mestre:gabarito-revisor', description: 'T1 revisor', status: 'running', ...extra });
+  const quem = (m, agentes, agoraMs = AGORA) => estado(m, { agoraMs, agentes: { sessao: { window: 200000 }, agentes } }).estado.equipe.agentes;
+  const dono = (lista) => lista.filter((a) => a.vivo);
+
+  test('fantasma-handback-outra-entrega (CLI, repo-fantasma2): hand-back no diário de outra entrega tira o agente da EQUIPE e do texto', () => {
+    const m = montar({ ...comEventos(EM_REVISAO) });
+    assert.equal(dono(quem(m, [agente()])).length, 1, 'controle: sem hand-back o agente está na EQUIPE');
+    handback(m, 'GM-11');
+    assert.equal(dono(quem(m, [agente()])).length, 0);
+    const r = cli(m, ['texto', '--agentes'], { input: JSON.stringify({ sessao: {}, agentes: [agente()] }) });
+    assert.equal(r.rc, 0, r.stderr);
+    assert.doesNotMatch(r.stdout, /fora do loop/);
+    assert.doesNotMatch(r.stdout, /revisor/i);
+  });
+
+  test('fantasma-handback-sem-id (CLI, repo-fantasma): hand-back em `_sem-id` também tira', () => {
+    const m = montar({ ...comEventos(EM_REVISAO) });
+    handback(m, '_sem-id');
+    assert.equal(dono(quem(m, [agente()])).length, 0);
+    handback(m, 'GM-11', 'outro');
+    assert.equal(dono(quem(m, [agente({ id: 'vivo02' })])).length, 1, 'hand-back de outro id não tira');
+  });
+
+  test('fantasma-retomado-volta (CLI): transcript mexido depois do hand-back devolve o agente; antes, não', () => {
+    const m = montar({ ...comEventos(EM_REVISAO) });
+    handback(m, 'GM-11');
+    const agora = T_HB + 30 * 60_000;
+    assert.equal(dono(quem(m, [agente({ transcript: transcript(m, 'ghost01', T_HB + 60_000) })], agora)).length, 1, 'mtime posterior: retomado');
+    assert.equal(dono(quem(m, [agente({ transcript: transcript(m, 'ghost01', T_HB - 60_000) })], agora)).length, 0, 'mtime anterior: segue fora');
+    assert.equal(dono(quem(m, [agente({ transcript: transcript(m, 'ghost01', T_HB) })], agora)).length, 0, 'mesmo instante: segue fora');
+  });
+
+  test('handback-ts-mais-100ms-segue-fora (CLI): margem de 1 s', () => {
+    const m = montar({ ...comEventos(EM_REVISAO) });
+    handback(m, 'GM-11');
+    const agora = T_HB + 30 * 60_000;
+    assert.equal(dono(quem(m, [agente({ transcript: transcript(m, 'ghost01', T_HB + 100) })], agora)).length, 0, '100 ms depois: segue fora');
+    assert.equal(dono(quem(m, [agente({ transcript: transcript(m, 'ghost01', T_HB + 1001) })], agora)).length, 1, 'mais de 1 s: retomado');
+  });
+
+  test('handback-mais-novo-vale (CLI, regra única do núcleo): 2 hand-backs de ts legível em 2 entregas FORA da exibida e o transcript entre eles ⇒ segue fora (vale o mais novo, em qualquer ordem de gravação)', () => {
+    const agora = T_HB + 30 * 60_000;
+    const velho = new Date(T_HB).toISOString();
+    const novo = new Date(T_HB + 10 * 60_000).toISOString();
+    for (const [rotulo, [a, b]] of [['novo em GM-11', [['GM-10', velho], ['GM-11', novo]]], ['novo em GM-10', [['GM-10', novo], ['GM-11', velho]]]]) {
+      for (const ordem of [[a, b], [b, a]]) {
+        const m = montar({ ...comEventos(EM_REVISAO) });
+        for (const [entrega] of ordem) assert.notEqual(entrega, ENTREGA, 'a fixture usa só entregas fora da exibida');
+        for (const [entrega, ts] of ordem) handback(m, entrega, 'ghost01', ts);
+        const ctx = `${rotulo}, gravado ${ordem.map((x) => x[0]).join('→')}`;
+        assert.equal(dono(quem(m, [agente({ transcript: transcript(m, 'ghost01', T_HB + 5 * 60_000) })], agora)).length, 0, `${ctx}: entre os dois, o mais novo vale, segue fora`);
+        assert.equal(dono(quem(m, [agente({ transcript: transcript(m, 'ghost01', T_HB + 10 * 60_000 + 2000) })], agora)).length, 1, `${ctx}: depois do mais novo, retomado`);
+      }
+    }
+  });
+
+  test('handback-mais-novo-vale-mesma-entrega (CLI): 2 hand-backs na mesma entrega, o mais novo gravado primeiro ⇒ a ordem do diário não decide', () => {
+    const agora = T_HB + 30 * 60_000;
+    const m = montar({ ...comEventos(EM_REVISAO) });
+    handback(m, 'GM-11', 'ghost01', new Date(T_HB + 10 * 60_000).toISOString());
+    handback(m, 'GM-11', 'ghost01', new Date(T_HB).toISOString());
+    assert.equal(dono(quem(m, [agente({ transcript: transcript(m, 'ghost01', T_HB + 5 * 60_000) })], agora)).length, 0, 'ordem inversa: segue fora');
+  });
+
+  test('handback-ts-ilegivel (CLI, regra única do núcleo): hand-back de `ts` ilegível em outra entrega ⇒ o agente segue fora, mesmo com transcript novo e com outro hand-back legível antes ou depois', () => {
+    const agora = T_HB + 30 * 60_000;
+    const m = montar({ ...comEventos(EM_REVISAO) });
+    handback(m, 'GM-11', 'ghost01', 'ontem-de-tarde');
+    assert.equal(dono(quem(m, [agente({ transcript: transcript(m, 'ghost01', T_HB + 20 * 60_000) })], agora)).length, 0, 'ts ilegível: nunca cede');
+    handback(m, 'GM-12', 'ghost01', new Date(T_HB).toISOString());
+    assert.equal(dono(quem(m, [agente({ transcript: transcript(m, 'ghost01', T_HB + 20 * 60_000) })], agora)).length, 0, 'legível depois (outra entrega): segue fora');
+    const m2 = montar({ ...comEventos(EM_REVISAO) });
+    handback(m2, 'GM-10', 'ghost01', new Date(T_HB).toISOString());
+    handback(m2, 'GM-11', 'ghost01', 'ontem-de-tarde');
+    assert.equal(dono(quem(m2, [agente({ transcript: transcript(m2, 'ghost01', T_HB + 20 * 60_000) })], agora)).length, 0, 'legível antes (outra entrega): segue fora');
+  });
+
+  test('fantasma-silencio-60-min (CLI): o `mtime` do transcript legível decide; 60 exatos fica, 61 sai; sem transcript legível fica', () => {
+    const m = montar({ ...comEventos(EM_REVISAO) });
+    const min = (n) => AGORA - n * 60_000;
+    assert.equal(dono(quem(m, [agente({ transcript: transcript(m, 'ghost01', min(59)) })])).length, 1);
+    assert.equal(dono(quem(m, [agente({ transcript: transcript(m, 'ghost01', min(60)) })])).length, 1, '60 exatos fica');
+    assert.equal(dono(quem(m, [agente({ transcript: transcript(m, 'ghost01', min(61)) })])).length, 0, '61 sai');
+    assert.equal(dono(quem(m, [agente()])).length, 1, 'sem transcript: fica');
+    assert.equal(dono(quem(m, [agente({ transcript: join(novoTmp('painel fantasma '), 'inexistente', 'subagents', 'agent-ghost01.jsonl') })])).length, 1, 'transcript ilegível: fica');
+    // fora da forma (outro id): não é legível, a regra não vale
+    const fora = transcript(m, 'outro', min(300));
+    assert.equal(dono(quem(m, [agente({ transcript: fora })])).length, 1);
+  });
+
+  test('fantasma-nao-pendente (CLI): agente de task pendente não vira `● em curso` no PLANO', () => {
+    const m = montar({});
+    const e = estado(m, { agentes: { sessao: {}, agentes: [agente()] } }).estado;
+    assert.equal(e.plano.tasks.find((t) => t.id === 'T1').glifo, '○');
+    const com = estado(montar({ ...comEventos(EM_REVISAO) }), { agentes: { sessao: {}, agentes: [agente()] } }).estado;
+    assert.equal(com.plano.tasks.find((t) => t.id === 'T1').glifo, '●');
   });
 });

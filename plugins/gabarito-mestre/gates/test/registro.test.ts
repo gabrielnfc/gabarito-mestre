@@ -314,3 +314,31 @@ describe('GM-15 T36 (emenda 25 m.4): emenda aplicada e revertida pelo dono', () 
     assert.match(so[0], /· rejeitada por dono · /);
   });
 });
+
+describe('GM-20 REQ-EXE-3: o desvio do orquestrador entra no registro', () => {
+  const EXEC = ev('gm20', 1, 'task.iniciada', { task: 'T42', papel: 'implementador', executor: 'orquestrador', motivo: 'task de contrato do painel' }, t(30));
+  const COMUM = ev('gm20', 2, 'task.iniciada', { task: 'T43', papel: 'implementador' }, t(31));
+
+  test('registro-lista-executor-orquestrador (ME3-a): a seção Desvios lista `T42 executada pelo orquestrador: <motivo>`; task sem executor não aparece', () => {
+    const r = montarRegistro('GM-20', [APROVA, EXEC, COMUM], SHA);
+    const linhas = corpo(r, 'Desvios');
+    assert.equal(linhas.length, 1, linhas.join('|'));
+    assert.match(linhas[0], /T42 executada pelo orquestrador: task de contrato do painel/);
+    assert.equal(/T43/.test(r), false);
+    for (const outra of TITULOS.filter((x) => x !== 'Desvios')) assert.equal(/executada pelo orquestrador/.test(corpo(r, outra).join('\n')), false, outra);
+  });
+
+  test('registro-executor-junto-do-desvio-na-ordem-do-diario: o desvio comum e o do orquestrador ficam na ordem dos eventos', () => {
+    const desv = ev('gm20b', 1, 'desvio', { task: 'T3', req: 'REQ-DIA-1', evidencia: 'e', arquivos: [], causa: 'tecnica' }, t(29));
+    const r = montarRegistro('GM-20', [APROVA, desv, EXEC], SHA);
+    const linhas = corpo(r, 'Desvios');
+    assert.equal(linhas.length, 2);
+    assert.match(linhas[0], /REQ-DIA-1/);
+    assert.match(linhas[1], /T42 executada pelo orquestrador/);
+  });
+
+  test('registro-executor-invalido-lanca: executor fora da forma não vira linha calada', () => {
+    const ruim = ev('gm20d', 1, 'task.iniciada', { task: 'T44', papel: 'implementador', executor: 'outro', motivo: 'm' }, t(32));
+    assert.throws(() => montarRegistro('GM-20', [APROVA, ruim], SHA));
+  });
+});

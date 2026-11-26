@@ -361,7 +361,7 @@ function linhaAgente(a              , larga         , nw        , vw        , mw
 // ───────────────────────────── GM-15 T32 (REQ-ENT-2 emenda 4, D-G3): visão de PROJETO, acima da visão de entrega ─────────────────────────────
 //
 // O núcleo é `projeto.ts` (T31, puro); a borda (`painel.mjs`) lê todas as worktrees e cola `estado.projeto`. Aqui só se DESENHA. Aparece com 2 ou mais PBIs/entregas
-// (com 1 só, a visão de entrega já é o projeto). ≥ 72 colunas: totais em 2 ou 3 linhas (contagens · previsão medida · previsão estimada) + 1 linha por PBI; abaixo, 1 linha de totais (D-P8: a visão de entrega
+// (com 1 só, a visão de entrega já é o projeto). ≥ 72 colunas: totais em 2 linhas (contagens · previsão: medida e estimada na mesma linha, GM-20 DT13) + 1 linha por PBI; abaixo, 1 linha de totais (D-P8: a visão de entrega
 // mantém a prioridade dela, o projeto é o 1º a encolher); < 44, só a contagem. Número nunca cortado: o que cede é o título; a linha cortada termina em "…".
 // PBI sem plano: "sem plano", nunca 0 % (o total diz quantos ficam fora da conta). Previsão: "(medida)" = ritmo medido (T30) só do que tem plano;
 // a parte dos PBIs sem plano vem com "~" e "estimadas" (emenda 19 p.5, D-G13), nunca somada ao %.
@@ -373,6 +373,8 @@ const motivoEm = (w        ) => (m        )         => (w >= 100 ? ` (${m})` : '
 const LARGURA_PROJETO_LINHAS = 72;
 
 /** Prioridade de corte (D-P8, REQ-PRJ-3 h): totais 6.94, "✓ N feitos" e cabeçalhos de Epic 6.95, linhas de PBI 6.96 (o projeto é o 1º a encolher; as linhas de PBI saem antes). */
+/** GM-20 DT14: separadores entre seções, reservados antes do corte; saem depois das linhas do projeto (6.94 a 6.96). */
+export const PRIORIDADE_SEPARADOR = 6.93;
 export const PRIORIDADE_PROJETO = { totais: 6.94, feitosECabecalhos: 6.95, pbi: 6.96 }         ;
 
 /** `estado.projeto` válido e com `linhas + opções` >= 2 (REQ-PRJ-3 g; sem a chave `opcoes` é 0 ⇒ a regra de hoje); senão `null` (nada desenhado). */
@@ -390,12 +392,15 @@ function linhasDoProjeto(p               , w        , mot                       
   const tt = p.totais;
   const feitos = ouInterroga(tt.feitos);
   const total = ouInterroga(tt.pbis);
-  const pctN = nn(tt.pct);
+  const pctN = nn(tt.pctComEstimadas ?? tt.pct);
   const pct = pctN === null ? '?' : `${Math.round(pctN)}%`;
   const fora = inteiroNaoNeg(tt.foraDaConta) ?? 0;
   const med = tt.previsao?.medida ?? null;
   const est = tt.previsao?.estimada ?? null;
   const opcoes = inteiroNaoNeg(tt.opcoes) ?? 0;
+  // GM-20 DT5: cards terminais (Superado, Cancelado…) só aparecem como contagem; ausente (render antigo) ⇒ nada
+  const nEnc = inteiroNaoNeg(tt.terminais) ?? 0;
+  const enc = nEnc > 0 ? ` · ${nEnc} ${nEnc === 1 ? 'encerrado' : 'encerrados'} sem entrega` : '';
   if (w < 44) return { totais: [[seg(`PBIs ${feitos}/${total} · ${pct}`)]], corpo: [] };
   if (w < LARGURA_PROJETO_LINHAS) {
     const prev = est !== null ? `~${t(est.hora)} estimada` : med !== null ? `${t(med.hora)} medida` : '?';
@@ -403,7 +408,7 @@ function linhasDoProjeto(p               , w        , mot                       
     const curta = `PROJETO ${feitos}/${total} PBIs · ${pct} · ${prev}`;
     const opc = opcoes > 0 ? ` · ${textoOpcoes(opcoes)}` : '';
     const semPlano = fora > 0 ? ` · ${fora} sem plano` : '';
-    const vs = [`${curta}${semPlano}${opc}`, `${curta}${opc}`, curta];
+    const vs = [`${curta}${semPlano}${opc}${enc}`, `${curta}${semPlano}${opc}`, `${curta}${opc}`, curta];
     return { totais: [[seg(vs.find((v) => colunas(v) <= w) ?? vs[vs.length - 1])]], corpo: [] };
   }
   // linha 1: contagens (o número nunca é cortado: o que não cabe em `w` sai por variantes mais curtas, a mais longa primeiro)
@@ -412,18 +417,32 @@ function linhasDoProjeto(p               , w        , mot                       
   const base = `PROJETO  ${feitos} de ${total} PBIs feitos · ${tasks}`;
   const opc = opcoes > 0 ? ` · ${textoOpcoes(opcoes)}` : '';
   const variantes = [
+    `${base} · ${ouInterroga(tt.restantes)} restantes${fora > 0 ? ` · ${fora} sem plano, fora da conta` : ''}${opc}${enc}`,
+    `${base} · ${ouInterroga(tt.restantes)} restantes${fora > 0 ? ` · ${fora} sem plano` : ''}${opc}${enc}`,
     `${base} · ${ouInterroga(tt.restantes)} restantes${fora > 0 ? ` · ${fora} sem plano, fora da conta` : ''}${opc}`,
     `${base} · ${ouInterroga(tt.restantes)} restantes${fora > 0 ? ` · ${fora} sem plano` : ''}${opc}`,
     `${base}${fora > 0 ? ` · ${fora} sem plano` : ''}${opc}`,
     `${base}${opc}`,
     base,
+    // última: "+N estimadas" some inteiro com o rótulo (REQ-PCT-2: nunca cortado por caractere)
+    `PROJETO  ${feitos} de ${total} PBIs feitos · ${pct} das tasks (${ouInterroga(tt.integradas)} de ${ouInterroga(tt.tasks)})`,
   ];
   const l1 = variantes.find((v) => colunas(v) <= w) ?? variantes[variantes.length - 1];
-  // linha 2: a previsão medida (a); linha 3: a parte dos PBIs sem plano, estimada (b), com "~"
+  // linha 2 (GM-20 DT13): UMA linha de previsão. Medida + estimada: as duas horas, e o que não cabe sai por variantes
+  // (primeiro o parêntese com os números, depois a 2ª parte); a hora nunca é cortada. Sem estimada, o texto de sempre.
+  const prevMedida = med !== null ? `  previsão ${t(med.hora)} (medida)` : `  previsão ?${mot(tt.previsao?.ritmoS === null || tt.previsao?.ritmoS === undefined ? 'sem ritmo medido' : 'sem fonte')}`;
+  let prevLinha = prevMedida;
+  if (med !== null && est !== null) {
+    const nTasks = inteiroNaoNeg(Math.round(Number(est.tasks)));
+    const nPbis = inteiroNaoNeg(est.pbisSemPlano);
+    const dois = `  previsão com plano ${t(med.hora)} · com estimativa do resto ~${t(est.hora)}`;
+    const paren = nTasks !== null && nPbis !== null ? ` (~${nTasks} tasks em ${nPbis} PBIs sem medida)` : '';
+    const vs2 = [`${dois}${paren}`, dois, prevMedida];
+    prevLinha = vs2.find((v) => colunas(v) <= w) ?? prevMedida;
+  }
   const totais          = [
     [seg(l1)],
-    [seg(med !== null ? `  previsão ${t(med.hora)} (medida)` : `  previsão ?${mot(tt.previsao?.ritmoS === null || tt.previsao?.ritmoS === undefined ? 'sem ritmo medido' : 'sem fonte')}`, 'inactive')],
-    ...(est !== null ? [[seg(`  ${t(est.texto)}`, 'inactive')]         ] : []),
+    [seg(prevLinha, 'inactive')],
   ];
   const todas = p.linhas.filter((l)                    => l !== null && typeof l === 'object' && typeof l.id === 'string');
   // REQ-PRJ-3 (a): os feitos saem do desenho e entram numa linha só, logo abaixo dos totais; o núcleo segue com as linhas deles
@@ -431,6 +450,20 @@ function linhasDoProjeto(p               , w        , mot                       
   const ls = todas.filter((l) => l.feito !== true);
   const corpo                 = [];
   if (nFeitos > 0) corpo.push({ l: [seg('  '), seg('✓', 'success'), seg(` ${nFeitos} ${nFeitos === 1 ? 'feito' : 'feitos'}`, 'inactive')], prioridade: PRIORIDADE_PROJETO.feitosECabecalhos });
+  // REQ-CRD-1: o feito cujo card ficou aberto ganha 1 linha logo abaixo; o sufixo é o 1º a sair (antes do título e do id), nunca cortado por caractere
+  for (const l of todas) {
+    if (l.feito !== true || typeof l.cardDesatualizado !== 'string') continue;
+    const id = t(l.id);
+    const tit = cortar(natural(l.titulo), 40);
+    const base = `  ✓ ${id}`;
+    const comTit = tit === '' ? base : `${base}  ${tit}`;
+    const sufixo = '  (card desatualizado)';
+    const titCurto = tit === '' || w - colunas(`${base}  `) < 4 ? base : `${base}  ${cortar(tit, w - colunas(`${base}  `))}`;
+    const v = [`${comTit}${sufixo}`, comTit, titCurto, base].find((x) => colunas(x) <= w) ?? base;
+    const sufixado = v.endsWith(sufixo);
+    const corpoTxt = sufixado ? v.slice(0, v.length - sufixo.length) : v;
+    corpo.push({ l: [seg('  '), seg('✓', 'success'), seg(corpoTxt.slice(3), 'inactive'), ...(sufixado ? [seg(sufixo, 'warning')] : [])], prioridade: PRIORIDADE_PROJETO.feitosECabecalhos });
+  }
   // REQ-PRJ-3 (c): cabeçalho de Epic só com 2 grupos ou mais (o núcleo só preenche `grupos` assim); os PBIs do grupo recuados embaixo
   const grupos = Array.isArray(p.grupos) ? p.grupos.filter((g) => g !== null && typeof g === 'object' && Array.isArray(g.ids)) : [];
   const agrupado = grupos.length >= 2;
@@ -1126,9 +1159,23 @@ export function renderBlocos(e              , o              )          {
   const reserva               = dec === null || dec === undefined || typeof dec !== 'object' ? null : linhaReserva(dec, quemTexto, w);
   if (reserva !== null) secao.set(reserva, 4);
 
+  // GM-20 DT14 (REQ-SEP-1): os separadores entre seções entram em `ls` ANTES do corte, com prioridade 6.93 (depois das linhas do projeto, 6.94 a 6.96; antes de tudo o mais);
+  // antes só usavam as sobras do orçamento e um projeto grande os zerava (M15). `minima` (< 44 colunas) segue sem separador.
+  const seps = new Set       ();
+  if (!minima) {
+    const ord = [...ls].sort((x, y) => x.ordem - y.ordem);
+    let ant = -1;
+    let viu = false;
+    const visita = (sec        , ordemDe        )       => {
+      if (viu && sec !== ant) { const sp = separador(w); seps.add(sp); ls.push({ prioridade: PRIORIDADE_SEPARADOR, ordem: ordemDe - 0.5, l: sp }); }
+      ant = sec; viu = true;
+    };
+    for (const x of ord) visita(secao.get(x.l) ?? ant, x.ordem);
+  }
+
   // corte por orçamento (REQ-GLB-1): `orcamento`, senão `altura`; sem os dois, sem corte
   const orc = alturaValida(o.orcamento) ?? alturaValida(o.altura);
-  let cortado                                            = orc === undefined ? { linhas: ls.map((x) => x.l), cortadasTopo: 0 } : cortarComReserva(ls, orc, reserva, daDecisao);
+  let cortado                                            = orc === undefined ? { linhas: [...ls].sort((x, y) => x.ordem - y.ordem).map((x) => x.l), cortadasTopo: 0 } : cortarComReserva(ls, orc, reserva, daDecisao);
   // Linha-resumo (T42, emenda 37): só quando há reserva da Sombra, ela NÃO coube e compactar o AGORA (agentes) em 1 linha a faz caber.
   if (orc !== undefined && reserva !== null && !cortado.linhas.includes(reserva) && nVivos >= 1 && agoraAgentes.length >= 2) {
     const recente = ls.filter((x) => x.prioridade === 5).map((x) => x.l);
@@ -1176,13 +1223,19 @@ export function renderBlocos(e              , o              )          {
     return { orig: l, l: [...base, ...(folga ? [seg('…', 'warning')] : []), ...(mais2 !== '' ? [seg(mais2, 'warning')] : [])] };
   });
 
-  // separadores do E4 entre seções, só nas linhas que sobram do orçamento (cortados primeiro, como no E4); < 44 colunas não tem
-  let livres = orc === undefined ? Number.POSITIVE_INFINITY : orc - desenhadas.length;
+  // separadores que sobreviveram ao corte: só entre 2 linhas de texto de seções diferentes, 1 por vão (nunca no topo, no fim nem dobrado); só reduz, nunca passa do orçamento
   const saida          = [];
   let anterior = -1;
+  let vaoComSep = false;
+  const reais = desenhadas.filter((d) => !seps.has(d.orig)).length;
+  let vistas = 0;
   for (const d of desenhadas) {
+    if (seps.has(d.orig)) { vaoComSep = true; continue; }
+    vistas++;
     const s = secao.get(d.orig) ?? anterior;
-    if (!minima && saida.length > 0 && s !== anterior && livres > 0) { saida.push(separador(w)); livres--; }
+    // a reserva da Sombra não está em `ls` (entra no corte): seu separador só vem se sobrar linha do orçamento, como antes
+    if (saida.length > 0 && s !== anterior && (vaoComSep || (d.orig === reserva && orc !== undefined && saida.length + 1 + (reais - vistas + 1) <= orc))) saida.push(separador(w));
+    vaoComSep = false;
     saida.push(d.l);
     anterior = s;
   }

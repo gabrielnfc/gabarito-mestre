@@ -42,10 +42,11 @@ import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  cardDe, colunasFl1, ehColunaFl1, ehFeito, planoMdDoCard, projetarProjeto, ROTULO_FASE_NAO_MEDIDA, ROTULO_FORA_DO_LOOP, rotuloAgente, rotuloFase, tasksDoPlanoMd, worktreesDe,
+  cardDe, cardDesatualizado, colunasFl1, ehColunaFl1, ehFeito, ehTerminal, planoMdDoCard, projetarProjeto, padraoLegadoValido, planoLegadoDe, ROTULO_FASE_NAO_MEDIDA, ROTULO_FORA_DO_LOOP, rotuloAgente, rotuloFase, tasksDoPlanoMd, terminaisValidos, worktreesDe,
 } from '../src/projeto.ts';
 import type { ArvoreLida, EstadoProjeto, LinhaProjeto } from '../src/projeto.ts';
 import type { Evento } from '../src/tipos.ts';
+import { arvore as arvoreAdotado } from './painel-fixtures/adotado.mjs';
 
 const FIX = join(dirname(fileURLToPath(import.meta.url)), 'fixtures', 'projeto');
 const AGORA = Date.parse('2026-11-10T15:00:00.000Z');
@@ -101,13 +102,13 @@ test('projeto-n-pbis-feitas-total: uma linha por PBI, feitos pelo card, cortada 
   assert.deepEqual(linha(e, 'PBI-4').tasks, { total: 3, integradas: 2, estimadas: 0, restantes: 1, fora: 1 });
   assert.equal(linha(e, 'PBI-4').pct, 67);
   assert.equal(linha(e, 'PBI-4').feito, false);
-  // totais: PBI-1 (feito, 3 estimadas) + PBI-2 (1 de 3) + PBI-4 (2 de 3): 3 medidas + 3 estimadas de 9
-  assert.equal(e.totais.tasks, 9);
+  // totais (GM-20 D-G42): PBI-1 (feito, plano .md, 3 estimadas) sai das duas pontas; sobram PBI-2 (1 de 3) + PBI-4 (2 de 3): 3 medidas de 6
+  assert.equal(e.totais.tasks, 6);
   assert.equal(e.totais.integradas, 3);
-  assert.equal(e.totais.estimadas, 3);
+  assert.equal(e.totais.estimadas, 0);
   assert.equal(e.totais.restantes, 3);
-  assert.equal(e.totais.pct, 33);
-  assert.equal(e.totais.pctComEstimadas, 67);
+  assert.equal(e.totais.pct, 50);
+  assert.equal(e.totais.pctComEstimadas, 50);
 });
 
 test('concluido-sem-diario-e-estimado: tasks de PBI concluído sem registro no diário são estimadas e sinalizadas, nunca integradas medidas', () => {
@@ -342,7 +343,7 @@ test('feito-sem-plano-e-diario-ilegivel: PBI feito sem plano não entra na estim
   arvores[1].entregas.push({ id: 'PBI-3', plano: null, eventos: null });
   const r = projetarProjeto(arvores, OPC);
   assert.equal(linha(r, 'PBI-9').texto, 'feito, sem plano');
-  assert.equal(r.totais.foraDaConta, e.totais.foraDaConta + 1);
+  assert.equal(r.totais.foraDaConta, e.totais.foraDaConta, 'GM-20 REQ-PCT-3: o feito sem plano (PBI-9) não entra em foraDaConta, só os abertos');
   assert.equal(r.totais.previsao.estimada?.pbisSemPlano, 3, 'o feito sem plano não é trabalho a estimar');
   assert.deepEqual(r.avisos, ['PBI-3: diário ilegível em /FIX/wt-pbi-2']);
 });
@@ -364,10 +365,10 @@ test('plano-vigente-e-o-de-commit-mais-recente: entre worktrees vale o plano.jso
 test('pbi-sem-plano-fora-do-pct: as tasks estimadas dos PBIs sem plano não entram no % nem no total de tasks', () => {
   const e = projetoCompleto();
   assert.ok(e.totais.previsao.estimada !== null); // há estimativa (3 PBIs sem plano)…
-  assert.equal(e.totais.tasks, 9); // …mas o % é só dos PBIs com plano
+  assert.equal(e.totais.tasks, 6); // …mas o % é só dos PBIs com plano (GM-20: o .md concluído de PBI-1 também sai)
   assert.equal(e.totais.restantes, 3);
-  assert.equal(e.totais.pct, 33);
-  assert.equal(e.totais.pctComEstimadas, 67);
+  assert.equal(e.totais.pct, 50);
+  assert.equal(e.totais.pctComEstimadas, 50);
 });
 
 test('previsao-estima-pbi-sem-plano-com-til: tasks estimadas = mediana × PBIs sem plano não concluídos; número com "~" e rotulado estimado', () => {
@@ -648,4 +649,249 @@ test('epic-e-feito-entre-arvores: vale o card mais novo (Epic e status); diário
   assert.equal(f.linhas[0].feito, true);
   assert.equal(f.totais.feitos, 1);
   assert.ok(f.avisos.some((a) => /PBI-3.*ilegível.*\/b/.test(a)));
+});
+
+// ───────────────────────────── GM-20 T1 (D-G42, DT1, DT2): % do projeto sem misturar denominadores. Fixture comum: painel-fixtures/adotado.mjs
+// Mutações: MP1-a voltar a somar o .md concluído nos totais ⇒ tasks 11 em vez de 8 (pct-concluido-sem-plano-json-fora-das-duas-pontas);
+//           MP3-a tirar `&& !feito` de foraDaConta ⇒ sem-plano-conta-so-abertos.
+
+/** A fixture adotada MAIS um PBI concluído com `plano.json` (2 tasks) e sem registro no diário: o caminho das estimadas (spec REQ-PCT-1, 2º Dado). */
+function adotadoComEstimadas(): ArvoreLida {
+  const a = arvoreAdotado() as ArvoreLida;
+  a.cards.push({ arquivo: 'PBI-11.md', texto: '---\nid: "PBI-11"\ntipo: US\nstatus: Concluído\natualizadoEm: "2026-11-06"\n---\n# Concluído com plano.json\n', planoMd: null });
+  a.entregas.push({ id: 'PBI-11', plano: { ok: true, bruto: { entrega: 'PBI-11', tasks: [{ id: 'T1', deps: [], arquivos: [] }, { id: 'T2', deps: [], arquivos: [] }] } }, eventos: [] });
+  return a;
+}
+
+test('pct-concluido-sem-plano-json-fora-das-duas-pontas: concluído com plano .md fica fora de tasks, integradas e estimadas; a linha dele segue igual', () => {
+  const e = projetarProjeto([arvoreAdotado() as ArvoreLida], OPC);
+  const t = e.totais;
+  assert.equal(t.tasks, 8, 'PBI-5 (4) + PBI-7 (2) + PBI-8 (2); os 3 do .md concluído de PBI-2 saem');
+  assert.equal(t.integradas, 6);
+  assert.equal(t.estimadas, 0);
+  assert.equal(t.restantes, 2);
+  assert.equal(t.pct, 75);
+  assert.equal(t.pctComEstimadas, 75);
+  const l2 = e.linhas.find((l) => l.id === 'PBI-2') as LinhaProjeto;
+  assert.equal(l2.texto, 'feito (3 tasks estimadas)');
+  assert.equal(l2.plano, 'md');
+  assert.deepEqual(l2.tasks, { total: 3, integradas: 0, estimadas: 3, restantes: 0, fora: 0 });
+  // concluído com plano.json sem registro no diário continua estimado (o caminho de hoje)
+  const c = projetarProjeto([adotadoComEstimadas()], OPC).totais;
+  assert.equal(c.tasks, 10);
+  assert.equal(c.integradas, 6);
+  assert.equal(c.estimadas, 2);
+  assert.equal(c.pct, 60);
+  assert.equal(c.pctComEstimadas, 80);
+  // PBI-7 (concluído, plano.json, diário completo) segue medido
+  assert.deepEqual((e.linhas.find((l) => l.id === 'PBI-7') as LinhaProjeto).tasks, { total: 2, integradas: 2, estimadas: 0, restantes: 0, fora: 0 });
+  // a previsão não muda com o .md concluído: restantes 2 (só as tasks abertas)
+  assert.equal(t.restantes, e.linhas.reduce((n, l) => n + (l.feito ? 0 : (l.tasks?.restantes ?? 0)), 0));
+});
+
+test('sem-plano-conta-so-abertos: foraDaConta são os abertos sem plano; os feitos sem plano saem dela; os terminais (PBI-4, PBI-10) nem são linha (T2)', () => {
+  const e = projetarProjeto([arvoreAdotado() as ArvoreLida], OPC);
+  const semPlano = e.linhas.filter((l) => l.semPlano);
+  assert.deepEqual(semPlano.filter((l) => l.feito).map((l) => l.id), ['PBI-1', 'PBI-3'], 'a fixture tem 2 feitos sem plano');
+  assert.deepEqual(semPlano.filter((l) => !l.feito).map((l) => l.id), ['PBI-6'], 'PBI-9 é plano no formato anterior (GM-20 T3), não sem plano');
+  assert.equal(e.totais.foraDaConta, 1);
+  assert.equal(e.totais.feitos, 4);
+  assert.equal(e.totais.pbis, 8);
+});
+
+// ───────────────────────────── GM-20 T2 (DT5, REQ-TER-1/2, M8, M9): status terminal fora das contas. Fixture comum: painel-fixtures/adotado.mjs
+// Mutações: MT1-a tirar o `continue` ⇒ status-terminal-fora · MT1-b testar a opção antes do terminal ⇒ status-terminal-fora · MT1-c terminal vence a medição ⇒ status-terminal-fora
+//           MT2-a mesclar a config com o padrão ⇒ status-terminal-config · MT2-b igualdade exata em vez do 1º termo ⇒ status-terminal-config · MT2-c prefixo sem fronteira ⇒ status-terminal-config
+
+const TOT_SEM_TERMINAIS = (a: ArvoreLida, opc: Record<string, unknown> = {}) => projetarProjeto([a], { ...OPC, ...opc });
+const semCards = (a: ArvoreLida, ids: string[]): ArvoreLida => ({ ...a, cards: a.cards.filter((c) => !ids.some((i) => c.arquivo === `${i}.md`)) });
+const evT = (seq: number, tipo: string, dados: Record<string, unknown>) => ({ seq, sessao: 's', hash_anterior: null, ts: `2026-11-09T10:0${seq}:00.000Z`, autor: 'x', agente: 'orquestrador', tipo, dados });
+
+test('status-terminal-fora: Superado e Cancelado saem de linhas, pbis, %, restantes e previsão, com a chave de opções ligada ou não', () => {
+  for (const opcoesComoContagem of [false, true]) {
+    const e = TOT_SEM_TERMINAIS(arvoreAdotado() as ArvoreLida, { opcoesComoContagem });
+    assert.equal(e.totais.pbis, 8, `opcoes=${opcoesComoContagem}`);
+    assert.equal(e.totais.terminais, 2, `opcoes=${opcoesComoContagem}`);
+    assert.equal(e.totais.opcoes, 0, 'terminal nunca é "opção" (M9)');
+    assert.deepEqual(e.linhas.filter((l) => l.id === 'PBI-4' || l.id === 'PBI-10'), []);
+    // igual a um projeto em que os 2 cards nem existem: % , restantes, previsão e foraDaConta não mudam
+    const sem = TOT_SEM_TERMINAIS(semCards(arvoreAdotado() as ArvoreLida, ['PBI-4', 'PBI-10']), { opcoesComoContagem });
+    assert.deepEqual({ ...e.totais, terminais: 0 }, sem.totais);
+    assert.deepEqual(e.linhas, sem.linhas);
+  }
+  // o card que sai do terminal volta às contas pela regra comum (aberto sem plano), e o diário não o põe nem o tira
+  const a = arvoreAdotado() as ArvoreLida;
+  a.cards = a.cards.map((c) => (c.arquivo === 'PBI-4.md' ? { ...c, texto: c.texto.replace('Superado — dividido em PBI-5 e PBI-6', 'Em execução') } : c));
+  const volta = projetarProjeto([a], OPC);
+  assert.equal(volta.totais.pbis, 9);
+  assert.equal(volta.totais.terminais, 1);
+  assert.equal(volta.linhas.find((l) => l.id === 'PBI-4')?.texto, 'sem plano');
+  const b = arvoreAdotado() as ArvoreLida;
+  b.entregas.push({ id: 'PBI-10', plano: null, eventos: [evT(1, 'entrega.encerrada', { entrega: 'PBI-10', pr: 10, via: 'head' }), evT(2, 'entrega.reaberta', { entrega: 'PBI-10' })] });
+  assert.equal(projetarProjeto([b], OPC).totais.terminais, 2, 'entrega.encerrada/reaberta não tiram do terminal');
+});
+
+test('status-terminal-fora: terminal com plano.json ou evento de task segue linha e avisa; só avisa quando medido', () => {
+  for (const medicao of ['plano', 'task'] as const) {
+    const a = arvoreAdotado() as ArvoreLida;
+    const ent = medicao === 'plano'
+      ? { id: 'PBI-4', plano: { ok: true as const, bruto: { entrega: 'PBI-4', tasks: [{ id: 'T1', deps: [], arquivos: [] }] } }, eventos: [] }
+      : { id: 'PBI-4', plano: null, eventos: [evT(1, 'task.iniciada', { task: 'T1', papel: 'implementador' })] };
+    a.entregas.push(ent as ArvoreLida['entregas'][number]);
+    for (const opcoesComoContagem of [false, true]) {
+      const e = projetarProjeto([a], { ...OPC, opcoesComoContagem });
+      assert.ok(e.linhas.some((l) => l.id === 'PBI-4'), `${medicao}: segue linha`);
+      assert.equal(e.totais.terminais, 1, `${medicao}: só o PBI-10 fica de fora`);
+      assert.equal(e.totais.pbis, 9);
+      assert.deepEqual(e.avisos.filter((x) => /terminal/.test(x)), ['PBI-4: status terminal com trabalho medido']);
+    }
+  }
+  const sem = projetarProjeto([arvoreAdotado() as ArvoreLida], OPC).avisos;
+  assert.deepEqual(sem.filter((x) => /terminal/.test(x)), [], 'sem medição não avisa');
+});
+
+test('status-terminal-config: a lista da config SUBSTITUI o padrão; inválida cai no padrão; casa o 1º termo, sem acento, caixa nem espaços', () => {
+  const a = arvoreAdotado() as ArvoreLida;
+  const so = projetarProjeto([a], { ...OPC, terminais: ['Arquivado'] });
+  assert.equal(so.totais.terminais, 0, 'Superado e Cancelado voltam a ser abertos');
+  assert.equal(so.totais.pbis, 10);
+  const cancel = projetarProjeto([a], { ...OPC, terminais: ['cancelado'] });
+  assert.equal(cancel.totais.terminais, 1);
+  assert.ok(cancel.linhas.some((l) => l.id === 'PBI-4') && !cancel.linhas.some((l) => l.id === 'PBI-10'));
+  assert.equal(projetarProjeto([a], { ...OPC, terminais: [] }).totais.terminais, 0, 'lista vazia vale e não deixa nada terminal');
+  for (const ruim of ['Superado', 7, null, { a: 1 }, [1], ['ok', ''], ['  ']]) {
+    assert.equal(projetarProjeto([a], { ...OPC, terminais: ruim }).totais.terminais, 2, `inválida ${JSON.stringify(ruim)} ⇒ padrão`);
+    assert.equal(terminaisValidos(ruim), null);
+  }
+  assert.deepEqual(terminaisValidos(['A', 'b']), ['A', 'b']);
+  for (const s of ['Superado', 'Superado (ver PBI-5)', 'superado: x', ' SUPERADO ', 'Superado — dividido', 'Superado – x', 'Superado - x', 'Cancelado', 'Descartado', 'Descartádo']) assert.equal(ehTerminal(s), true, s);
+  for (const s of ['Superadoria', 'Pré-superado', 'Em execução', 'Não superado', '', '   ', null, 'Superado—x']) assert.equal(ehTerminal(s), false, String(s));
+  assert.equal(ehTerminal('Arquivado: obsoleto', ['arquivado']), true);
+  assert.equal(ehTerminal('Superado', ['Arquivado']), false);
+  assert.equal(ehTerminal('Superado', 'inválido'), true, 'config inválida ⇒ padrão');
+});
+
+// ───────────────────────────── GM-20 T3 (REQ-LEG-1/2/3, DT3, DT4): plano no formato anterior
+// Mutações: ML1-a tirar o fallback do padrão (campo `planoLegado` ignorado) · ML1-b padrão antes do ponteiro · ML2-a marcar `semPlano` no .md sem task
+//           ML2-b aceitar `## Task 1` sem separador (cai plano-md-nao-casa) · ML3-a aceitar `..` · ML3-b ligar o 1º do ambíguo (borda) · ML3-c `{PBI}` sem fronteira
+
+const CARD_LEG = (id: string, status: string, plano = 'a escrever'): string => `---\nid: "${id}"\nstatus: ${status}\natualizadoEm: "2026-11-02"\n---\n# Legado\nPlano: ${plano}.\n`;
+
+test('plano-legado-por-padrao: card sem ponteiro com planoLegado vira plano md; ponteiro vale mais; json vale mais', () => {
+  const md = '# P\n\n### Task 1: a\n\n### Task 2: b\n';
+  const outro = '### Task 1: x\n';
+  const leg = { caminho: 'docs/plans/2026-11-02-PBI-3-x.md', texto: md };
+  const sem = projetarProjeto([{ caminho: '/r', cards: [{ arquivo: 'PBI-3.md', texto: CARD_LEG('PBI-3', 'Concluído'), planoMd: null, planoLegado: leg }], entregas: [] }], OPC);
+  assert.equal(linha(sem, 'PBI-3').plano, 'md');
+  assert.equal(linha(sem, 'PBI-3').semPlano, false);
+  assert.deepEqual(linha(sem, 'PBI-3').tasks, { total: 2, integradas: 0, estimadas: 2, restantes: 0, fora: 0 });
+  // chave ausente: nada muda
+  const nada = projetarProjeto([{ caminho: '/r', cards: [{ arquivo: 'PBI-3.md', texto: CARD_LEG('PBI-3', 'Concluído'), planoMd: null }], entregas: [] }], OPC);
+  assert.equal(linha(nada, 'PBI-3').texto, 'feito, sem plano');
+  // ponteiro vence o padrão
+  const pont = projetarProjeto([{ caminho: '/r', cards: [{ arquivo: 'PBI-3.md', texto: CARD_LEG('PBI-3', 'Preparado', '`p.md`'), planoMd: outro, planoLegado: leg }], entregas: [] }], OPC);
+  assert.equal(linha(pont, 'PBI-3').tasks?.total, 1);
+  // ponteiro para arquivo ausente não cai no padrão
+  const aus = projetarProjeto([{ caminho: '/r', cards: [{ arquivo: 'PBI-3.md', texto: CARD_LEG('PBI-3', 'Preparado', '`p.md`'), planoMd: null, planoLegado: leg }], entregas: [] }], OPC);
+  assert.match(linha(aus, 'PBI-3').motivo ?? '', /não encontrado/);
+  // plano.json vence os dois
+  const js = projetarProjeto([{ caminho: '/r', cards: [{ arquivo: 'PBI-3.md', texto: CARD_LEG('PBI-3', 'Preparado'), planoMd: null, planoLegado: leg }],
+    entregas: [{ id: 'PBI-3', plano: { ok: true, bruto: { entrega: 'PBI-3', tasks: [{ id: 'T1', deps: [], arquivos: [] }] } }, eventos: [] }] }], OPC);
+  assert.equal(linha(js, 'PBI-3').plano, 'json');
+});
+
+test('plano-antigo-sem-task-rotulado: .md sem task contável diz "plano (formato anterior)", fora do % e da medida, dentro da estimada', () => {
+  const r = projetarProjeto([arvoreAdotado() as ArvoreLida], OPC);
+  const l = linha(r, 'PBI-9');
+  assert.equal(l.texto, 'plano (formato anterior)');
+  assert.equal(l.semPlano, false);
+  assert.equal(l.tasks, null);
+  assert.equal(l.plano, 'md');
+  assert.equal(l.motivo, null);
+  assert.equal(r.totais.tasks, 8, 'fora da conta do %');
+  assert.equal(r.totais.foraDaConta, 1, 'só PBI-6');
+  // aberto entra na estimada como hoje: PBI-6 + PBI-9
+  assert.equal(r.totais.previsao.estimada?.pbisSemPlano, 2);
+  // concluído com formato anterior
+  const f = projetarProjeto([{ caminho: '/r', cards: [{ arquivo: 'PBI-3.md', texto: CARD_LEG('PBI-3', 'Concluído', '`p.md`'), planoMd: '## Task 1\n' }], entregas: [] }], OPC);
+  assert.equal(linha(f, 'PBI-3').texto, 'feito, plano (formato anterior)');
+  assert.equal(f.totais.foraDaConta, 0);
+  // a regra (b) da GM-16 segue: "## Task 1" sem separador não conta task
+  assert.deepEqual(tasksDoPlanoMd('## Task 1\n'), []);
+});
+
+test('plano-legado-padrao-seguro: pura, cada condição do padrão e do casamento', () => {
+  const nomes = ['2026-11-02-PBI-1-a.md', '2026-11-02-PBI-10-b.md', 'x-PBI-2.md', 'x-PBI-2-y.md', 'notas.txt'];
+  assert.deepEqual(planoLegadoDe(nomes, 'docs/p/*-{PBI}-*.md', 'PBI-1'), ['2026-11-02-PBI-1-a.md'], '{PBI} com fronteira de dígito');
+  assert.deepEqual(planoLegadoDe(nomes, 'docs/p/*-{PBI}-*.md', 'PBI-10'), ['2026-11-02-PBI-10-b.md']);
+  assert.deepEqual(planoLegadoDe(['PBI-1-a.md', 'PBI-10-b.md', 'PBI-1.md'], 'd/{PBI}*.md', 'PBI-1'), ['PBI-1-a.md', 'PBI-1.md'], 'sem literal depois do {PBI}, só o (?!\\d) separa PBI-1 de PBI-10');
+  assert.deepEqual(planoLegadoDe(nomes, 'docs/p/*-{PBI}.md', 'PBI-2'), ['x-PBI-2.md'], 'fim do nome vale como não-dígito');
+  assert.deepEqual(planoLegadoDe(nomes, 'docs/p/x-{PBI}*', 'PBI-2'), ['x-PBI-2.md', 'x-PBI-2-y.md'], 'o núcleo devolve todos; a borda decide o ambíguo');
+  assert.deepEqual(planoLegadoDe(['a.b-PBI-1.md', 'aXb-PBI-1.md'], 'd/a.b-{PBI}.md', 'PBI-1'), ['a.b-PBI-1.md'], 'ponto literal');
+  for (const ruim of ['../p/*-{PBI}.md', 'docs/../p/{PBI}.md', '/abs/{PBI}.md', 'docs/**/{PBI}.md', 'docs/*/{PBI}.md', 'docs/p/', '', 42, null, './{PBI}.md', 'docs//{PBI}.md', 'docs/p/**.md', 'docs/p/a**{PBI}.md']) {
+    assert.equal(planoLegadoDe(nomes, ruim, 'PBI-1'), null, JSON.stringify(ruim));
+    assert.equal(padraoLegadoValido(ruim), null, JSON.stringify(ruim));
+  }
+  assert.deepEqual(padraoLegadoValido('docs/superpowers/plans/*-{PBI}-*.md'), { dir: 'docs/superpowers/plans', nome: '*-{PBI}-*.md' });
+  assert.deepEqual(padraoLegadoValido('{PBI}.md'), { dir: '', nome: '{PBI}.md' });
+});
+
+// ───────────────────────────── GM-20 T11 (REQ-CRD-1, D-G43, D-G46, M10): card desatualizado. O painel conta feito e avisa; nunca escreve no card.
+// MUTAÇÕES: MC1-a tirar o aviso ⇒ card-desatualizado-conta-feito-e-avisa; MC1-b só `!ehFeito` (sem `encerrada`) ⇒ PBI-8 avisa ⇒ cai;
+//           MC1-c ignorar `entrega.reaberta` ⇒ card-desatualizado-reaberta-nao-avisa; MC1-d (escrita no card) ⇒ card-desatualizado.test.mjs e herdar-nao-escreve-card.
+const AVISO_PBI7 = 'PBI-7: card "Em execução" desatualizado (entrega encerrada)';
+
+test('card-desatualizado-conta-feito-e-avisa: PBI-7 (card aberto + encerrada) é feito, leva o status e o aviso; PBI-8, card Concluído e sem card não avisam', () => {
+  const e = projetarProjeto([arvoreAdotado() as ArvoreLida], OPC);
+  const p7 = linha(e, 'PBI-7');
+  assert.equal(p7.feito, true, 'M10: já contava feito');
+  assert.equal(p7.cardDesatualizado, 'Em execução');
+  assert.ok(e.avisos.includes(AVISO_PBI7), e.avisos.join('|'));
+  const p8 = linha(e, 'PBI-8');
+  assert.equal(p8.feito, false);
+  assert.equal(p8.cardDesatualizado, null);
+  assert.ok(e.avisos.every((a) => !a.startsWith('PBI-8')), e.avisos.join('|'));
+  assert.equal(e.linhas.filter((l) => l.cardDesatualizado !== null).length, 1, 'só PBI-7 na fixture comum');
+  assert.equal(e.avisos.filter((a) => /desatualizado/.test(a)).length, 1);
+  // card já Concluído + encerrada: sem aviso; sem card (só diário) + encerrada: sem aviso
+  const a = arvoreAdotado() as ArvoreLida;
+  a.cards = a.cards.map((c) => (c.arquivo === 'PBI-7.md' ? { ...c, texto: c.texto.replace('status: Em execução', 'status: Concluído') } : c));
+  const concl = projetarProjeto([a], OPC);
+  assert.equal(linha(concl, 'PBI-7').cardDesatualizado, null);
+  assert.ok(concl.avisos.every((x) => !/desatualizado/.test(x)), concl.avisos.join('|'));
+  const b = arvoreAdotado() as ArvoreLida;
+  b.cards = b.cards.filter((c) => c.arquivo !== 'PBI-7.md');
+  const sem = projetarProjeto([b], OPC);
+  assert.equal(linha(sem, 'PBI-7').feito, true);
+  assert.equal(linha(sem, 'PBI-7').cardDesatualizado, null);
+  assert.ok(sem.avisos.every((x) => !/desatualizado/.test(x)), sem.avisos.join('|'));
+});
+
+test('card-desatualizado-reaberta-nao-avisa: entrega.reaberta depois da encerrada ⇒ nem feito nem aviso', () => {
+  const a = arvoreAdotado() as ArvoreLida;
+  const ent = a.entregas.find((x) => x.id === 'PBI-7');
+  assert.ok(ent !== undefined && ent.eventos !== null);
+  const ult = ent.eventos[ent.eventos.length - 1];
+  assert.equal(ult.tipo, 'entrega.encerrada', 'a fixture termina na encerrada');
+  ent.eventos.push({ ...ult, seq: ult.seq + 1, ts: new Date(Date.parse(String(ult.ts)) + 60_000).toISOString(), tipo: 'entrega.reaberta', dados: { entrega: 'PBI-7' } } as Evento);
+  const e = projetarProjeto([a], OPC);
+  assert.equal(linha(e, 'PBI-7').feito, false);
+  assert.equal(linha(e, 'PBI-7').cardDesatualizado, null);
+  assert.ok(e.avisos.every((x) => !/desatualizado/.test(x)), e.avisos.join('|'));
+});
+
+test('card-desatualizado-regra: cada condição da função (card, encerrada, !ehFeito, reaberta) sozinha derruba o resultado', () => {
+  const ev = (seq: number, tipo: string): Evento => ({ seq, ts: `2026-11-10T10:0${seq}:00.000Z`, autor: 'a', sessao: 's', agente: 'orquestrador', tipo, dados: {}, hash_anterior: null }) as Evento;
+  const card = (status: string | null) => ({ id: 'X-1', status, titulo: null, atualizadoEm: null, planoMd: null, epic: null });
+  const enc = [ev(1, 'entrega.encerrada')];
+  assert.equal(cardDesatualizado(card('Em execução'), enc, undefined), true);
+  assert.equal(cardDesatualizado(card(null), enc, undefined), true, 'card sem status também está aberto');
+  assert.equal(cardDesatualizado(null, enc, undefined), false, 'sem card');
+  assert.equal(cardDesatualizado(card('Em execução'), [], undefined), false, 'sem encerrada (só !ehFeito)');
+  assert.equal(cardDesatualizado(card('Em execução'), [ev(1, 'ci.resultado')], undefined), false);
+  assert.equal(cardDesatualizado(card('Concluído'), enc, undefined), false, 'já feito');
+  assert.equal(cardDesatualizado(card('Done'), enc, { concluido: 'Done' }), false, 'feito pela config');
+  assert.equal(cardDesatualizado(card('Done'), enc, undefined), true, 'sem a config, Done é aberto');
+  assert.equal(cardDesatualizado(card('Em execução'), [...enc, ev(2, 'entrega.reaberta')], undefined), false, 'reaberta depois');
+  assert.equal(cardDesatualizado(card('Em execução'), [...enc, ev(2, 'entrega.reaberta'), ev(3, 'entrega.encerrada')], undefined), true, 'encerrada de novo');
 });

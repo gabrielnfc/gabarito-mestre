@@ -353,6 +353,9 @@ Uma coluna só existe quando representa uma espera ou uma decisão real, e cada 
 - Com `painel.projeto.opcoesComoContagem: true` (padrão: desligado; só o booleano `true` liga), um card com status fora das colunas do quadro é **opção**: não vira linha do projeto e aparece no total como "N opções". (a) `gates/src/projeto.ts:241` e `:274`; `gates/scripts/painel.mjs:382`; `gates/src/painel-esquadrao.ts:467-468`.
 - A medição vence o card: se o PBI já tem `plano.json` ou evento de task na entrega, ele continua sendo linha, mesmo com status fora das colunas; diário ilegível também conta como medição. (a) `gates/src/projeto.ts:272-274` (diário ilegível: `:273`).
 - O aviso do doctor sobre esses cards vale SEMPRE, com a chave ligada ou desligada; desligada, ele só acrescenta a dica de ligar a chave. (a) `gates/scripts/harness-doctor.mjs:921-925`.
+- `fluxo.planosLegados` (padrão ou lista) liga um plano antigo ao PBI que não tem ponteiro `Plano:` no card nem `plano.json`: pasta literal e nome com `{PBI}` e `*` (só no nome; `..`, caminho absoluto, `**` e `{PBI}` na pasta são inválidos). Dois arquivos para o mesmo PBI é ambíguo: aviso e não liga. O `herdar` oferece `docs/superpowers/plans/*-{PBI}-*.md` e `docs/plans/*-{PBI}-*.md`, o 1º que casa ao menos 1 PBI. (a) `gates/src/projeto.ts:118-135`; `gates/scripts/onboarding-herdar.mjs`.
+- `fluxo.status.terminais` (lista de textos) diz quais status são de card encerrado sem entrega (padrão: Superado, Cancelado, Descartado; a lista da config substitui, não soma). Card terminal sem medição sai das linhas, do % e da previsão e entra como "N encerrados". (a) `gates/src/projeto.ts:248-266`.
+- `onboarding.mjs herdar` só lê; `herdar --gravar --planos-legados "<p>" --terminais "A,B" [--dry-run]` grava só essas 2 chaves pelo escritor do `gravar`. Nenhum card é escrito: o card desatualizado só é listado (D-G46). (a) `gates/scripts/onboarding-herdar.mjs`.
 
 ### 4.4 As cinco regras de movimentação
 
