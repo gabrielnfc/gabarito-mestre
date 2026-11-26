@@ -25,6 +25,8 @@
  *  M-url  gh aceitar URL / owner/repo#n (não só número puro) ⇒ `publicar-familia-gh-alvo` falha
  *  M-flag gh aceitar flag fora da lista fechada ⇒ `publicar-familia-gh-flags` falha
  *  MR2    `publicar = true` no push implícito ⇒ `publicar-push-implicito-flag-fora` falha
+ *  MOID   tirar a recusa do OID nulo no refspec ⇒ `publicar-oid-nulo` falha (40 e 64 zeros: o git trata origem nula como DELEÇÃO da ref remota); aceitar só 40 zeros ⇒ o caso de 64 falha
+ *  EQUIV  `publicar: false` no retorno do anel (classificar-alvo.ts) e `&& escolhido.ambiente === 'prod'` em `p.publicar`: EQUIVALENTES. Não existe comando de 1 segmento que seja anel e passe o portão positivo (testado: `.harness/PAUSAR:main`, `harness.config.json:main` não são anel), e `publicar` só liga junto com um candidato prod. O `false` do anel é cinto de segurança; `publicar-anel` (2 segmentos) é barrado pelo portão de 1 segmento
  *  MR3    ignorar global do git antes do push, ou `-R`/`--repo` no gh ⇒ `publicar-outro-repo` falha
  */
 import { test, describe } from 'node:test';
@@ -190,6 +192,18 @@ describe('classificar-publicar-formas', () => {
       assert.equal(bash(`gh pr merge 5 ${f}`, 'main').publicar, false, f);
     }
     assert.equal(bash('gh pr merge 5 6', 'main').publicar, false);
+  });
+
+  test('publicar-oid-nulo: origem de refspec só de zeros é deleção, não publicar', () => {
+    for (const z of ['0000', '0'.repeat(40), '0'.repeat(64)]) {
+      for (const [dest, branch] of [['main', 'feat/x'], ['main', 'main'], ['refs/heads/main', 'feat/x']]) {
+        const c = bash(`git push origin ${z}:${dest}`, branch);
+        assert.equal(c.publicar, false, `${z}:${dest}`);
+        assert.equal(c.destrutivo, true, `${z}:${dest}`);
+      }
+    }
+    for (const r of ['HEAD:main', 'main:main', 'feat/x:main', 'a1b2c3d4e5f60718293a4b5c6d7e8f9012345678:main', '0abc:main'])
+      assert.equal(bash(`git push origin ${r}`).publicar, true, r);
   });
 
   test('publicar-negativos', () => {

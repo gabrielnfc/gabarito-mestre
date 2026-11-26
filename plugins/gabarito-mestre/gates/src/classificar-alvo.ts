@@ -40,6 +40,8 @@ const BANCO = new Set(['psql', 'pg_dump', 'pg_dumpall', 'pg_restore', 'mysql', '
 const SQL_POR_EXECUTE = new Set(['mysql', 'mariadb']);
 const SUSPEITO = /(^|[.-])(prod|production|prd)([.-]|$)/i;
 // DT1: só estas flags mantêm o `git push` na forma de publicar; qualquer outra (--force, --delete, --all, -o …) é terceiro.
+// OID nulo (só zeros, 4+ dígitos: fail-closed para sha1 e sha256) como origem do refspec: o git trata como deleção da ref remota.
+const origemNula = (r: string): boolean => /^0{4,}$/.test(r.includes(':') ? r.slice(0, r.indexOf(':')) : '');
 const FLAGS_PUBLICAR = new Set(['-u', '--set-upstream', '-q', '--quiet', '-v', '--verbose', '--follow-tags', '--atomic', '--porcelain', '-n', '--dry-run']);
 // DT1(b): flags do `gh pr merge` sem efeito de alvo nem de política (sem valor). Fora: --admin (fura proteção), -b/-t/-F/--match-head-commit (valor livre), -R/--repo, URL.
 const FLAGS_GH_MERGE = new Set(['--merge', '-m', '--squash', '-s', '--rebase', '-r', '--auto', '--delete-branch', '-d']);
@@ -365,7 +367,7 @@ function classificarSegmento(s: Segmento, cfg: ConfigGuarda | null, ctx: Context
         semGlobais &&
         g.resto.every((a) => !a.startsWith('-') || FLAGS_PUBLICAR.has(a)) &&
         (posPush[0] === undefined || posPush[0] === 'origin') &&
-        refspecs.every((r) => !r.startsWith('+') && !r.startsWith(':')) &&
+        refspecs.every((r) => !r.startsWith('+') && !r.startsWith(':') && !origemNula(r)) &&
         refspecs.length <= 1;
       const todasAsBranches = g.resto.includes('--mirror') || g.resto.includes('--all');
       const implicito = (): void => {
@@ -381,6 +383,8 @@ function classificarSegmento(s: Segmento, cfg: ConfigGuarda | null, ctx: Context
       } else if (refspecs.length === 0) implicito();
       else {
         for (const r of refspecs) {
+          // Origem de OID nulo (só zeros) é DELEÇÃO da ref remota no git: destrutivo, nunca publicar (DT3).
+          if (origemNula(r)) p.destrutivo = true;
           const destino = destinoDeRefspec(r);
           if (destino === '' || /[$\u0001\u0000]/.test(destino) || destino.includes('`')) {
             // Destino que o shell resolve em tempo de execução: não dá para verificar.
