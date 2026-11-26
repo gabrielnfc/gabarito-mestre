@@ -213,3 +213,13 @@ test('herdar-liga-cli: a flag real --gravar sem as 2 flags passa pelo despachant
   assert.equal(herdar(dir, '--gravar').rc, 1);
   assert.equal(herdar(dir).rc, 0);
 });
+
+test('herdar-e-painel-mesma-contagem-desatualizados: cardsDesatualizados do herdar = ids com cardDesatualizado no painel, e o status é o mesmo (P9)', async () => {
+  const dir = await projeto('p9b');
+  const r = herdar(dir);
+  const cfg = cfgDe(dir);
+  const estado = projetoDoRepo({ atual: dir, cfg, idPadrao: '^PBI-\\d+$', agoraMs: Date.parse('2026-11-20T12:00:00Z'), fuso: 'UTC', deps: { worktreeList: () => ({ ok: false, motivo: 'teste' }) } });
+  const doPainel = estado.linhas.filter((l) => l.cardDesatualizado !== null && l.cardDesatualizado !== undefined).map((l) => ({ id: l.id, status: l.cardDesatualizado })).sort((a, b) => a.id.localeCompare(b.id));
+  assert.deepEqual(r.j.cardsDesatualizados, doPainel);
+  assert.deepEqual(doPainel, [{ id: 'PBI-7', status: 'Em execução' }]);
+});

@@ -44,6 +44,8 @@ const ID_PADRAO = /^[A-Z]+-\d+$/;
                         
                                                                                                             
                  
+                                                                                                                                                      
+                                   
                                                                                          
                       
                               
@@ -245,6 +247,15 @@ export function ehFeito(status               , statusCfg          )          {
   return typeof c === 'string' && semAcento(c) !== '' && semAcento(c) === s;
 }
 
+/**
+ * REQ-CRD-1 (D-G43, D-G46), regra única (o `herdar` a importa do `dist/`): há card, a entrega está encerrada (a última entre `entrega.encerrada` e
+ * `entrega.reaberta` é a encerrada) e o status do card ainda não é "feito". O plugin só AVISA; nenhum caminho dele escreve no card.
+ * `eventos` em ordem cronológica.
+ */
+export function cardDesatualizado(card             , eventos          , statusFl1          )          {
+  return card !== null && encerrada(eventos) && !ehFeito(card.status, statusFl1);
+}
+
 /** DT5 (GM-20): status terminal padrão (card encerrado sem entrega); `fluxo.status.terminais` na config substitui a lista. */
 export const TERMINAIS_PADRAO                    = ['Superado', 'Cancelado', 'Descartado'];
 
@@ -322,6 +333,8 @@ export function projetarProjeto(arvores              , opcoes                   
     if (opcoesLigadas && card !== null && card.status !== null && !ehColunaFl1(card.status, opcoes.statusFl1) && !medido) { nOpcoes++; continue; }
     if (eventos.length > 0) diarios.push({ id, eventos });
     const feito = (card !== null && ehFeito(card.status, opcoes.statusFl1)) || encerrada(eventos);
+    const desatualizado = cardDesatualizado(card, eventos, opcoes.statusFl1) ? (card?.status ?? '(sem status)') : null;
+    if (desatualizado !== null) avisos.push(`${id}: card "${desatualizado}" desatualizado (entrega encerrada)`);
     // plano: inválido ⇒ "?" (nunca o .md nem plano velho); sem plano.json, o .md do card
     const comJson = escolherPlanoJson(ents);
     let plano                        = null;
@@ -371,7 +384,7 @@ export function projetarProjeto(arvores              , opcoes                   
         : feito ? (tasks.estimadas > 0 ? `feito (${tasks.estimadas} tasks estimadas)` : 'feito')
           : pct === null ? '? sem task no plano' : `${pct} % (${tasks.integradas} de ${tasks.total})`;
     linhas.push({
-      id, titulo: card?.titulo ?? null, status: card?.status ?? null, feito, epic: card?.epic ?? null, plano, semPlano, tasks, pct, pctComEstimadas, texto, motivo,
+      id, titulo: card?.titulo ?? null, status: card?.status ?? null, feito, cardDesatualizado: desatualizado, epic: card?.epic ?? null, plano, semPlano, tasks, pct, pctComEstimadas, texto, motivo,
       fase: plano === 'json' ? null : ROTULO_FASE_NAO_MEDIDA, origem,
     });
   }

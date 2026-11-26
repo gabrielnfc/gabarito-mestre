@@ -1111,3 +1111,49 @@ test('fixture-adotado-em-disco-igual-a-memoria: o repositório de montarNoDisco,
   await montarNoDisco(b2);
   assert.deepEqual(JSON.parse(readFileSync(join(b2, 'harness.config.json'), 'utf8')), { fluxo: { mapeamento: { FL1: 'cards/' } } });
 });
+
+// ───────────────────────────── GM-20 T11 (REQ-CRD-1): render do card desatualizado ─────────────────────────────
+// MUTAÇÃO: tirar o sufixo do render ⇒ card-desatualizado-render; sufixo cortado depois do id ⇒ idem (largura mínima).
+const SUFIXO_DESAT = '(card desatualizado)';
+/** A fixture adotada com o título de PBI-7 longo (40 colunas no render): o sufixo não cabe nas larguras estreitas. */
+const adotadoTituloLongo = (): ArvoreLida => {
+  const a = arvoreAdotado() as ArvoreLida;
+  a.cards = a.cards.map((c) => (c.arquivo === 'PBI-7.md' ? { ...c, texto: c.texto.replace('# Exportação de dados', '# Exportação completa de dados para o cliente final') } : c));
+  return a;
+};
+const linhaPbi7 = (s: EstadoPainel, largura: number): string | undefined => linhas(s, { largura }).find((l) => /^ {2}✓ PBI-7( |$)/.test(l));
+
+test('card-desatualizado-render: 100 colunas mostra "(card desatualizado)" na linha de PBI-7; na largura mínima o sufixo sai antes do id; PBI-8 e feitos limpos sem sufixo', () => {
+  const pr = projetarProjeto([adotadoTituloLongo()], OPC);
+  const s = comProjeto(estadoComPlano([ini(0, 'T1')]), pr);
+  const l100 = linhaPbi7(s, 100);
+  assert.ok(l100 !== undefined && l100.endsWith(SUFIXO_DESAT), `100 col: ${l100}\n${linhas(s, { largura: 100 }).join('\n')}`);
+  assert.equal(linhas(s, { largura: 100 }).filter((l) => l.includes(SUFIXO_DESAT)).length, 1, 'só o PBI-7');
+  // a linha de "N feitos" segue como era
+  assert.ok(linhas(s, { largura: 100 }).some((l) => FEITO_RE.test(l)));
+  // largura mínima da visão de projeto (72): o sufixo já saiu e o id ficou
+  const l72 = linhaPbi7(s, 72);
+  assert.ok(l72 !== undefined, 'o id fica');
+  assert.ok(!l72.includes('(card'), `72 col: ${l72}`);
+  // sem desatualizado: nenhuma linha de PBI feito
+  const limpo = comProjeto(estadoComPlano([ini(0, 'T1')]), projetoS([cardS('PBI-1', 'Concluído'), cardS('PBI-2', 'Em execução'), cardS('PBI-3', 'Em execução')]));
+  assert.ok(linhas(limpo, { largura: 100 }).every((l) => !/^ {2}✓ PBI-/.test(l) && !l.includes(SUFIXO_DESAT)));
+  // campo ausente (estado antigo): não quebra e não desenha
+  const antigo = { ...pr, linhas: pr.linhas.map((l) => { const { cardDesatualizado: _x, ...resto } = l; return resto as typeof l; }) };
+  assert.ok(linhas(comProjeto(estadoComPlano([ini(0, 'T1')]), antigo as EstadoProjeto), { largura: 100 }).every((l) => !l.includes(SUFIXO_DESAT)));
+});
+
+test('render-projeto-propriedade-larguras-desatualizado: de 44 a 120 colunas, a linha cabe, o sufixo é inteiro ou some, e o id nunca é cortado antes dele', () => {
+  const s = comProjeto(estadoComPlano([ini(0, 'T1')]), projetarProjeto([adotadoTituloLongo()], OPC));
+  let comSufixo = false, semSufixo = false;
+  for (let w = 44; w <= 120; w++) {
+    for (const l of linhas(s, { largura: w })) {
+      assert.ok(colunas(l) <= w, `w=${w} estourou: ${l}`);
+      assert.equal((l.match(/\(card/g) ?? []).length, (l.match(/\(card desatualizado\)/g) ?? []).length, `w=${w} sufixo cortado: ${l}`);
+    }
+    const l = linhaPbi7(s, w);
+    if (w >= 72) assert.ok(l !== undefined, `w=${w} sem o id de PBI-7`);
+    if (l !== undefined) { if (l.includes(SUFIXO_DESAT)) comSufixo = true; else semSufixo = true; }
+  }
+  assert.ok(comSufixo && semSufixo, 'as duas formas aparecem entre 72 e 120');
+});

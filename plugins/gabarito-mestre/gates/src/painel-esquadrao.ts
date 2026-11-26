@@ -450,6 +450,20 @@ function linhasDoProjeto(p: EstadoProjeto, w: number, mot: (m: string) => string
   const ls = todas.filter((l) => l.feito !== true);
   const corpo: CorpoProjeto[] = [];
   if (nFeitos > 0) corpo.push({ l: [seg('  '), seg('✓', 'success'), seg(` ${nFeitos} ${nFeitos === 1 ? 'feito' : 'feitos'}`, 'inactive')], prioridade: PRIORIDADE_PROJETO.feitosECabecalhos });
+  // REQ-CRD-1: o feito cujo card ficou aberto ganha 1 linha logo abaixo; o sufixo é o 1º a sair (antes do título e do id), nunca cortado por caractere
+  for (const l of todas) {
+    if (l.feito !== true || typeof l.cardDesatualizado !== 'string') continue;
+    const id = t(l.id);
+    const tit = cortar(natural(l.titulo), 40);
+    const base = `  ✓ ${id}`;
+    const comTit = tit === '' ? base : `${base}  ${tit}`;
+    const sufixo = '  (card desatualizado)';
+    const titCurto = tit === '' || w - colunas(`${base}  `) < 4 ? base : `${base}  ${cortar(tit, w - colunas(`${base}  `))}`;
+    const v = [`${comTit}${sufixo}`, comTit, titCurto, base].find((x) => colunas(x) <= w) ?? base;
+    const sufixado = v.endsWith(sufixo);
+    const corpoTxt = sufixado ? v.slice(0, v.length - sufixo.length) : v;
+    corpo.push({ l: [seg('  '), seg('✓', 'success'), seg(corpoTxt.slice(3), 'inactive'), ...(sufixado ? [seg(sufixo, 'warning')] : [])], prioridade: PRIORIDADE_PROJETO.feitosECabecalhos });
+  }
   // REQ-PRJ-3 (c): cabeçalho de Epic só com 2 grupos ou mais (o núcleo só preenche `grupos` assim); os PBIs do grupo recuados embaixo
   const grupos = Array.isArray(p.grupos) ? p.grupos.filter((g) => g !== null && typeof g === 'object' && Array.isArray(g.ids)) : [];
   const agrupado = grupos.length >= 2;

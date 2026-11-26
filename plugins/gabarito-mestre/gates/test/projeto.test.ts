@@ -42,7 +42,7 @@ import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  cardDe, colunasFl1, ehColunaFl1, ehFeito, ehTerminal, planoMdDoCard, projetarProjeto, padraoLegadoValido, planoLegadoDe, ROTULO_FASE_NAO_MEDIDA, ROTULO_FORA_DO_LOOP, rotuloAgente, rotuloFase, tasksDoPlanoMd, terminaisValidos, worktreesDe,
+  cardDe, cardDesatualizado, colunasFl1, ehColunaFl1, ehFeito, ehTerminal, planoMdDoCard, projetarProjeto, padraoLegadoValido, planoLegadoDe, ROTULO_FASE_NAO_MEDIDA, ROTULO_FORA_DO_LOOP, rotuloAgente, rotuloFase, tasksDoPlanoMd, terminaisValidos, worktreesDe,
 } from '../src/projeto.ts';
 import type { ArvoreLida, EstadoProjeto, LinhaProjeto } from '../src/projeto.ts';
 import type { Evento } from '../src/tipos.ts';
@@ -834,4 +834,64 @@ test('plano-legado-padrao-seguro: pura, cada condição do padrão e do casament
   }
   assert.deepEqual(padraoLegadoValido('docs/superpowers/plans/*-{PBI}-*.md'), { dir: 'docs/superpowers/plans', nome: '*-{PBI}-*.md' });
   assert.deepEqual(padraoLegadoValido('{PBI}.md'), { dir: '', nome: '{PBI}.md' });
+});
+
+// ───────────────────────────── GM-20 T11 (REQ-CRD-1, D-G43, D-G46, M10): card desatualizado. O painel conta feito e avisa; nunca escreve no card.
+// MUTAÇÕES: MC1-a tirar o aviso ⇒ card-desatualizado-conta-feito-e-avisa; MC1-b só `!ehFeito` (sem `encerrada`) ⇒ PBI-8 avisa ⇒ cai;
+//           MC1-c ignorar `entrega.reaberta` ⇒ card-desatualizado-reaberta-nao-avisa; MC1-d (escrita no card) ⇒ card-desatualizado.test.mjs e herdar-nao-escreve-card.
+const AVISO_PBI7 = 'PBI-7: card "Em execução" desatualizado (entrega encerrada)';
+
+test('card-desatualizado-conta-feito-e-avisa: PBI-7 (card aberto + encerrada) é feito, leva o status e o aviso; PBI-8, card Concluído e sem card não avisam', () => {
+  const e = projetarProjeto([arvoreAdotado() as ArvoreLida], OPC);
+  const p7 = linha(e, 'PBI-7');
+  assert.equal(p7.feito, true, 'M10: já contava feito');
+  assert.equal(p7.cardDesatualizado, 'Em execução');
+  assert.ok(e.avisos.includes(AVISO_PBI7), e.avisos.join('|'));
+  const p8 = linha(e, 'PBI-8');
+  assert.equal(p8.feito, false);
+  assert.equal(p8.cardDesatualizado, null);
+  assert.ok(e.avisos.every((a) => !a.startsWith('PBI-8')), e.avisos.join('|'));
+  assert.equal(e.linhas.filter((l) => l.cardDesatualizado !== null).length, 1, 'só PBI-7 na fixture comum');
+  assert.equal(e.avisos.filter((a) => /desatualizado/.test(a)).length, 1);
+  // card já Concluído + encerrada: sem aviso; sem card (só diário) + encerrada: sem aviso
+  const a = arvoreAdotado() as ArvoreLida;
+  a.cards = a.cards.map((c) => (c.arquivo === 'PBI-7.md' ? { ...c, texto: c.texto.replace('status: Em execução', 'status: Concluído') } : c));
+  const concl = projetarProjeto([a], OPC);
+  assert.equal(linha(concl, 'PBI-7').cardDesatualizado, null);
+  assert.ok(concl.avisos.every((x) => !/desatualizado/.test(x)), concl.avisos.join('|'));
+  const b = arvoreAdotado() as ArvoreLida;
+  b.cards = b.cards.filter((c) => c.arquivo !== 'PBI-7.md');
+  const sem = projetarProjeto([b], OPC);
+  assert.equal(linha(sem, 'PBI-7').feito, true);
+  assert.equal(linha(sem, 'PBI-7').cardDesatualizado, null);
+  assert.ok(sem.avisos.every((x) => !/desatualizado/.test(x)), sem.avisos.join('|'));
+});
+
+test('card-desatualizado-reaberta-nao-avisa: entrega.reaberta depois da encerrada ⇒ nem feito nem aviso', () => {
+  const a = arvoreAdotado() as ArvoreLida;
+  const ent = a.entregas.find((x) => x.id === 'PBI-7');
+  assert.ok(ent !== undefined && ent.eventos !== null);
+  const ult = ent.eventos[ent.eventos.length - 1];
+  assert.equal(ult.tipo, 'entrega.encerrada', 'a fixture termina na encerrada');
+  ent.eventos.push({ ...ult, seq: ult.seq + 1, ts: new Date(Date.parse(String(ult.ts)) + 60_000).toISOString(), tipo: 'entrega.reaberta', dados: { entrega: 'PBI-7' } } as Evento);
+  const e = projetarProjeto([a], OPC);
+  assert.equal(linha(e, 'PBI-7').feito, false);
+  assert.equal(linha(e, 'PBI-7').cardDesatualizado, null);
+  assert.ok(e.avisos.every((x) => !/desatualizado/.test(x)), e.avisos.join('|'));
+});
+
+test('card-desatualizado-regra: cada condição da função (card, encerrada, !ehFeito, reaberta) sozinha derruba o resultado', () => {
+  const ev = (seq: number, tipo: string): Evento => ({ seq, ts: `2026-11-10T10:0${seq}:00.000Z`, autor: 'a', sessao: 's', agente: 'orquestrador', tipo, dados: {}, hash_anterior: null }) as Evento;
+  const card = (status: string | null) => ({ id: 'X-1', status, titulo: null, atualizadoEm: null, planoMd: null, epic: null });
+  const enc = [ev(1, 'entrega.encerrada')];
+  assert.equal(cardDesatualizado(card('Em execução'), enc, undefined), true);
+  assert.equal(cardDesatualizado(card(null), enc, undefined), true, 'card sem status também está aberto');
+  assert.equal(cardDesatualizado(null, enc, undefined), false, 'sem card');
+  assert.equal(cardDesatualizado(card('Em execução'), [], undefined), false, 'sem encerrada (só !ehFeito)');
+  assert.equal(cardDesatualizado(card('Em execução'), [ev(1, 'ci.resultado')], undefined), false);
+  assert.equal(cardDesatualizado(card('Concluído'), enc, undefined), false, 'já feito');
+  assert.equal(cardDesatualizado(card('Done'), enc, { concluido: 'Done' }), false, 'feito pela config');
+  assert.equal(cardDesatualizado(card('Done'), enc, undefined), true, 'sem a config, Done é aberto');
+  assert.equal(cardDesatualizado(card('Em execução'), [...enc, ev(2, 'entrega.reaberta')], undefined), false, 'reaberta depois');
+  assert.equal(cardDesatualizado(card('Em execução'), [...enc, ev(2, 'entrega.reaberta'), ev(3, 'entrega.encerrada')], undefined), true, 'encerrada de novo');
 });

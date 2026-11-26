@@ -14,7 +14,7 @@
 import { lstatSync, readFileSync, readdirSync, realpathSync } from 'node:fs';
 import { isAbsolute, join } from 'node:path';
 import { lerEstrito } from '../dist/diario.js';
-import { cardDe, ehColunaFl1, ehFeito, ehTerminal, padraoLegadoValido, planoLegadoDe, planoMdDoCard, terminaisValidos, worktreesDe } from '../dist/projeto.js';
+import { cardDe, cardDesatualizado, ehColunaFl1, ehFeito, ehTerminal, padraoLegadoValido, planoLegadoDe, planoMdDoCard, terminaisValidos, worktreesDe } from '../dist/projeto.js';
 import { aplicarConfig, ArquivoInvalido } from './onboarding-config.mjs';
 
 /** Falha com código: o despachante a devolve como `{ok:false, erro, ...}` e rc 1. */
@@ -81,18 +81,15 @@ function arvoresDe(raiz, rodar) {
   return [...new Set(worktreesDe(git, real(raiz)).caminhos.map(real))];
 }
 
-/** `entrega.encerrada` sem `entrega.reaberta` depois, no diário unido das árvores (predicado local da T10; a T11 usa o exportado de `projeto`). */
-function encerradaNoDiario(arvores, id) {
+/** Diário unido das árvores, na ordem do painel (ts, sessão, seq), para a regra `cardDesatualizado` (a mesma do painel, importada do núcleo). */
+function eventosDoDiario(arvores, id) {
   const eventos = [];
   for (const a of arvores) {
     const r = lerEstrito(join(a, '.harness', 'entregas', id));
     if (r.ok) eventos.push(...r.eventos);
   }
-  const ms = (e) => Date.parse(e.ts);
-  eventos.sort((x, y) => (ms(x) || 0) - (ms(y) || 0));
-  let ultimo = null;
-  for (const ev of eventos) if (ev.tipo === 'entrega.encerrada' || ev.tipo === 'entrega.reaberta') ultimo = ev.tipo;
-  return ultimo === 'entrega.encerrada';
+  const ms = (e) => Date.parse(e.ts) || 0;
+  return eventos.sort((x, y) => ms(x) - ms(y) || String(x.sessao).localeCompare(String(y.sessao)) || x.seq - y.seq);
 }
 
 /** REQ-ADO-1: só lê. */
@@ -153,7 +150,7 @@ function detectar(raiz, cfg, rodar) {
   }
   const statusFora = [...contagem].map(([status, n]) => ({ status, n })).sort((x, y) => y.n - x.n || x.status.localeCompare(y.status));
 
-  const cardsDesatualizados = cards.filter((c) => !ehFeito(c.status, statusFl1) && encerradaNoDiario(arvores, c.id)).map((c) => ({ id: c.id, status: c.status }));
+  const cardsDesatualizados = cards.filter((c) => cardDesatualizado(c, eventosDoDiario(arvores, c.id), statusFl1)).map((c) => ({ id: c.id, status: c.status }));
 
   const oferecer = entreguesSemPlano.length > 0 || planosLegados.padrao !== null || statusFora.length > 0 || cardsDesatualizados.length > 0;
   return { oferecer, entreguesSemPlano, planosLegados, statusFora, cardsDesatualizados };
