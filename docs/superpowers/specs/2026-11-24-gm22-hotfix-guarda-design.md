@@ -1,14 +1,14 @@
 # GM-22: hotfix da guarda (a autonomia cala só publicar; hooks do git no anel de integridade)
 
-Iniciativa: não vinculado · Epic: não vinculado (regra da GM-19 em `2026-11-22-gm19-decisoes-dono.md:15`, D-G39, herdada pelo orquestrador: sem vínculo até o dono criar Epic; não é decisão nova do dono) · PBI: GM-22 (Bug, segurança) · Versão: 2.2.3 (D-G51) · Data: 2026-11-24 · Base: `main` 0c489720 (plugin 2.2.2) · Branch: `hotfix/GM-22-guarda-autonomia`
-PBIs conhecidos, na ordem da D-G51: **GM-22** (este hotfix, Bug) · GM-20 (Bug, 2.3.0, em paralelo) · GM-21 (restante do relato, depois da GM-20). _(Emenda 2026-11-24, conformidade r1 — lista de PBIs do fio condutor, como na GM-20)_
+Iniciativa: não vinculado · Epic: não vinculado (regra da GM-19 em `2026-11-22-gm19-decisoes-dono.md:15`, D-G39, herdada pelo orquestrador: sem vínculo até o dono criar Epic; não é decisão nova do dono) · PBI: GM-22 (Bug, segurança) · Versão: 2.3.1 (D-G51) · Data: 2026-11-24 · Base: `main` 607c20d8 (plugin 2.3.0) · Branch: `hotfix/GM-22-guarda-autonomia`
+PBIs conhecidos, na ordem da D-G51: **GM-22** (este hotfix, Bug) · GM-20 (Bug, 2.3.0, publicada) · GM-21 (restante do relato, depois da GM-20). _(Emenda 2026-11-24, conformidade r1 — lista de PBIs do fio condutor, como na GM-20)_
 
 **Tipo Bug (segurança), e não Enabler nem US.** O dono escolheu "pode publicar sozinha" e a guarda passou a calar também produção de terceiro, delete em massa e integridade do harness, que o `AGENTS.md` põe acima de qualquer decisão (relato, item 1). E o hook `pre-push` do git é editável em silêncio, até por subagente (relato, item 6). É comportamento errado, com reprodução e teste que falha hoje. (c)
 
 **STATUS: r1, rascunho do redator. Não conferida, não aprovada. Aguarda conformidade e `/gabarito-mestre:aprovar`.**
 - **O que o sistema faz hoje:** com `guarda.autonomia: "orquestrador"` (respostas `trabalha` e `publica` do onboarding) e o interruptor da máquina, todo `ask` do orquestrador que não é `segredo` vira silêncio (M1, M2). `.githooks/` e `push --no-verify` estão fora de todo anel (M6 a M9).
 - **O que está escrito que fará:** tudo a partir de "Decisões". Nada foi executado.
-- A D-G51 abre o hotfix. Spec, merge em `main` e release 2.2.3 dependem do dono.
+- A D-G51 abre o hotfix. Spec, merge em `main` e release 2.3.1 dependem do dono.
 
 **Objetivo (dono, D-G51 e D-G52):** a autonomia vale só para publicar (entrega/deploy). Produção de terceiro, delete em massa, integridade do harness, push sem hooks e `.githooks/` sempre pedem ao orquestrador e são negados ao subagente, com qualquer autonomia. Correção genérica: nada do projeto consumidor no plugin (como D-G41).
 **Desenho em uma frase:** a guarda marca o segmento de produção que é "publicar" e só esse pode passar calado, e só com a resposta `publica`; o anel de integridade ganha os diretórios de hooks do git e o push que pula hooks.
@@ -37,14 +37,14 @@ Legenda: **(a, medido)** número de execução (spike A de 2026-11-24 ou `medir.
 | M13 | O plugin nunca cria o interruptor; quem lê: a guarda e o doctor | `README.md:200`; `gates/scripts/harness-doctor.mjs:90`; `grep -rl 'autonomia\.json'` no plugin = só guarda, aneis, doctor e testes | (a, lido) |
 | M14 | Testes que fixam o comportamento de hoje (vão mudar): `autonomia-guarda.test.ts` (12 testes), `autonomia-refs.test.ts` (6), `autonomia-processo.test.mjs` (11, processo real com `HOME` tmp); textos em `onboarding.test.mjs:810`, `:1110-1117`, `:1801` e `onboarding-texto.test.mjs:396` | `gates/test/` | (a, lido) |
 | M15 | Corpus da guarda: 4 JSONL, `TOTAL_CORPUS` somado à mão; o e2e do corpus roda pelo hook real (`node gates/dist/guarda.js`, `hooks/hooks.json:9`) | `gates/test/corpus-guarda.test.ts:23`; `hooks/test/guarda-corpus-e2e.test.mjs` | (a, lido) |
-| M16 | Versão 2.2.2 fixada fora de `.md` em 4 pontos | `.claude-plugin/plugin.json:4`; `gates/package.json:3`; `gates/test/package.test.mjs:49-50`; `scripts/test/texto.test.sh:279`, `:295` | (a, lido) |
+| M16 | Versão 2.3.0 fixada fora de `.md` em 5 pontos | `.claude-plugin/plugin.json:4`; `gates/package.json:3`; `gates/test/package.test.mjs:49-50`; `scripts/test/texto.test.sh:279`, `:295`, `:296` | (a, lido) |
 
 Não medido (vai a Pendências): se o git aceita `--no-veri` como abreviação de `--no-verify` no push (o parse-options do git aceita prefixo único, (b)); se o consumidor tinha o interruptor ligado (spike A, "O que a medição não responde").
 
 ## Decisões (não reabrir sem fato novo)
 
 Do dono:
-- **D-G51** Hotfix 2.2.3 já, só os itens 1 e 6 do relato; branch própria a partir de `main`, em paralelo à GM-20; release por ordem do dono.
+- **D-G51** Hotfix 2.3.1 já (hotfix; número 2.3.1 porque a 2.3.0 já saiu), só os itens 1 e 6 do relato; branch própria a partir de `main`, aberta em paralelo à GM-20 (hoje já publicada na 2.3.0); release por ordem do dono.
 - **D-G52** A autonomia passa a valer só para entrega/deploy. Produção de terceiro, delete em massa, integridade do harness, push sem hooks (`--no-verify`) e `.githooks/` sempre `ask` para o orquestrador e `deny` para subagente, com qualquer autonomia. Sem opt-in por anel nesta versão. O texto da pergunta do onboarding diz o que a autonomia cala.
 
 Técnicas (c), cada uma com a alternativa rejeitada:
@@ -54,7 +54,7 @@ Técnicas (c), cada uma com a alternativa rejeitada:
 - **DT4 Push sem hooks é integridade, para os dois papéis e para qualquer branch:** `git push` com token que começa por `--no-veri` (cobre `--no-verify` e as abreviações únicas que o git aceite; `--no-ve` é ambíguo com `--no-verbose` e o próprio git recusa) ou segmento `git` (qualquer subcomando) com atribuição `GIT_CONFIG_PARAMETERS`, `GIT_CONFIG_COUNT`, `GIT_CONFIG_KEY_<n>` ou `GIT_CONFIG_VALUE_<n>`, que injetam `core.hooksPath` como o `-c` que já é integridade (M9). Alvo do achado: `.git/hooks`. Rejeitado: só `--no-verify` em branch prod, porque o subagente empurra hoje sem hooks na própria branch (M8). Rejeitado: ler a config dessas variáveis para decidir, porque o leitor de Bash não resolve valor (limite G9).
 - **DT5 Diretórios de hooks fixos: `.githooks` e `.husky` entram em `AREAS_DIR`** (escrita e remoção pedem; leitura livre, como o resto da integridade). `.husky` entra porque o instalador grava lá (M10); é vizinho do caso (P15, "Antes do commit" item 4). Rejeitado: ler `core.hooksPath` efetivo a cada chamada, porque é 1 `git` a mais por hook sem medição de custo; vai a Fora de escopo com gatilho.
 - **DT6 A escrita no interruptor pede sempre ao orquestrador.** É integridade (`aneis.ts:512`), e a D-G52 tira a integridade da autonomia. Revoga, por decisão posterior do dono, a emenda de 2026-11-12 ("ligada, o orquestrador passa no interruptor"; `decidir.ts:103-105`, `README.md:200`).
-- **DT7 Compatibilidade sem migração:** config 2.2.2 com `guarda.autonomia: "orquestrador"` segue válida e lida igual pelo onboarding e pelo doctor (mesmas 4 chaves, mesma resposta); só cala menos. O aviso vai no próprio `ask`: com nível `trabalha` ou `publica`, o motivo do `ask` ao orquestrador ganha um sufixo fixo que diz o que a autonomia cala desde a 2.2.3. Rejeitado: aviso de sessão por `systemMessage`, porque soma ruído em toda chamada e não aparece no momento da surpresa. Rejeitado: migração que reescreve `harness.config.json`, porque é escrita em integridade e a config antiga não está errada.
+- **DT7 Compatibilidade sem migração:** config 2.2.2 com `guarda.autonomia: "orquestrador"` segue válida e lida igual pelo onboarding e pelo doctor (mesmas 4 chaves, mesma resposta); só cala menos. O aviso vai no próprio `ask`: com nível `trabalha` ou `publica`, o motivo do `ask` ao orquestrador ganha um sufixo fixo que diz o que a autonomia cala desde a 2.3.1. Rejeitado: aviso de sessão por `systemMessage`, porque soma ruído em toda chamada e não aparece no momento da surpresa. Rejeitado: migração que reescreve `harness.config.json`, porque é escrita em integridade e a config antiga não está errada.
 - **DT8 `decidir(entrada, config, contexto, nivel)` com `nivel: 'nenhuma' | 'trabalha' | 'publica'`** (padrão `'nenhuma'`), no lugar do booleano. Rejeitado: dois booleanos, porque `trabalha` sem `publica` vira estado implícito.
 
 ADRs: nenhuma. Não há exceção a regra.
@@ -112,7 +112,7 @@ Orquestrador; o subagente é `deny` em toda linha marcada "pede" e `silencio` s�
 - Testes `tabela-decisao-autonomia` (novo `gates/test/autonomia-tabela.test.ts`, uma linha por categoria e vizinhos), `autonomia-so-publica-cala`, `autonomia-trabalha-nao-cala-publicar`, `autonomia-publica-nao-cala-terceiro-delete-integridade`; `autonomia-guarda.test.ts`, `autonomia-refs.test.ts` e `autonomia-processo.test.mjs` reescritos para o contrato novo (os casos de integridade que esperavam `silencio` passam a `ask`; nenhum teste apagado sem o caso equivalente no arquivo novo). Mutações MP2-a: voltar a calar todo `ask` não segredo (o `decidir` de hoje) ⇒ cai a tabela; MP2-b: calar publicar com `trabalha` ⇒ cai; MP2-c: calar publicar destrutivo ⇒ cai `push --force`; MP2-d: ler `entrega.autonomia` da árvore local ⇒ cai o caso de processo; MP2-e: calar a escrita no interruptor com `publica` ⇒ cai; MP2-f: subagente com `publica` passa ⇒ cai.
 
 **REQ-PUB-3 O `ask` diz o que a autonomia cala (compatibilidade, DT7).**
-- Dado nível `trabalha` ou `publica` e um `ask` ao orquestrador, Então `motivo` termina com o texto fixo ` · autonomia (2.2.3): cala só publicar (push e merge na branch de produção, deploy), e só com a resposta "publica"; produção de terceiro, delete em massa, harness e push sem hooks sempre perguntam`.
+- Dado nível `trabalha` ou `publica` e um `ask` ao orquestrador, Então `motivo` termina com o texto fixo ` · autonomia (2.3.1): cala só publicar (push e merge na branch de produção, deploy), e só com a resposta "publica"; produção de terceiro, delete em massa, harness e push sem hooks sempre perguntam`.
 - Dado nível `nenhuma`, Então o `motivo` é byte a byte o de hoje. Dado subagente (`deny`), Então o `motivo` é o de hoje com qualquer nível.
 - Dado config 2.2.2 com `trabalha` ou `publica`, Então o onboarding e o doctor leem a mesma resposta (sem "autonomia mista") e nada é regravado.
 - Testes `motivo-avisa-com-autonomia`, `motivo-igual-sem-autonomia`, `motivo-subagente-igual` (em `autonomia-tabela.test.ts`) e `config-222-segue-valida` (onboarding: `autonomiaDaConfig` das 3 configs de `CHAVES_AUTONOMIA` devolve a mesma resposta; `CHAVES_AUTONOMIA` com `deepEqual` igual ao de hoje). Mutações MP3-a: sufixo com nível `nenhuma` ⇒ cai; MP3-b: sufixo no `deny` ⇒ cai; MP3-c: mudar `CHAVES_AUTONOMIA.trabalha.guarda` ⇒ cai `config-222-segue-valida`.
@@ -128,8 +128,8 @@ Orquestrador; o subagente é `deny` em toda linha marcada "pede" e `silencio` s�
 
 ### Versão
 
-**REQ-VRS-1 2.2.3.** `.claude-plugin/plugin.json:4`, `gates/package.json:3`, `gates/test/package.test.mjs:49-50`, `scripts/test/texto.test.sh:279`, `:295`; `CHANGELOG.md`.
-- Dado a entrega, Então as 2 versões são `2.2.3`, `[2.2.3]` datada fica acima da `[2.2.2]`, e `git grep -n "2\.2\.2" -- ':!*.md' ':!.harness'` só acha a checagem de ordem do CHANGELOG.
+**REQ-VRS-1 2.3.1.** `.claude-plugin/plugin.json:4`, `gates/package.json:3`, `gates/test/package.test.mjs:49-50`, `scripts/test/texto.test.sh:279`, `:295`, `:296`; `CHANGELOG.md`.
+- Dado a entrega, Então as 2 versões são `2.3.1`, `[2.3.1]` datada fica acima da `[2.3.0]`, e `git grep -n "2\.3\.0" -- ':!*.md' ':!.harness'` só acha as checagens do CHANGELOG `[2.3.0]` (`texto.test.sh:295` e `:296`; as demais ocorrências de `2.3.0` fora de `.md` são comentários e fixtures de outras entregas, `painel-medir.test.mjs:1153,1155,1234`, que a task não toca). Os pontos fixados a mudar são `plugin.json:4`, `gates/package.json:3`, `package.test.mjs:49-50` e `texto.test.sh:279`; em `:295` e `:296` a `[2.3.1]` entra acima e o limite inferior do trecho passa a ser `[2.3.0]`.
 - Mutação MV1-a: versão só num manifesto ⇒ cai `package.test.mjs` e `texto.test.sh`.
 
 Permissão: muda a guarda (2 anéis maiores, autonomia menor). Nenhum caminho de escrita novo. Nenhum REQ amplia o que passa calado: toda mudança troca `silencio` por `ask`/`deny`.
@@ -147,10 +147,10 @@ Permissão: muda a guarda (2 anéis maiores, autonomia menor). Nenhum caminho de
 P9 (camadas): REQ-HKS-1/2 cruzam `aneis.ts` e o hook pelo corpus e2e; REQ-PUB-2 cruza `classificar-alvo.ts` (T2), `decidir.ts` e `guarda.ts` pelo processo real em `autonomia-processo.test.mjs`.
 Fumaça (orquestrador, antes do PR): rodar `medir.mts` contra a worktree com o código novo e conferir a tabela inteira; colar a saída no PR.
 
-## CHANGELOG [2.2.3] previsto
+## CHANGELOG [2.3.1] previsto
 
 ```
-## [2.2.3] — <data>
+## [2.3.1] — <data>
 
 Hotfix de segurança da guarda (GM-22, D-G51, D-G52).
 
@@ -175,8 +175,8 @@ Hotfix de segurança da guarda (GM-22, D-G51, D-G52).
 2. Aprovação da spec. Motivo: a D-G51 não aprova.
 3. Orquestrador na branch `hotfix/GM-22-guarda-autonomia` antes do `abrir`. Motivo: o `abrir` grava a branch atual como base (processo, "Orquestrador na branch da entrega").
 4. Ondas: T1, T2, T4 em paralelo; T3 depois de T1 e T2; T5 no fim. Motivo: T3 testa a tabela inteira, que precisa dos anéis da T1 e do campo `publicar` da T2; T4 não divide arquivo com ninguém; versão só com o código pronto.
-5. PR `hotfix/GM-22-guarda-autonomia ⇒ main`. Motivo: D-G51 (base `main`, em paralelo à GM-20, que está em `next`). Merge, tag `gabarito-mestre--v2.2.3` e release só por ordem do dono (R1).
-6. Depois da release: `main ⇒ next`. Motivo: a GM-20 precisa conter o hotfix antes da 2.3.0; o CHANGELOG da GM-20 fica com `[2.3.0]` acima de `[2.2.3]`, e o teste de ordem `texto.test.sh:295` da GM-20 é emendado lá. Plugin local por `claude plugin update --scope`. _(Emenda 2026-11-24, conformidade r1 — motivo de cada passo)_
+5. PR `hotfix/GM-22-guarda-autonomia ⇒ main`. Motivo: D-G51 (base `main` 607c20d8, a 2.3.0 já publicada; o repo tem `delete_branch_on_merge=true`, então a branch some no merge). Merge, tag `gabarito-mestre--v2.3.1` e release só por ordem do dono (R1).
+6. Depois da release: sincronizar `next` com `main` (merge de `main` em `next`). Motivo: a GM-20 já está em `main` (2.3.0), então `next` só precisa receber o hotfix; não há emenda do teste de ordem da GM-20. Plugin local por `claude plugin update --scope`. _(Emenda 2026-11-24, conformidade r1 — motivo de cada passo)_
 
 Janela: quem usa `trabalha` ou `publica` vê perguntas que a 2.2.2 calava; nenhuma pergunta some. Volta: reverter o merge; a config não muda.
 
@@ -196,3 +196,5 @@ Janela: quem usa `trabalha` ou `publica` vê perguntas que a 2.2.2 calava; nenhu
 - **P1 RESPONDIDA pelo dono (D-G54, 2026-11-24): DT2 confirmada; DT6 confirmada pela D-G53.** _(Emenda 2026-11-24, D-G53/D-G54)_ Texto original: **P1 (Sombra) DT2:** `trabalha` não cala nada (nem publicar). Fonte: rótulo de `trabalha` (M5) e D-G52. Desbloqueia a T3.
 - **(M, a medir)** O git aceita `--no-veri` como `--no-verify` no push (T1, passo 0, em repo tmp fora do repositório). Se não aceitar, a regra de prefixo segue (fail-closed) e o teste do caso abreviado fica como está.
 - **(M, a medir)** Comandos de rotina do orquestrador que passam a pedir com autonomia (ex.: `git pull`, `git fetch` com refspec): T3 conta no diário deste repo os `guarda.autonomia_usada` por `anel`/`alvo` e leva o número ao relato da task (informativo; a D-G52 já decidiu).
+
+_(Rebase 2026-11-26: base `main` 607c20d8 = 2.3.0; versão 2.2.3 ⇒ 2.3.1 — cabeçalho, M16, D-G51, DT7, sufixo do `ask` (REQ), REQ-VRS-1, CHANGELOG previsto `[2.3.1]` acima de `[2.3.0]`, tag `gabarito-mestre--v2.3.1`, passos finais 5 e 6; `texto.test.sh:296` entrou em M16/REQ-VRS-1)_

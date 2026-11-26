@@ -4,7 +4,7 @@
 
 PBI: GM-22 (Bug, segurança) · Epic: não vinculado · Iniciativa: não vinculado (D-G39, regra da GM-19 herdada pelo orquestrador; `spec:3`).
 
-**Goal:** a autonomia cala só publicar, e só com a resposta `publica`; hooks do git e push sem hooks entram no anel de integridade. Versão 2.2.3 (D-G51, D-G52).
+**Goal:** a autonomia cala só publicar, e só com a resposta `publica`; hooks do git e push sem hooks entram no anel de integridade. Versão 2.3.1 (D-G51, D-G52).
 
 **Architecture:** núcleo puro da guarda (`gates/src/aneis.ts`, `classificar-alvo.ts`, `decidir.ts`, `tipos.ts`), borda (`gates/src/guarda.ts`, o hook real `gates/dist/guarda.js`), onboarding (`gates/scripts/onboarding.mjs`) e docs. `gates/dist/*.js` é gerado por `npm run build`.
 
@@ -15,7 +15,7 @@ PBI: GM-22 (Bug, segurança) · Epic: não vinculado · Iniciativa: não vincula
 ## Pré-condições (antes da 1ª linha de código)
 
 - Spec aprovada pelo dono. Sombra confirma a DT2 (`spec:52`, P1 `spec:196`) antes da T3.
-- Orquestrador na branch `hotfix/GM-22-guarda-autonomia` (base `main` 0c489720) antes do `abrir` (processo, "Orquestrador na branch da entrega").
+- Orquestrador na branch `hotfix/GM-22-guarda-autonomia` (base `main` 607c20d8, plugin 2.3.0) antes do `abrir` (processo, "Orquestrador na branch da entrega").
 - S6 rodado na base antes do 1º `integrar`. Vermelho fora da task ⇒ `descoberta` e `integrar` com `S6_REPOS_DIR` vazio (processo, "Golden S6").
 
 ## Global Constraints
@@ -62,7 +62,7 @@ Em 1 linha: `{T1,T2}→T3; T4 livre; tudo→T5`.
 - T2 = 1 teste (≥ 5 positivos, ≥ 12 negativos, 1 misto) + 4 mutações (MP1-a a d).
 - T3 = tabela (10 categorias × 3 níveis × 2 papéis) + 3 testes de nível + 6 casos de processo real + 3 de motivo + 3 arquivos reescritos + 8 mutações (MP2-a a f, MP3-a, b) + contagem de `guarda.autonomia_usada` do diário deste repo por `anel`/`alvo` no relato.
 - T4 = 3 testes (`onboarding-pergunta-autonomia-diz-o-que-cala`, `rotulos-autonomia-iguais`, `config-222-segue-valida`) + ajustes de texto + 3 mutações (MP3-c, MT1-a, b) + `trocar.md` e `README.md` coerentes.
-- T5 = 2 versões + `[2.2.3]` + testes de versão verdes + 1 mutação + backlog com as linhas de "Fora de escopo".
+- T5 = 2 versões + `[2.3.1]` + testes de versão verdes + 1 mutação + backlog com as linhas de "Fora de escopo".
 - **Entrega completa** = 5 tasks + fumaça `medir.mts` com a tabela inteira conferida + CI verde no PR para `main`.
 
 **Estimativa (hipótese, não meta):** (M, calculado) 5 tasks de 30 a 60 min de implementação cada, mais review e `integrar`, em 3 ondas com até 3 frentes. A faixa vai ao dono pelo painel, com o ritmo medido depois da 1ª task.
@@ -119,22 +119,22 @@ Em 1 linha: `{T1,T2}→T3; T4 livre; tudo→T5`.
 - [ ] **Step 3:** MP3-c, MT1-a, MT1-b, uma por vez, cada uma derrubada.
 - [ ] **Step 4:** `node --test test/onboarding.test.mjs test/onboarding-texto.test.mjs test/onboarding-skill.test.mjs test/skills-shell.test.mjs` e `bash scripts/test/texto.test.sh` verdes. **Commit** `fix(GM-22): onboarding diz o que a autonomia cala`.
 
-### Task 5: Versão 2.2.3 e CHANGELOG
+### Task 5: Versão 2.3.1 e CHANGELOG
 
 **tipo:** Tarefa. **Depende de:** T1 a T4. **Onda C.** **Fecha:** REQ-VRS-1. **Aceite:** `spec:131-134`; texto `spec:150-170`.
 
-**Files:** Modify `.claude-plugin/plugin.json`, `gates/package.json`, `gates/test/package.test.mjs` (`:49-50`), `scripts/test/texto.test.sh` (`:279`, `:295`: `2.2.3` acima de `2.2.2`), `CHANGELOG.md` (`[2.2.3]` com a data do dia, texto de `spec:153-169`), `docs/backlog.md` (linhas de "Fora de escopo" da spec, `spec:183-192`, que ainda não estão lá).
+**Files:** Modify `.claude-plugin/plugin.json`, `gates/package.json`, `gates/test/package.test.mjs` (`:49-50`), `scripts/test/texto.test.sh` (`:279`; `:295` e `:296`: `[2.3.1]` acima de `[2.3.0]` e trecho `[2.3.1]`→`[2.3.0]`), `CHANGELOG.md` (`[2.3.1]` com a data do dia, texto de `spec:153-169`), `docs/backlog.md` (linhas de "Fora de escopo" da spec, `spec:183-192`, que ainda não estão lá).
 
 - [ ] **Step 1:** versões, testes de versão e CHANGELOG.
-- [ ] **Step 2:** `git grep -n "2\.2\.2" -- ':!*.md' ':!.harness'` só acha a checagem de ordem do CHANGELOG.
+- [ ] **Step 2:** `git grep -n "2\.3\.0" -- ':!*.md' ':!.harness'` só acha as checagens do CHANGELOG `[2.3.0]` (`texto.test.sh:295`, `:296`) e as ocorrências alheias de `painel-medir.test.mjs`.
 - [ ] **Step 3:** MV1-a (versão só no `plugin.json`) derrubada por `package.test.mjs` e `texto.test.sh`.
-- [ ] **Step 4:** `node --test test/package.test.mjs` e `bash scripts/test/texto.test.sh` verdes. **Commit** `chore(GM-22): versão 2.2.3 e CHANGELOG`.
+- [ ] **Step 4:** `node --test test/package.test.mjs` e `bash scripts/test/texto.test.sh` verdes. **Commit** `chore(GM-22): versão 2.3.1 e CHANGELOG`.
 
 ---
 
 ## Depois das tasks (orquestrador, não é task)
 
 - Fumaça: `node --experimental-strip-types .claude-tmp/gm22/medir.mts` contra a branch com o código novo (ajustar a chamada para `nivel`), tabela inteira conferida contra `spec:70-81`; saída no PR.
-- PR `hotfix/GM-22-guarda-autonomia ⇒ main` ao integrar o último código (P12). Merge, tag `gabarito-mestre--v2.2.3` e release só por ordem do dono (D-G51, R1).
-- Depois da release: `main ⇒ next`; a GM-20 emenda o teste de ordem do CHANGELOG (`[2.3.0]` acima de `[2.2.3]`). `claude plugin update --scope` nos escopos locais.
+- PR `hotfix/GM-22-guarda-autonomia ⇒ main` ao integrar o último código (P12). Merge, tag `gabarito-mestre--v2.3.1` e release só por ordem do dono (D-G51, R1). O repo tem `delete_branch_on_merge=true`.
+- Depois da release: sincronizar `next` com `main` (merge de `main` em `next`); a GM-20 já está em `main`, sem emenda do teste de ordem. `claude plugin update --scope` nos escopos locais.
 - Gravar números e aprendizados em `docs/aprendizados/processo-orquestrador.md` (P7).
