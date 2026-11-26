@@ -10,7 +10,10 @@
  *  MR2    (r1) `publicar = true` no push implícito ⇒ `publicar-push-implicito-flag-fora` falha
  *  MR3    (r1) ignorar global do git antes do push, ou `-R`/`--repo` no gh ⇒ `publicar-outro-repo` falha
  *  MP1-f  (própria) tirar `candidatos prod === 1` ⇒ `publicar-mesmo-segmento-com-alvo-terceiro-e-false` falha
- *  MR4    (r2) tirar a checagem de atribuição/prefixo de ambiente ⇒ `publicar-familia-ambiente` falha
+ *  MR4    (r2) tirar a checagem de prefixo de ambiente (`semPrefixo` inteiro; a linha de `atribs` sozinha é coberta pelo 1º token) ⇒ `publicar-familia-ambiente` falha
+ *  MV1    (c2r1) vercel aceitar flag de alvo (`--cwd`/`--scope`/`--token`/`-A`/`-Q`/`-t`/`-S`/`--local-config`, `--x v` ou `--x=v`) ⇒ `publicar-familia-vercel-flags` falha
+ *  MV2    (c2r1) vercel aceitar posicional de caminho/URL/id inválido ⇒ `publicar-familia-vercel-posicional` falha
+ *  MV3    (c2r1) push aceitar 2+ refspecs ⇒ `publicar-refspec-unico` falha
  *  MR5    (r2) gh aceitar URL / owner/repo#n (não só número puro) ⇒ `publicar-familia-gh-alvo` falha
  *  MR6    (r2) gh aceitar flag fora da lista fechada ⇒ `publicar-familia-gh-flags` falha
  *  MP1-e  (própria) remoto fora de origin aceito ⇒ `publicar-negativos` (remoto outro) falha
@@ -94,6 +97,49 @@ describe('classificar-publicar-formas', () => {
       assert.equal(c.publicar, false, cmd);
       assert.equal(c.ambiente, 'prod', cmd);
     }
+  });
+
+  test('publicar-familia-vercel-flags: flag de alvo (com espaço E com =) e flag fora da lista são false; ambiente segue prod', () => {
+    const flags = ['--cwd', '--scope', '--token', '--local-config', '--global-config', '-A', '-Q', '-t', '-S', '--team', '--project'];
+    const casos: string[] = [];
+    for (const f of flags) {
+      casos.push(`vercel ${f} ../outro --prod`, `vercel --prod ${f} ../outro`, `vercel deploy ${f} outro --prod`, `vercel ${f}=outro --prod`, `vercel deploy --prod ${f}=outro`);
+    }
+    casos.push('vercel --prod --force', 'vercel --prod --target=production', 'vercel --prod=true', 'vercel --prod --prebuilt');
+    for (const cmd of casos) {
+      const c = bash(cmd);
+      assert.equal(c.publicar, false, cmd);
+      assert.equal(c.ambiente, 'prod', cmd);
+    }
+  });
+
+  test('publicar-familia-vercel-posicional: caminho, URL, subcomando alheio e posicional em deploy são false', () => {
+    for (const cmd of [
+      'vercel ../outro --prod',
+      'vercel ./app --prod',
+      'vercel deploy ../outro --prod',
+      'vercel deploy outro --prod',
+      'vercel deploy https://outro.vercel.app --prod',
+      'vercel promote https://outro.vercel.app',
+      'vercel promote ../outro',
+      'vercel promote a b',
+      'vercel redeploy outro.vercel.app --prod',
+      'vercel rollback https://outro.vercel.app',
+      'vercel env pull --prod',
+    ]) {
+      assert.equal(bash(cmd).publicar, false, cmd);
+    }
+  });
+
+  test('publicar-vercel-lista-aceita: a lista fechada aceita só estas formas', () => {
+    for (const cmd of ['vercel --prod', 'vc --prod', 'vercel deploy --prod', 'vercel --prod --yes', 'vercel deploy --prod -y', 'vercel --production', 'vercel promote dpl_abc123', 'vercel redeploy dpl_abc --prod', 'vercel rollback dpl_abc']) {
+      assert.equal(bash(cmd).publicar, true, cmd);
+    }
+  });
+
+  test('publicar-refspec-unico: push com 2+ refspecs (tag junto) é false; 1 refspec prod segue true', () => {
+    for (const cmd of ['git push origin main v1', 'git push origin main feat/y', 'git push origin HEAD main']) assert.equal(bash(cmd).publicar, false, cmd);
+    assert.equal(bash('git push origin main').publicar, true);
   });
 
   test('publicar-familia-gh-alvo: URL, owner/repo#n, -R colado e globais são false', () => {

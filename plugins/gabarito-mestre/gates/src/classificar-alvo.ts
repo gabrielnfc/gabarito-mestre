@@ -44,6 +44,22 @@ const FLAGS_PUBLICAR = new Set(['-u', '--set-upstream', '-q', '--quiet', '-v', '
 // DT1(b): flags do `gh pr merge` sem efeito de alvo nem de política (sem valor). Fora: --admin (fura proteção), -b/-t/-F/--match-head-commit (valor livre), -R/--repo, URL.
 const FLAGS_GH_MERGE = new Set(['--merge', '-m', '--squash', '-s', '--rebase', '-r', '--auto', '--delete-branch', '-d']);
 const SUB_VERCEL_PUBLICAR = new Set(['', 'deploy', 'redeploy', 'promote', 'rollback']);
+// Forma fechada do vercel (DT1(c)): só estas flags (`--yes`/`-y` só confirmam, não escolhem projeto); `--cwd`, `--scope`, `--token`, `-A`, `-Q`, `-t`, `-S` e `--x=v` ficam fora.
+const FLAGS_VERCEL_PUBLICAR = new Set(['--prod', '--production', '--yes', '-y']);
+const SUB_VERCEL_COM_ID = new Set(['redeploy', 'promote', 'rollback']);
+// Id de deploy sem `/`, `.` ou `:`: URL (outro time) ou caminho (outro projeto) não passam.
+const ID_DEPLOY = /^[A-Za-z0-9_-]+$/;
+
+function formaFechadaVercel(s: Segmento): boolean {
+  if (!semPrefixo(s)) return false;
+  if (!s.args.every((a) => a !== '' && (!a.startsWith('-') || FLAGS_VERCEL_PUBLICAR.has(a)))) return false;
+  const pos = s.args.filter((a) => !a.startsWith('-'));
+  const sub = pos[0] ?? '';
+  if (!SUB_VERCEL_PUBLICAR.has(sub)) return false;
+  const resto = pos.slice(1);
+  if (resto.length === 0) return true;
+  return SUB_VERCEL_COM_ID.has(sub) && resto.length === 1 && ID_DEPLOY.test(resto[0]);
+}
 const LOOPBACK = new Set(['localhost', '127.0.0.1', '::1', '0.0.0.0']);
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -313,7 +329,7 @@ function classificarSegmento(s: Segmento, cfg: ConfigGuarda | null, ctx: Context
     if (alvoProd) {
       candidatos.push({ ambiente: 'prod', alvo: 'vercel' });
       if (!VERCEL_LEITURA.has(sub)) escritaD3 = true;
-      if (SUB_VERCEL_PUBLICAR.has(sub) && semPrefixo(s)) publicar = true;
+      if (formaFechadaVercel(s)) publicar = true;
     }
   } else if (s.cmd === 'supabase') {
     const sub = subSemFlags(s.args, SUPABASE_COM_VALOR).slice(0, 2).join(' ');
@@ -343,7 +359,8 @@ function classificarSegmento(s: Segmento, cfg: ConfigGuarda | null, ctx: Context
         semGlobais &&
         g.resto.every((a) => !a.startsWith('-') || FLAGS_PUBLICAR.has(a)) &&
         (posPush[0] === undefined || posPush[0] === 'origin') &&
-        refspecs.every((r) => !r.startsWith('+') && !r.startsWith(':'));
+        refspecs.every((r) => !r.startsWith('+') && !r.startsWith(':')) &&
+        refspecs.length <= 1;
       const todasAsBranches = g.resto.includes('--mirror') || g.resto.includes('--all');
       const implicito = (): void => {
         if (atual !== null && branchesProd.includes(atual)) {
