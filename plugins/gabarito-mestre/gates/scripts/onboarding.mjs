@@ -569,6 +569,9 @@ export function detectar(fatos) {
 // ────────────────────────────────────────────────────────────── perguntas, prévia e config (T6b)
 
 export const MAX_PERGUNTAS = 5;
+/** O que a autonomia NUNCA cala (GM-22 REQ-TXT-1): a guarda segue perguntando nestes casos. */
+const FRASE_CALA_AUTONOMIA = 'Sempre pergunto antes de tocar dados no ar, apagar em massa, mexer ou pular travas.';
+
 export const IDS_FIXAS = ['politica', 'autonomia', 'perfil'];
 const POLITICAS = ['continua', 'janela', 'sob_demanda'];
 const PERFIS = Object.keys(PERFIS_MODELO);
@@ -658,8 +661,8 @@ function perguntasFixas(existente) {
     com({
       id: 'autonomia',
       texto: mista
-        ? 'Hoje a autonomia está mista (as chaves não combinam com nenhuma das opções): como a IA deve trabalhar a partir de agora? Nada muda sem a sua escolha.'
-        : 'Posso trabalhar e publicar sozinha, ou espero o seu "pode" a cada vez?',
+        ? `A autonomia está mista: como devo trabalhar? Nada muda sem a sua escolha. ${FRASE_CALA_AUTONOMIA}`
+        : `Posso trabalhar e publicar sozinha? ${FRASE_CALA_AUTONOMIA}`,
       opcoes: [
         { valor: 'espera', rotulo: politica !== 'sob_demanda' ? ROTULO_NAO_COM_POLITICA_FROUXA : 'Espere o meu "pode" para tudo, inclusive antes de publicar' },
         { valor: 'trabalha', rotulo: ROTULO_AUTONOMIA_TRABALHA },

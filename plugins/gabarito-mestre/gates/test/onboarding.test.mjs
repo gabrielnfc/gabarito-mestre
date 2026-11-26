@@ -22,6 +22,7 @@ import { CHAVES_AUTONOMIA, ORDEM_ITENS, coletarFatos, detectar, rodarReal, lerWo
 import { coletar as coletarCartao } from '../scripts/cartao-sessao.mjs';
 import { lerConfigEntrega, politicaEfetiva } from '../dist/entrega.js';
 import { PERFIS_MODELO } from '../lib/config.mjs';
+import { acharProibidos } from '../lib/glossario.mjs';
 import * as capacidade from '../scripts/capacidade.mjs';
 
 const require = createRequire(import.meta.url);
@@ -936,6 +937,22 @@ describe('perguntas', () => {
     assert.equal('mista' in aut({ entrega: { autonomia: false } }), false, 'config sã não marca mista');
     // `entrega.autonomia: false` explícito com continua NÃO é legado (o não explícito vale)
     assert.equal(aut({ entrega: { politica: 'continua', autonomia: false } }).default, 'espera');
+  });
+
+  test('onboarding-pergunta-autonomia-diz-o-que-cala', () => {
+    const FRASE = 'Sempre pergunto antes de tocar dados no ar, apagar em massa, mexer ou pular travas.';
+    const raiz = fixtureComGit('completa', 'trunk');
+    const normal = perguntas(itensLista(raiz), null).find((q) => q.id === 'autonomia');
+    assert.equal(normal.texto, `Posso trabalhar e publicar (colocar no ar para as pessoas usarem) sozinha? ${FRASE}`);
+    const mistaRaiz = comConfig(fixtureComGit('completa', 'trunk'), { entrega: { autonomia: true } });
+    const mista = perguntas(itensLista(mistaRaiz), existenteDe(mistaRaiz)).find((q) => q.id === 'autonomia');
+    assert.equal(mista.mista, true);
+    assert.equal(mista.texto, `A autonomia está mista: como devo trabalhar? Nada muda sem a sua escolha. ${FRASE}`);
+    for (const q of [normal, mista]) {
+      assert.ok([...q.texto].length <= 160, `${q.texto.length} > 160`);
+      assert.deepEqual(acharProibidos(q.texto), []);
+      assert.ok(q.texto.endsWith(FRASE));
+    }
   });
 
   test('rotulo-nao-com-continua', () => {
