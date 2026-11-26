@@ -1259,9 +1259,8 @@ test('painel-task-com-orquestrador (ME2-a, ME2-b): último task.iniciada com exe
   assert.equal(taskDoPlano(sem, 'T07')?.nome, 'orquestrador');
 });
 
-test('painel-orquestrador-acaba-quando-sai-de-implementando: concluída, em revisão, reaberta e integrada tiram a linha e o dono', () => {
+test('painel-orquestrador-acaba-quando-sai-de-implementando: em revisão, reaberta e integrada tiram a linha e o dono', () => {
   const casos: [string, Evento[]][] = [
-    ['concluida', diario(ini('T07', 'implementador', EXE), concl('T07'))],
     ['em_revisao', diario(ini('T07', 'implementador', EXE), concl('T07'), ini('T07', 'revisor'))],
     ['reaberta retomada', diario(ini('T07', 'implementador', EXE), ['task.reaberta', { task: 'T07', origem: 'retomada' }])],
     ['reaberta dono', diario(ini('T07', 'implementador', EXE), ['task.reaberta', { task: 'T07', origem: 'dono' }])],
@@ -1273,9 +1272,30 @@ test('painel-orquestrador-acaba-quando-sai-de-implementando: concluída, em revi
     assert.notEqual(taskDoPlano(s, 'T07')?.nome, 'orquestrador', nome);
   }
   // reaberta (dono) em implementando: a task segue implementando e o alerta VOLTA (vale o último)
-  const volta = novo(PLANO, casos[3][1], { agentes: [] });
+  const volta = novo(PLANO, casos[2][1], { agentes: [] });
   assert.ok(volta.atencao.includes('T07 sem agente trabalhando'), volta.atencao.join('|'));
   assert.equal(taskDoPlano(volta, 'T07')?.glifo, '◐');
+});
+
+test('painel-orquestrador-linha-segue-a-cobertura-inteira (D-G44): concluída/reprovada sem outro ciclo mantêm a linha de desvio; alerta e dono seguem `implementando`', () => {
+  const casos: [string, Evento[]][] = [
+    ['concluida', diario(ini('T07', 'implementador', EXE), concl('T07'))],
+    ['reprovada', diario(ini('T07', 'implementador', EXE), concl('T07'), ['review.veredito', { task: 'T07', veredito: 'REPROVADO', rodada: 1, blocker: 1, major: 0 }])],
+  ];
+  for (const [nome, eventos] of casos) {
+    for (const agentes of [[], null]) {
+      const s = novo(PLANO, eventos, { agentes });
+      assert.ok(s.atencao.includes(`T07 com o orquestrador: ${MOTIVO_EXE}`), `${nome}: ${s.atencao.join('|')}`);
+      assert.notEqual(taskDoPlano(s, 'T07')?.nome, 'orquestrador', `${nome}: o dono só vale em implementando`);
+    }
+  }
+  assert.equal(novo(PLANO, casos[0][1], { agentes: [] }).atencao.some((x) => /T07 sem agente trabalhando/.test(x)), false);
+});
+
+test('painel-orquestrador-motivo-inteiro (spec:189 `<motivo>`): o motivo de 500 caracteres vai ao ATENÇÃO sem corte', () => {
+  const longo = 'm'.repeat(500);
+  const s = novo(PLANO, diario(ini('T07', 'implementador', { executor: 'orquestrador', motivo: longo })), { agentes: [] });
+  assert.ok(s.atencao.includes(`T07 com o orquestrador: ${longo}`), s.atencao.join('|').slice(0, 120));
 });
 
 test('painel-orquestrador-so-vale-com-forma-exata (ME1-d no painel): executor outro, motivo vazio ou só espaço não cobrem', () => {

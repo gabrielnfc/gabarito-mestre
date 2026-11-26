@@ -548,9 +548,11 @@ export type AtivosDaEquipe = {
   estados: Map<string, EstadoTask>;
   /**
    * GM-20 REQ-EXE-2: `task` → `motivo` das tasks que o orquestrador executa (`coberturaDoOrquestrador`) e que seguem em `implementando`; elas contam como
-   * cobertas (sem alerta, glifo `●`). Vale com e sem o mod, porque o motivo é fato do diário.
+   * cobertas (sem alerta, glifo `●`) e têm o dono "orquestrador" no PLANO. Vale com e sem o mod, porque o motivo é fato do diário.
    */
   orquestrador: Map<string, string>;
+  /** GM-20 D-G44: a `coberturaDoOrquestrador` INTEIRA (a mesma do "1 por vez" do CLI), em qualquer estado; é a fonte da linha de desvio do ATENÇÃO. */
+  desvio: Map<string, string>;
 };
 
 /**
@@ -592,7 +594,7 @@ export function resolverAtivos(plano: Plano, eventos: Evento[] | null, entrada: 
   const estados = estadosDasTasks(plano, ord);
   const cobertura = coberturaDoOrquestrador(ord ?? []);
   const orquestrador = new Map<string, string>([...cobertura].filter(([t]) => estados.get(t) === 'implementando'));
-  const vazio: AtivosDaEquipe = { ativos: null, desconhecidos: 0, esperando: [], cobertos: new Set(), estados, orquestrador };
+  const vazio: AtivosDaEquipe = { ativos: null, desconhecidos: 0, esperando: [], cobertos: new Set(), estados, orquestrador, desvio: cobertura };
   if (entrada.agentes === null || entrada.agentes === undefined) return vazio;
   const brutos = Array.isArray(entrada.agentes) ? (entrada.agentes as unknown[]) : [];
   const extra = (entrada as { handbacks?: unknown }).handbacks;
@@ -651,7 +653,7 @@ export function resolverAtivos(plano: Plano, eventos: Evento[] | null, entrada: 
     const papel = estado === undefined ? undefined : PAPEL_DO_ESTADO[estado];
     if (papel !== undefined && !cobertos.has(`${t.id}:${papel}`)) esperando.push(t.id);
   }
-  return { ativos: ativos.map((x) => ({ agente: x.agente, id: x.id, casamento: x.casamento, nome: x.nome as string })), desconhecidos, esperando, cobertos, estados, orquestrador };
+  return { ativos: ativos.map((x) => ({ agente: x.agente, id: x.id, casamento: x.casamento, nome: x.nome as string })), desconhecidos, esperando, cobertos, estados, orquestrador, desvio: cobertura };
 }
 
 /** `tok` ausente ou corrompido é `null` (nunca 0: zero é medida, e ausente não é medida); o `contexto` válido segue valendo. */

@@ -1392,6 +1392,21 @@ describe('GM-20 REQ-EXE-1: iniciar --executor orquestrador (D-G44, DT10 a DT12)'
     assert.equal(/T1 sem agente trabalhando/.test(txt.stdout), false);
   });
 
+  test('iniciar-executor-ocupado-e-painel-concluida (adaptador real, D-G44): a task em `concluida` ainda ocupa o slot no CLI e o painel mostra a mesma linha, no estado e no texto', () => {
+    const amb = comWt('T1', 'T2');
+    assert.equal(amb.cli(exe('T1')).rc, 0);
+    amb.semear([['task.concluida', { task: 'T1', sha: 'a'.repeat(40) }]]);
+    const r = amb.cli(exe('T2', 'outra'));
+    assert.equal(r.j.erro, 'executor_ocupado', r.out);
+    const PAINEL = join(AQUI, '..', 'scripts', 'painel.mjs');
+    const roda = (args) => spawnSync(process.execPath, [PAINEL, ...args], { cwd: amb.dir, encoding: 'utf8', env: amb.env, input: '' });
+    const estado = JSON.parse(roda(['estado']).stdout.trim()).estado;
+    assert.ok(estado.atencao.includes(`T1 com o orquestrador: ${MOTIVO}`), JSON.stringify(estado.atencao));
+    const txt = roda(['texto', '--largura', '140']);
+    assert.equal(txt.status, 0, txt.stderr);
+    assert.match(txt.stdout, /T1 com o orquestrador: task de contrato do painel/);
+  });
+
   test('iniciar-executor-compativel-com-o-diario-lido-antes: o evento tem só campos opcionais novos, `task`/`papel` intactos (o leitor 2.2.2 casa por papel)', () => {
     const amb = comWt('T1');
     assert.equal(amb.cli(exe('T1')).rc, 0);

@@ -671,9 +671,12 @@ function glifoDe(t                                    , quem                    
 }
 
 /** Motivo da devolução cortado para o topo: controle vira espaço (como o diário), no máximo 60 caracteres e `…`. */
-function cortarMotivo(m        )         {
+function limparMotivo(m        )         {
   // eslint-disable-next-line no-control-regex
-  const limpo = m.replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]+/g, ' ').trim();
+  return m.replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]+/g, ' ').trim();
+}
+function cortarMotivo(m        )         {
+  const limpo = limparMotivo(m);
   const cps = [...limpo];
   return cps.length <= 60 ? limpo : `${cps.slice(0, 59).join('')}…`;
 }
@@ -1248,8 +1251,8 @@ function projetarNovo(plano              , eventos                 , entrada    
 
   // ATENÇÃO (FIEL-10 c): só travado ou com problema
   const atencao           = [];
-  // GM-20 REQ-EXE-2 (D-G44, "sempre visível"): o desvio do orquestrador aparece com e sem o mod, enquanto a cobertura vale
-  for (const [t, motivo] of equipeAtiva.orquestrador) atencao.push(`${t} com o orquestrador: ${cortarMotivo(motivo)}`);
+  // GM-20 REQ-EXE-2 (D-G44, "sempre visível"): o desvio do orquestrador aparece com e sem o mod, enquanto a cobertura vale (a inteira, como o "1 por vez" do CLI); o motivo vai inteiro (spec:189), quebrado pela largura
+  for (const [t, motivo] of equipeAtiva.desvio) atencao.push(`${t} com o orquestrador: ${limparMotivo(motivo)}`);
   if (ativos !== null) {
     for (const t of equipeAtiva.esperando) atencao.push(`${t} sem agente trabalhando`);
     const d = equipeAtiva.desconhecidos;

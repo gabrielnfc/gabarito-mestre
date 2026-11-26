@@ -548,9 +548,11 @@ export function coberturaDoOrquestrador(ordenado         )                      
                                    
      
                                                                                                                                                           
-                                                                                              
+                                                                                                                                   
      
                                     
+                                                                                                                                                       
+                              
   
 
 /**
@@ -592,7 +594,7 @@ export function resolverAtivos(plano       , eventos                 , entrada  
   const estados = estadosDasTasks(plano, ord);
   const cobertura = coberturaDoOrquestrador(ord ?? []);
   const orquestrador = new Map                ([...cobertura].filter(([t]) => estados.get(t) === 'implementando'));
-  const vazio                 = { ativos: null, desconhecidos: 0, esperando: [], cobertos: new Set(), estados, orquestrador };
+  const vazio                 = { ativos: null, desconhecidos: 0, esperando: [], cobertos: new Set(), estados, orquestrador, desvio: cobertura };
   if (entrada.agentes === null || entrada.agentes === undefined) return vazio;
   const brutos = Array.isArray(entrada.agentes) ? (entrada.agentes             ) : [];
   const extra = (entrada                           ).handbacks;
@@ -651,7 +653,7 @@ export function resolverAtivos(plano       , eventos                 , entrada  
     const papel = estado === undefined ? undefined : PAPEL_DO_ESTADO[estado];
     if (papel !== undefined && !cobertos.has(`${t.id}:${papel}`)) esperando.push(t.id);
   }
-  return { ativos: ativos.map((x) => ({ agente: x.agente, id: x.id, casamento: x.casamento, nome: x.nome           })), desconhecidos, esperando, cobertos, estados, orquestrador };
+  return { ativos: ativos.map((x) => ({ agente: x.agente, id: x.id, casamento: x.casamento, nome: x.nome           })), desconhecidos, esperando, cobertos, estados, orquestrador, desvio: cobertura };
 }
 
 /** `tok` ausente ou corrompido é `null` (nunca 0: zero é medida, e ausente não é medida); o `contexto` válido segue valendo. */
