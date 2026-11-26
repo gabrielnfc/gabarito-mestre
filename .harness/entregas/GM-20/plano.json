@@ -161,7 +161,8 @@
       "titulo": "Task executada pelo orquestrador",
       "deps": [
         "T8",
-        "T6"
+        "T6",
+        "T10"
       ],
       "arquivos": [
         "plugins/gabarito-mestre/gates/scripts/loop.mjs",
@@ -177,7 +178,8 @@
         "plugins/gabarito-mestre/gates/test/formas.test.ts",
         "plugins/gabarito-mestre/gates/test/painel-equipe.test.ts",
         "plugins/gabarito-mestre/gates/test/registro.test.ts",
-        "plugins/gabarito-mestre/skills/gabarito-loop/SKILL.md"
+        "plugins/gabarito-mestre/skills/gabarito-loop/SKILL.md",
+        "plugins/gabarito-mestre/gates/test/skills-shell.test.mjs"
       ],
       "reqs": [
         "REQ-EXE-1",
