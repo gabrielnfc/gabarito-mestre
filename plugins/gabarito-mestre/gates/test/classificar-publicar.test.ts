@@ -10,7 +10,8 @@
  *  MR2    (r1) `publicar = true` no push implícito ⇒ `publicar-push-implicito-flag-fora` falha
  *  MR3    (r1) ignorar global do git antes do push, ou `-R`/`--repo` no gh ⇒ `publicar-outro-repo` falha
  *  MP1-f  (própria) tirar `candidatos prod === 1` ⇒ `publicar-mesmo-segmento-com-alvo-terceiro-e-false` falha
- *  MR4    (r2) tirar a checagem de prefixo de ambiente (`semPrefixo` inteiro; a linha de `atribs` sozinha é coberta pelo 1º token) ⇒ `publicar-familia-ambiente` falha
+ *  MR4    (r2) tirar a checagem de prefixo de ambiente (`semPrefixo` inteiro) ⇒ `publicar-familia-ambiente` falha; tirar só a linha de `atribs` ⇒ falham os casos `VAR=<x>/<cmd> <cmd>` (valor terminando em `/<cmd>` passa no 1º token, só a linha de `atribs` os barra)
+ *  MV4    (c3) tirar `a !== ''` em `formaFechadaVercel` ⇒ `publicar-vercel-arg-vazio` falha
  *  MV1    (c2r1) vercel aceitar flag de alvo (`--cwd`/`--scope`/`--token`/`-A`/`-Q`/`-t`/`-S`/`--local-config`, `--x v` ou `--x=v`) ⇒ `publicar-familia-vercel-flags` falha
  *  MV2    (c2r1) vercel aceitar posicional de caminho/URL/id inválido ⇒ `publicar-familia-vercel-posicional` falha
  *  MV3    (c2r1) push aceitar 2+ refspecs ⇒ `publicar-refspec-unico` falha
@@ -91,12 +92,23 @@ describe('classificar-publicar-formas', () => {
       ['FOO=1 vercel --prod', 'feat/x'],
       ['env VERCEL_ORG_ID=x vercel --prod', 'feat/x'],
       ['VERCEL_PROJECT_ID=x vc deploy --prod', 'feat/x'],
+      // valor termina em `/<cmd>`: o 1º token (`primeiro.split('/').pop()`) passaria; só a checagem de `atribs` barra
+      ['GH_REPO=org/gh gh pr merge 5', 'main'],
+      ['GIT_DIR=../outro/git git push origin main', 'main'],
+      ['VERCEL_ORG_ID=x/vercel vercel --prod', 'feat/x'],
+      ['X=/usr/bin/git git push origin main', 'main'],
     ];
     for (const [cmd, branch] of casos) {
       const c = bash(cmd, branch);
       assert.equal(c.publicar, false, cmd);
       assert.equal(c.ambiente, 'prod', cmd);
     }
+  });
+
+  test('publicar-vercel-arg-vazio: argumento vazio em vercel é false, ambiente segue prod', () => {
+    const c = bash('vercel --prod ""');
+    assert.equal(c.publicar, false);
+    assert.equal(c.ambiente, 'prod');
   });
 
   test('publicar-familia-vercel-flags: flag de alvo (com espaço E com =) e flag fora da lista são false; ambiente segue prod', () => {
