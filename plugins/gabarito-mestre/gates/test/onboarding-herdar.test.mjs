@@ -372,3 +372,45 @@ test('herdar-e-painel-borda-concluido-normalizado: card em "concluido" (sem acen
   assert.ok(!desatDoPainel(dir).some((c) => c.id === 'PBI-41'));
   assert.ok(!herdar(dir).j.cardsDesatualizados.some((c) => c.id === 'PBI-41'));
 });
+
+// ── GM-20 T11 r3: matriz por argumento de projetoDoRepo no herdar (onboarding-herdar.mjs:148) ──
+// atual → raiz · cfg → config da raiz · idPadrao → cfg.fluxo.idPadrao · deps.worktreeList → listaDeWorktrees(raiz, rodar) · agoraMs/fuso: FORA da matriz
+// (o revisor mediu que agoraMs e fuso não mudam a lista de desatualizados; os 2 vão fixos em Date.now() e 'UTC').
+const { herdar: herdarFn } = await import('../scripts/onboarding-herdar.mjs');
+const idsDe = (lista) => lista.map((c) => c.id);
+
+test('herdar-e-painel-degradado-sem-git: sem .git só `atual` leva à raiz; herdar e painel listam PBI-7 (P9, argumento atual, X-RAIZ-FIXA)', async () => {
+  const dir = await projeto('p9-semgit');
+  rmSync(join(dir, '.git'), { recursive: true, force: true });
+  assert.ok(!existsSync(join(dir, '.git')), 'contexto: a fixture não tem .git');
+  assert.notEqual(realpathSync(process.cwd()), realpathSync(dir), 'contexto: o cwd do teste não é a raiz da fixture');
+  assert.equal(spawnSync('git', ['worktree', 'list', '--porcelain'], { cwd: dir, encoding: 'utf8' }).status !== 0, true, 'contexto: o git falha nessa raiz');
+  const doPainel = desatDoPainel(dir);
+  assert.deepEqual(idsDe(doPainel), ['PBI-7'], 'contexto: o painel (atual: dir, git falho) lista PBI-7');
+  assert.deepEqual(herdar(dir).j.cardsDesatualizados, doPainel);
+});
+
+test('herdar-e-painel-degradado-rodar-rc1: rodar com rc≠0 cai na raiz e herdar = painel com worktreeList ok:false (P9, argumento deps.worktreeList)', async () => {
+  const dir = await projeto('p9-rc1');
+  const chamadas = [];
+  const rodar = (cmd, args) => { chamadas.push([cmd, ...args].join(' ')); return { rc: 1, stdout: '', stderr: 'fatal' }; };
+  const r = herdarFn(dir, { rodar });
+  assert.ok(chamadas.some((c) => c === 'git worktree list --porcelain'), 'contexto: o herdar chamou o git pelo rodar injetado');
+  const doPainel = desatDoPainel(dir);
+  assert.deepEqual(idsDe(doPainel), ['PBI-7']);
+  assert.deepEqual(r.cardsDesatualizados, doPainel);
+});
+
+test('herdar-e-painel-terminais-da-config: terminais personalizado na cfg vale nas 2 camadas e é o único fator (P9, argumento cfg)', async () => {
+  const dir = await projeto('p9-termcfg');
+  gravarCard(dir, 'PBI-50', 'Aguardando cliente');
+  await encerrar(dir, 'PBI-50');
+  assert.deepEqual(idsDe(desatDoPainel(dir)).sort(), ['PBI-50', 'PBI-7'], 'contexto: com a config padrão PBI-50 é desatualizado');
+  const cfg = cfgDe(dir);
+  cfg.fluxo.status = { ...(cfg.fluxo.status ?? {}), terminais: ['Aguardando cliente'] };
+  writeFileSync(join(dir, 'harness.config.json'), JSON.stringify(cfg, null, 2));
+  assert.deepEqual(cfgDe(dir).fluxo.status.terminais, ['Aguardando cliente'], 'contexto: o terminal é o personalizado');
+  const doPainel = desatDoPainel(dir);
+  assert.deepEqual(idsDe(doPainel), ['PBI-7'], 'contexto: o painel já não lista PBI-50');
+  assert.deepEqual(herdar(dir).j.cardsDesatualizados, doPainel);
+});
