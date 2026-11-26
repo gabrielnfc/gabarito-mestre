@@ -54,7 +54,7 @@ export function papelDoAgente(tipo         )                                    
  * `implementador` numa task em `corrigindo` vira `correcao`; 4. tipo sem papel do gabarito ⇒ o papel do estado da task; 5. sem task, ou sem papel
  * nenhum, o do tipo só para exibição (`spike`, `sombra`). Nunca lança; `description`/`type` que não são texto ⇒ sem task.
  */
-export function casarVivo(agente         , plano       , estados                                 )            {
+export function casarVivo(agente         , plano       , estados                                 , comHandback = false)            {
   const a = ehObjeto(agente) ? agente : {};
   const desc = typeof a.description === 'string' ? a.description.trim() : '';
   const tipo = papelDoAgente(a.type);
@@ -70,9 +70,9 @@ export function casarVivo(agente         , plano       , estados                
   if (task === null) return { task: null, papel: null, papelExibido: tipo };
   const estado = estados.get(task);
   // GM-20 REQ-FAN-3 (DT9): a task só é do agente depois de sair de `pendente` nesta entrega; sem estado conhecido (diário ilegível) casa como antes.
-  // Exceção (fonte: teste `t0-pendente-com-spike-vivo-em-curso`, painel-equipe.test.ts, regra da GM-15; a GM-20 REQ-FAN-3 não a revoga): o spike
-  // (Task 0 mede antes do `iniciar`, sem evento no diário) segue casando task pendente
-  if (estado === 'pendente' && tipo !== 'spike') return { task: null, papel: null, papelExibido: tipo };
+  // Exceção da Task 0 (emenda 3 de REQ-FAN-3; teste `t0-pendente-com-spike-vivo-em-curso`): o spike vivo mede antes do `iniciar` e casa a T0 pendente,
+  // só se não houver hand-back dele em nenhuma entrega (`comHandback`; teste `spike-fantasma-outra-entrega-nao-casa`)
+  if (estado === 'pendente' && !(tipo === 'spike' && !comHandback)) return { task: null, papel: null, papelExibido: tipo };
   const antigo = DESCRICAO_RE.exec(desc);
   const doEstado = estado === undefined ? undefined : PAPEL_DO_ESTADO[estado];
   let papel                   ;
@@ -465,7 +465,7 @@ function handbacksDe(eventos          , extra          )                      {
   const mapa = handbacksDoDiario(eventos);
   if (ehObjeto(extra)) {
     for (const [id, ms] of Object.entries(extra)) {
-      if (id !== '' && typeof ms === 'number' && Number.isFinite(ms)) mapa.set(id, Math.max(mapa.get(id) ?? -Infinity, ms));
+      if (id !== '' && typeof ms === 'number' && !Number.isNaN(ms)) mapa.set(id, Math.max(mapa.get(id) ?? -Infinity, ms));
     }
   }
   return mapa;
@@ -526,6 +526,8 @@ function proximoNome(pacote             , usados                     )         {
 export const SEM_SINAL_MS = 30 * 60_000;
 /** GM-20 REQ-FAN-2 (DT8): sem atividade no transcript há mais de 60 min (> p99 de 29,9 min medido) o agente sai; só com transcript legível. */
 export const SILENCIO_MS = 60 * 60_000;
+/** GM-20 emenda 4 (REQ-FAN-1): margem da retomada; medido: 86 de 639 hand-backs (13,5 %) têm o `mtime` até 100 ms depois do `ts`. */
+export const MARGEM_RETOMADA_MS = 1000;
 /** `atividadeMs` = `mtime` do transcript que a borda leu (`AgenteVivo` não o declara: o campo é só da borda para este arquivo). */
 const atividadeDe = (a         )                => (ehObjeto(a) && typeof a.atividadeMs === 'number' && Number.isFinite(a.atividadeMs) ? a.atividadeMs : null);
 /**
@@ -564,7 +566,7 @@ export function resolverAtivos(plano       , eventos                 , entrada  
     const id = ehObjeto(a) && typeof a.id === 'string' ? a.id : '';
     const atividade = atividadeDe(a);
     const hb = handbacks.get(id);
-    if (id !== '' && !doMod.has(id) && hb !== undefined && atividade !== null && atividade > hb) fim.delete(id);
+    if (id !== '' && !doMod.has(id) && hb !== undefined && atividade !== null && atividade > hb + MARGEM_RETOMADA_MS && !(typeof entrada.agoraMs === 'number' && atividade > entrada.agoraMs)) fim.delete(id);
   }
   const pares = nomesPorPapel(lista, entrada.pacote);
   let desconhecidos = 0;
@@ -576,7 +578,7 @@ export function resolverAtivos(plano       , eventos                 , entrada  
     const atividade = atividadeDe(a);
     if (atividade !== null && typeof entrada.agoraMs === 'number' && entrada.agoraMs - atividade > SILENCIO_MS) return; // GM-20 REQ-FAN-2
     const agente = a              ;
-    const casamento = casarVivo(agente, plano, estados);
+    const casamento = casarVivo(agente, plano, estados, typeof agente.id === 'string' && handbacks.has(agente.id));
     if (semSinalDeVida(agente, casamento, estados, lista, entrada)) return;
     ativos.push({ agente, id: typeof agente.id === 'string' ? agente.id : '', casamento, nome: null, i });
   });

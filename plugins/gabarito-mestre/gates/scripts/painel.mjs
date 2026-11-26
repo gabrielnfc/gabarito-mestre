@@ -584,7 +584,7 @@ function atividades(raiz, fontes) {
   // GM-20 REQ-FAN-1: o `_sem-id` (fora do filtro acima) só entra aqui, para estes ids; ausente ≠ corrompido
   const semId = join(base, '_sem-id');
   let temSemId = false;
-  try { temSemId = lstatSync(semId).isDirectory(); } catch { /* sem a pasta */ }
+  try { temSemId = lstatSync(semId).isDirectory(); } catch (e) { if (!ausenteFs(e)) fontes.push(FONTE.diarioDe('_sem-id')); }
   if (temSemId) {
     const lido = lerEstrito(semId);
     if (lido.ok) handbacksDe(lido.eventos, handbacks);
@@ -593,13 +593,13 @@ function atividades(raiz, fontes) {
   return { ultimas, ultima: ultima === null ? null : { id: ultima.id, estado: estadoEmPalavras(ultima.dir, ultima.eventos) }, diarios, handbacks };
 }
 
-/** GM-20 REQ-FAN-1: acumula em `saida` o `ts` (ms) mais recente do hand-back (`custo.medicao` de `subagent:<id>`) de cada id; `ts` ilegível não conta. */
+/** GM-20 REQ-FAN-1: acumula em `saida` o `ts` (ms) mais recente do hand-back (`custo.medicao` de `subagent:<id>`) de cada id; `ts` ilegível vale `Infinity`. */
 function handbacksDe(eventos, saida) {
   for (const e of eventos) {
     if (e?.tipo !== 'custo.medicao' || typeof e.agente !== 'string' || !e.agente.startsWith('subagent:') || e.agente.length <= 9) continue;
     const ms = Date.parse(e.ts);
-    if (!Number.isFinite(ms)) continue;
     const id = e.agente.slice(9);
+    if (!Number.isFinite(ms)) { saida[id] = Infinity; continue; } // alinhado ao núcleo: `ts` ilegível ⇒ o hand-back fica, o agente sai
     if (!Object.hasOwn(saida, id) || ms > saida[id]) saida[id] = ms;
   }
 }

@@ -1842,6 +1842,14 @@ describe('agente fantasma (GM-20)', { timeout: 120_000 }, () => {
     assert.equal(dono(quem(m, [agente({ transcript: transcript(m, 'ghost01', T_HB) })], agora)).length, 0, 'mesmo instante: segue fora');
   });
 
+  test('handback-ts-mais-100ms-segue-fora (CLI): margem de 1 s', () => {
+    const m = montar({ ...comEventos(EM_REVISAO) });
+    handback(m, 'GM-11');
+    const agora = T_HB + 30 * 60_000;
+    assert.equal(dono(quem(m, [agente({ transcript: transcript(m, 'ghost01', T_HB + 100) })], agora)).length, 0, '100 ms depois: segue fora');
+    assert.equal(dono(quem(m, [agente({ transcript: transcript(m, 'ghost01', T_HB + 1001) })], agora)).length, 1, 'mais de 1 s: retomado');
+  });
+
   test('fantasma-silencio-60-min (CLI): o `mtime` do transcript legível decide; 60 exatos fica, 61 sai; sem transcript legível fica', () => {
     const m = montar({ ...comEventos(EM_REVISAO) });
     const min = (n) => AGORA - n * 60_000;

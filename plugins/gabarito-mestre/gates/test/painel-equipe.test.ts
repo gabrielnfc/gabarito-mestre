@@ -1156,17 +1156,48 @@ test('fantasma-handback-outra-entrega (REQ-FAN-1): hand-back de outra entrega ti
 test('fantasma-retomado-volta (REQ-FAN-1, MF1-b): transcript mexido DEPOIS do hand-back devolve o agente; no mesmo instante ou antes, não', () => {
   const evs = EM_REVISAO();
   const vivo = (atividadeMs: number) => resolverAtivos(PLANO, evs, comHandbacks([fantasma({ atividadeMs })], { ghost01: T_HB }, T_HB + 60_000)).ativos?.length;
-  assert.equal(vivo(T_HB + 1), 1, 'mtime posterior: retomado');
+  assert.equal(vivo(T_HB + 1001), 1, 'mtime posterior por mais de 1 s: retomado');
+  assert.equal(vivo(T_HB + 1000), 0, 'exatos 1 s: ainda dentro da margem');
   assert.equal(vivo(T_HB), 0, 'mesmo instante: segue encerrado');
   assert.equal(vivo(T_HB - 1), 0);
   // o hand-back do diário exibido também cede à retomada
   const doExibido = [...EM_REVISAO(), ev('custo.medicao', { papel: 'revisor', modelo: 'claude-opus-4-8', input_tokens: 1, output_tokens: 1 }, '2026-11-09T14:00:00.000Z', 's1', 'subagent:ghost01')];
-  assert.equal(resolverAtivos(PLANO, doExibido, comHandbacks([fantasma({ atividadeMs: T_HB + 1 })], {}, T_HB + 60_000)).ativos?.length, 1);
+  assert.equal(resolverAtivos(PLANO, doExibido, comHandbacks([fantasma({ atividadeMs: T_HB + 1001 })], {}, T_HB + 60_000)).ativos?.length, 1);
   // o `SubagentStop` do mod não cede: o mod o dá por parado agora
-  assert.deepEqual(resolverAtivos(PLANO, evs, entrada({ agentes: [fantasma({ atividadeMs: T_HB + 1 })], encerrados: ['ghost01'], handbacks: { ghost01: T_HB }, agoraMs: T_HB + 60_000 } as Partial<EntradaPainel>)).ativos, []);
+  assert.deepEqual(resolverAtivos(PLANO, evs, entrada({ agentes: [fantasma({ atividadeMs: T_HB + 1001 })], encerrados: ['ghost01'], handbacks: { ghost01: T_HB }, agoraMs: T_HB + 60_000 } as Partial<EntradaPainel>)).ativos, []);
   // o último hand-back de vários vale: retomou entre os dois e parou de novo
   const dois = [...EM_REVISAO(), ev('custo.medicao', { papel: 'revisor', modelo: 'm', input_tokens: 1, output_tokens: 1 }, '2026-11-09T13:00:00.000Z', 's1', 'subagent:ghost01')];
   assert.deepEqual(resolverAtivos(PLANO, dois, comHandbacks([fantasma({ atividadeMs: T_HB - 1 })], { ghost01: T_HB }, T_HB + 60_000)).ativos, []);
+});
+
+test('handback-ts-mais-100ms-segue-fora (emenda 4, REQ-FAN-1): o transcript escrito até 100 ms depois do hand-back não é retomada', () => {
+  const evs = EM_REVISAO();
+  const vivo = (atividadeMs: number) => resolverAtivos(PLANO, evs, comHandbacks([fantasma({ atividadeMs })], { ghost01: T_HB }, T_HB + 60_000)).ativos?.length;
+  assert.equal(vivo(T_HB + 100), 0);
+  assert.equal(vivo(T_HB + 999), 0);
+  assert.equal(vivo(T_HB + 1001), 1);
+});
+
+test('minor-5: mtime no futuro (além do agora) não revive o agente com hand-back', () => {
+  const evs = EM_REVISAO();
+  const vivo = (atividadeMs: number) => resolverAtivos(PLANO, evs, comHandbacks([fantasma({ atividadeMs })], { ghost01: T_HB }, T_HB + 60_000)).ativos?.length;
+  assert.equal(vivo(T_HB + 60_000), 1, 'até o agora: retomado');
+  assert.equal(vivo(T_HB + 60_001), 0, 'depois do agora: relógio, não retomada');
+});
+
+test('minor-4: hand-back com ts ilegível (borda e diário) mantém o agente fora, nem a retomada o devolve', () => {
+  const ilegivel = [...EM_REVISAO(), ev('custo.medicao', { papel: 'revisor', modelo: 'm', input_tokens: 1, output_tokens: 1 }, 'não-é-data', 's1', 'subagent:ghost01')];
+  assert.deepEqual(resolverAtivos(PLANO, ilegivel, comHandbacks([fantasma({ atividadeMs: T_HB + 5000 })], {}, T_HB + 60_000)).ativos, []);
+  assert.deepEqual(resolverAtivos(PLANO, EM_REVISAO(), comHandbacks([fantasma({ atividadeMs: T_HB + 5000 })], { ghost01: Infinity }, T_HB + 60_000)).ativos, []);
+});
+
+test('spike-fantasma-outra-entrega-nao-casa (emenda 3, REQ-FAN-3): spike com hand-back em outra entrega não casa a T0 pendente; sem hand-back casa', () => {
+  const plano = planoDe('T0', 'T07');
+  const sp = { ...vivoT('sp', 'T0 medir a paginação', 'gabarito-mestre:gabarito-spike'), atividadeMs: T_HB + 5000 };
+  const com = projetarPainel(plano, [], comHandbacks([sp as AgenteVivo], { sp: T_HB }, T_HB + 60_000));
+  assert.equal(com.plano.tasks.find((t) => t.id === 'T0')?.glifo, '○');
+  const sem = projetarPainel(plano, [], comHandbacks([sp as AgenteVivo], {}, T_HB + 60_000));
+  assert.equal(sem.plano.tasks.find((t) => t.id === 'T0')?.glifo, '●');
 });
 
 test('fantasma-silencio-60-min (REQ-FAN-2): 59 e 60 min ficam, 61 sai; sem transcript legível fica (MF2-a, b, c)', () => {
