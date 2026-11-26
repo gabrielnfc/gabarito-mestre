@@ -1850,18 +1850,28 @@ describe('agente fantasma (GM-20)', { timeout: 120_000 }, () => {
     assert.equal(dono(quem(m, [agente({ transcript: transcript(m, 'ghost01', T_HB + 1001) })], agora)).length, 1, 'mais de 1 s: retomado');
   });
 
-  test('handback-mais-novo-vale (CLI, regra única do núcleo): 2 hand-backs em outra entrega e o transcript entre eles ⇒ segue fora (vale o mais novo, em qualquer ordem)', () => {
-    const m = montar({ ...comEventos(EM_REVISAO) });
-    handback(m, 'GM-11', 'ghost01', new Date(T_HB).toISOString());
-    handback(m, 'GM-12', 'ghost01', new Date(T_HB + 10 * 60_000).toISOString());
+  test('handback-mais-novo-vale (CLI, regra única do núcleo): 2 hand-backs de ts legível em 2 entregas FORA da exibida e o transcript entre eles ⇒ segue fora (vale o mais novo, em qualquer ordem de gravação)', () => {
     const agora = T_HB + 30 * 60_000;
-    assert.equal(dono(quem(m, [agente({ transcript: transcript(m, 'ghost01', T_HB + 5 * 60_000) })], agora)).length, 0, 'entre os dois: o mais novo vale, segue fora');
-    assert.equal(dono(quem(m, [agente({ transcript: transcript(m, 'ghost01', T_HB + 10 * 60_000 + 2000) })], agora)).length, 1, 'depois do mais novo: retomado');
-    // a mesma entrega, hand-back mais novo gravado primeiro (ordem do diário não decide)
-    const m2 = montar({ ...comEventos(EM_REVISAO) });
-    handback(m2, 'GM-11', 'ghost01', new Date(T_HB + 10 * 60_000).toISOString());
-    handback(m2, 'GM-11', 'ghost01', new Date(T_HB).toISOString());
-    assert.equal(dono(quem(m2, [agente({ transcript: transcript(m2, 'ghost01', T_HB + 5 * 60_000) })], agora)).length, 0, 'ordem inversa: segue fora');
+    const velho = new Date(T_HB).toISOString();
+    const novo = new Date(T_HB + 10 * 60_000).toISOString();
+    for (const [rotulo, [a, b]] of [['novo em GM-11', [['GM-10', velho], ['GM-11', novo]]], ['novo em GM-10', [['GM-10', novo], ['GM-11', velho]]]]) {
+      for (const ordem of [[a, b], [b, a]]) {
+        const m = montar({ ...comEventos(EM_REVISAO) });
+        for (const [entrega] of ordem) assert.notEqual(entrega, ENTREGA, 'a fixture usa só entregas fora da exibida');
+        for (const [entrega, ts] of ordem) handback(m, entrega, 'ghost01', ts);
+        const ctx = `${rotulo}, gravado ${ordem.map((x) => x[0]).join('→')}`;
+        assert.equal(dono(quem(m, [agente({ transcript: transcript(m, 'ghost01', T_HB + 5 * 60_000) })], agora)).length, 0, `${ctx}: entre os dois, o mais novo vale, segue fora`);
+        assert.equal(dono(quem(m, [agente({ transcript: transcript(m, 'ghost01', T_HB + 10 * 60_000 + 2000) })], agora)).length, 1, `${ctx}: depois do mais novo, retomado`);
+      }
+    }
+  });
+
+  test('handback-mais-novo-vale-mesma-entrega (CLI): 2 hand-backs na mesma entrega, o mais novo gravado primeiro ⇒ a ordem do diário não decide', () => {
+    const agora = T_HB + 30 * 60_000;
+    const m = montar({ ...comEventos(EM_REVISAO) });
+    handback(m, 'GM-11', 'ghost01', new Date(T_HB + 10 * 60_000).toISOString());
+    handback(m, 'GM-11', 'ghost01', new Date(T_HB).toISOString());
+    assert.equal(dono(quem(m, [agente({ transcript: transcript(m, 'ghost01', T_HB + 5 * 60_000) })], agora)).length, 0, 'ordem inversa: segue fora');
   });
 
   test('handback-ts-ilegivel (CLI, regra única do núcleo): hand-back de `ts` ilegível em outra entrega ⇒ o agente segue fora, mesmo com transcript novo e com outro hand-back legível antes ou depois', () => {
