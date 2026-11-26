@@ -9,6 +9,7 @@ import { createHash } from 'node:crypto';
 import { contexto, liberarTeto } from '../scripts/loop.mjs';
 import { trilhaDe } from '../dist/trilha.js';
 import { estadoDe as estadoNucleo, ordenar as ordenarNucleo } from '../dist/loop.js';
+import { coberturaDoOrquestrador } from '../dist/painel-equipe.js';
 import * as diario from '../dist/diario.js';
 import { AQUI, GITIGNORE_RAIZ, VERSAO_PLUGIN, CONFIG_PADRAO, planoDe, PLANO_PADRAO, ambiente, PLANO_REQ, IMPL_E, APROVA_E, INTEGRA_E, PROPOSTA, relogioDe, escreve, grava, bytesDoDiario, ambReq, comOrigin, proporArgs } from './_loop-cli-helpers.mjs';
 // --- corpo movido ---
@@ -1300,5 +1301,102 @@ describe('GM-15 T13: lote do dono no proxima', () => {
     assert.equal(amb.cli(['adiar', 'T2', '--motivo', 'm', '--origem', 'sombra']).rc, 2, 'segue uso');
     assert.equal(amb.cli(['adiar', 'T2', '--motivo', 'm']).j.item_do_dono, undefined, 'sem --origem sombra não é a Sombra: só uso');
     assert.deepEqual(bytesDoDiario(amb), antes);
+  });
+});
+
+describe('GM-20 REQ-EXE-1: iniciar --executor orquestrador (D-G44, DT10 a DT12)', () => {
+  const MOTIVO = 'task de contrato do painel; o subagent não tem a regra';
+  const exe = (t, motivo = MOTIVO, papel = 'implementador') => ['iniciar', t, papel, '--executor', 'orquestrador', '--motivo', motivo];
+  const comWt = (...ts) => { const amb = ambReq(); for (const t of ts) assert.equal(amb.cli(['abrir', t]).rc, 0, t); return amb; };
+
+  test('iniciar-executor-orquestrador-grava (ME1-a): 1 task.iniciada {papel, executor, motivo}, rc 0 pelo CLI real; o motivo é texto livre (fora da lista do `concluir`)', () => {
+    const amb = comWt('T1');
+    const antes = amb.eventos().length;
+    const r = amb.cli(exe('T1'));
+    assert.equal(r.rc, 0, r.out + r.err);
+    assert.equal(r.j.ok, true);
+    const novos = amb.eventos().slice(antes);
+    assert.equal(novos.length, 1, 'um evento só, nenhum `desvio` extra (DT10)');
+    assert.equal(novos[0].tipo, 'task.iniciada');
+    assert.equal(novos[0].dados.task, 'T1');
+    assert.equal(novos[0].dados.papel, 'implementador');
+    assert.equal(novos[0].dados.executor, 'orquestrador');
+    assert.equal(novos[0].dados.motivo, MOTIVO);
+    assert.equal(amb.tipos().includes('desvio'), false);
+    // o `concluir` segue com a lista fechada de motivos da reentrega
+    assert.equal(amb.cli(['concluir', 'T1', '--motivo', MOTIVO]).rc, 1);
+  });
+
+  test('iniciar-executor-sem-motivo-recusa (ME1-a): sem --motivo, vazio ou só espaço ⇒ argumento_invalido, rc 1, diário igual; --motivo sem --executor também', () => {
+    const amb = comWt('T1');
+    const antes = bytesDoDiario(amb);
+    for (const args of [['iniciar', 'T1', 'implementador', '--executor', 'orquestrador'], exe('T1', ''), exe('T1', '   '), exe('T1', '\t'),
+      ['iniciar', 'T1', 'implementador', '--motivo', 'sem executor']]) {
+      const r = amb.cli(args);
+      assert.equal(r.rc, 1, JSON.stringify(args) + r.out);
+      assert.equal(r.j.erro, 'argumento_invalido', JSON.stringify(args));
+    }
+    assert.deepEqual(bytesDoDiario(amb), antes);
+  });
+
+  test('iniciar-executor-revisor-recusa (ME1-b): outro valor de --executor, e papel revisor ou correcao ⇒ argumento_invalido, rc 1, nada gravado', () => {
+    const amb = comWt('T1');
+    amb.semear([['task.iniciada', { task: 'T1', papel: 'implementador' }], ['task.concluida', { task: 'T1', sha: 'a'.repeat(40) }]]);
+    const antes = bytesDoDiario(amb);
+    for (const args of [exe('T1', MOTIVO, 'revisor'), exe('T1', MOTIVO, 'correcao'),
+      ['iniciar', 'T1', 'implementador', '--executor', 'humano', '--motivo', 'm'], ['iniciar', 'T1', 'implementador', '--executor', 'Orquestrador', '--motivo', 'm'],
+      ['iniciar', 'T1', 'implementador', '--executor', '', '--motivo', 'm']]) {
+      const r = amb.cli(args);
+      assert.equal(r.rc, 1, JSON.stringify(args) + r.out);
+      assert.equal(r.j.erro, 'argumento_invalido', JSON.stringify(args));
+    }
+    assert.deepEqual(bytesDoDiario(amb), antes);
+  });
+
+  test('iniciar-executor-um-por-vez (ME1-c): outra task da entrega com executor em voo ⇒ executor_ocupado, rc 1; sem executor passa; a cobertura que acaba libera; outra entrega não conta', () => {
+    const amb = comWt('T1', 'T2');
+    assert.equal(amb.cli(exe('T1')).rc, 0);
+    const antes = bytesDoDiario(amb);
+    const r = amb.cli(exe('T2', 'outra'));
+    assert.equal(r.rc, 1, r.out);
+    assert.equal(r.j.erro, 'executor_ocupado');
+    assert.deepEqual(bytesDoDiario(amb), antes, 'nada gravado');
+    // a mesma task em voo não é "outra": a tabela diz o resto (transicao_invalida, não executor_ocupado)
+    assert.notEqual(amb.cli(exe('T1', 'de novo')).j.erro, 'executor_ocupado');
+    // outra entrega com task do orquestrador em voo não bloqueia esta
+    const outra = join(amb.dir, '.harness', 'entregas', 'GM-11');
+    mkdirSync(outra, { recursive: true });
+    const w = diario.append(outra, 'loop', { ts: '2026-01-01T00:00:01.000Z', autor: 't@t', sessao: 'loop', agente: 'orquestrador', tipo: 'task.iniciada', dados: { task: 'T9', papel: 'implementador', executor: 'orquestrador', motivo: 'm' } });
+    assert.ok(w.ok, JSON.stringify(w));
+    // task com agente comum não bloqueia, e a que sai de implementando libera
+    assert.equal(amb.cli(['iniciar', 'T2', 'implementador']).rc, 0, 'sem --executor segue valendo');
+    assert.equal(amb.cli(['reabrir', 'T1']).rc, 0);
+    assert.equal(amb.cli(exe('T1', 'depois da reabertura')).rc, 0, 'a cobertura acabou com a reabertura (vale o último)');
+  });
+
+  test('iniciar-executor-cli-e-painel-mesma-regra (adaptador real): o CLI que recusa o 2º e o painel que mostra o desvio leem a mesma função; o ATENÇÃO sai desenhado', () => {
+    const amb = comWt('T1', 'T2');
+    assert.equal(amb.cli(exe('T1')).rc, 0);
+    assert.equal(amb.cli(exe('T2', 'x')).j.erro, 'executor_ocupado');
+    const ord = ordenarNucleo(amb.eventos());
+    assert.deepEqual([...coberturaDoOrquestrador(ord.eventos)], [['T1', MOTIVO]]);
+    const PAINEL = join(AQUI, '..', 'scripts', 'painel.mjs');
+    const roda = (args) => spawnSync(process.execPath, [PAINEL, ...args], { cwd: amb.dir, encoding: 'utf8', env: amb.env, input: '' });
+    const e = roda(['estado']);
+    const estado = JSON.parse(e.stdout.trim()).estado;
+    assert.ok(estado.atencao.includes(`T1 com o orquestrador: ${MOTIVO}`), JSON.stringify(estado.atencao));
+    assert.equal(estado.plano.tasks.find((x) => x.id === 'T1').nome, 'orquestrador');
+    const txt = roda(['texto', '--largura', '140']);
+    assert.equal(txt.status, 0, txt.stderr);
+    assert.match(txt.stdout, /T1 com o orquestrador: task de contrato do painel/);
+    assert.equal(/T1 sem agente trabalhando/.test(txt.stdout), false);
+  });
+
+  test('iniciar-executor-compativel-com-o-diario-lido-antes: o evento tem só campos opcionais novos, `task`/`papel` intactos (o leitor 2.2.2 casa por papel)', () => {
+    const amb = comWt('T1');
+    assert.equal(amb.cli(exe('T1')).rc, 0);
+    const e = amb.eventos().find((x) => x.tipo === 'task.iniciada');
+    assert.deepEqual(Object.keys(e.dados).sort().filter((k) => !['modelo', 'executor', 'motivo'].includes(k)), ['papel', 'task']);
+    assert.equal(estadoNucleo(ordenarNucleo(amb.eventos()).eventos.filter((x) => x.dados?.task === 'T1')).estado, 'implementando');
   });
 });

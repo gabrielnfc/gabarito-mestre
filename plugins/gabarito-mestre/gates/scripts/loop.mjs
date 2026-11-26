@@ -5,7 +5,9 @@
  *   loop.mjs proxima [--vivos <n>] [--sessao <id>]    slots = `capacidade.mjs --medido`; `loop.slots` do config só reduz (sem calibração: 1 slot e aviso)
  *       `--sessao` (GM-14 FIEL-14): `percent` vem de `.harness/contexto/<sessao>.json` (mod; `em` <= 120 s), senão nulo; pouso pendente ⇒ nada novo despacha.
  *   loop.mjs abrir <task> | fechar <task> | integrar <task>
- *   loop.mjs iniciar <task> <implementador|revisor|correcao> [--modelo <haiku|sonnet|opus|fable>] | concluir <task> | reabrir <task>
+ *   loop.mjs iniciar <task> <implementador|revisor|correcao> [--modelo <haiku|sonnet|opus|fable>] [--executor orquestrador --motivo <t>] | concluir <task> | reabrir <task>
+ *       GM-20 (D-G44): `--executor orquestrador --motivo <t>` (só `implementador`; motivo texto livre não vazio) grava 1 `task.iniciada {executor, motivo}`: a task é do orquestrador, não de um agente.
+ *       Recusa `argumento_invalido` (executor outro, papel revisor/correcao, motivo vazio ou sem `--executor`) e `executor_ocupado` (1 por vez, por entrega: `coberturaDoOrquestrador`, a regra do painel).
  *   loop.mjs veredito <task> <APROVADO|REPROVADO> <rodada> <blocker> <major>
  *       REPROVADO exige achados não vazios em `<worktree>/.tmp-gabarito/review-r<rodada>.md` (senão `achados_ausentes`, nada gravado);
  *       `proxima` os aponta (`achados`) no item `correcao`: depois do /clear o arquivo é a única memória deles.
@@ -90,6 +92,7 @@ import { normalizarCaminho, validarPlano } from '../dist/plano.js';
 import { hashPergunta, projetarDecisoes, textoAncora, trechoDoReq } from '../dist/sombra.js';
 import { vigentes } from '../dist/diario-puro.js';
 import { entregaPublicada, SESSAO_QUALQUER } from '../dist/guarda.js';
+import { coberturaDoOrquestrador } from '../dist/painel-equipe.js';
 import { idDaBranch } from '../dist/trilha.js';
 import { avaliar } from './gate-task.mjs';
 import * as loopAprendizado from './loop-aprendizado.mjs';
@@ -202,7 +205,7 @@ const ESPEC = {
   abrir: { pos: 1, flags: ['entrega'] },
   fechar: { pos: 1, flags: ['entrega'] },
   integrar: { pos: 1, flags: ['entrega', 'sessao'] },
-  iniciar: { pos: 2, flags: ['entrega', 'sessao', 'modelo'] },
+  iniciar: { pos: 2, flags: ['entrega', 'sessao', 'modelo', 'executor', 'motivo'] },
   concluir: { pos: 1, flags: ['entrega', 'sessao', 'motivo'] },
   reabrir: { pos: 1, flags: ['entrega', 'sessao', 'origem', 'fonte'] },
   // GM-15 T6 (REQ-ENT-2): só a Sombra, com fonte; `--origem dono` é uso (rc 2). O dono sai só de `foraDono` e `reabrirDono`, fora de `ESPEC`.
@@ -226,7 +229,7 @@ export const ESPEC_DO_CLI = ESPEC;
 /** Argumentos estritos. Flag desconhecida, sem valor ou repetida e posicional a mais ou a menos é uso (rc 2). */
 function lerArgs(argv) {
   const [cmd, ...resto] = argv;
-  const uso = 'uso: loop.mjs proxima | abrir|fechar|integrar|concluir|reabrir <task> | reabrir <task> --origem sombra --fonte <f> | adiar|cortar <task> --motivo <t> --origem sombra --fonte <f> | liberar <task> --origem sombra --hash <h> | concluir <task> --motivo <gate|sombra|dono> | iniciar <task> <papel> [--modelo <haiku|sonnet|opus|fable>] | veredito <task> <APROVADO|REPROVADO> <rodada> <blocker> <major> | parar <motivo> | ci <verde|vermelho> [--alvo homolog] | desvio <task> --req --evidencia --arquivos --causa | descoberta --evidencia --causa | emenda propor --req [--task] --diff --fato --alternativa --evidencia --causa [--arquivos] [--origem sombra] | emenda julgar <seq> <aprovar|rejeitar> | emenda aplicar <seq> | aprendizado <E|A> <D|M> --regra --entra-em [--gatilho --eventos --fonte --numero --substitui] | aprendizado nada --gatilho --motivo | aprendizados [--para <destino>] | aprendizados --exportar | pousar | registro | anotar --tipo <ideia|desvio|assunto|duvida|pendencia> --texto <t> [--opcao <r>]…  [--entrega GM-10]';
+  const uso = 'uso: loop.mjs proxima | abrir|fechar|integrar|concluir|reabrir <task> | reabrir <task> --origem sombra --fonte <f> | adiar|cortar <task> --motivo <t> --origem sombra --fonte <f> | liberar <task> --origem sombra --hash <h> | concluir <task> --motivo <gate|sombra|dono> | iniciar <task> <papel> [--modelo <haiku|sonnet|opus|fable>] [--executor orquestrador --motivo <t>] | veredito <task> <APROVADO|REPROVADO> <rodada> <blocker> <major> | parar <motivo> | ci <verde|vermelho> [--alvo homolog] | desvio <task> --req --evidencia --arquivos --causa | descoberta --evidencia --causa | emenda propor --req [--task] --diff --fato --alternativa --evidencia --causa [--arquivos] [--origem sombra] | emenda julgar <seq> <aprovar|rejeitar> | emenda aplicar <seq> | aprendizado <E|A> <D|M> --regra --entra-em [--gatilho --eventos --fonte --numero --substitui] | aprendizado nada --gatilho --motivo | aprendizados [--para <destino>] | aprendizados --exportar | pousar | registro | anotar --tipo <ideia|desvio|assunto|duvida|pendencia> --texto <t> [--opcao <r>]…  [--entrega GM-10]';
   if (typeof cmd !== 'string' || !Object.hasOwn(ESPEC, cmd)) throw new Falha('uso', `comando desconhecido ou ausente. ${uso}`, {}, 2);
   const esp = ESPEC[cmd];
   const pos = [];
@@ -447,6 +450,15 @@ function validarForma(cmd, pos, flags) {
     if (flags.modelo !== undefined && !MODELOS_INICIAR.includes(flags.modelo)) {
       throw new Falha('argumento_invalido', `--modelo ${JSON.stringify(flags.modelo)}: esperado um de ${MODELOS_INICIAR.join(' | ')}; nada foi gravado`);
     }
+    // GM-20 REQ-EXE-1 (D-G44, DT10): `--executor orquestrador --motivo <t>` só no papel `implementador`; o motivo é texto livre não vazio (não é a lista do `concluir`).
+    if (flags.executor !== undefined) {
+      if (flags.executor !== 'orquestrador') throw new Falha('argumento_invalido', `--executor ${JSON.stringify(flags.executor)}: esperado orquestrador; nada foi gravado`);
+      if (pos[1] !== 'implementador') throw new Falha('argumento_invalido', `--executor só vale no papel implementador (veio ${pos[1]}); nada foi gravado`);
+      const { motivo } = textoDe('motivo', flags.motivo);
+      limitarTextos({ motivo });
+      return { task, papel: pos[1], modelo: flags.modelo, executor: flags.executor, motivo };
+    }
+    if (flags.motivo !== undefined) throw new Falha('argumento_invalido', '--motivo no iniciar só vale com --executor orquestrador; nada foi gravado');
     return { task, papel: pos[1], modelo: flags.modelo };
   }
   if (cmd === 'veredito') {
@@ -2091,8 +2103,15 @@ async function executar(argv, cwd) {
       const modelo = forma.modelo ?? doConfig;
       // Emenda 12: o revisor revê o sha do último task.concluida (o `<sha>` do diff do item, b8); o APROVADO copia este valor.
       const sha = forma.papel === 'revisor' ? ultimoDaTask(c, task, (e) => e.tipo === 'task.concluida')?.dados?.sha : undefined;
-      const dados = { task, papel: forma.papel, ...(modelo !== undefined ? { modelo } : {}), ...(sha !== undefined ? { sha } : {}) };
-      return { evento: gravar(c, plano, 'task.iniciada', dados), ...(aviso.length > 0 ? { aviso } : {}) };
+      const dados = { task, papel: forma.papel, ...(modelo !== undefined ? { modelo } : {}), ...(sha !== undefined ? { sha } : {}), ...(forma.executor !== undefined ? { executor: forma.executor, motivo: forma.motivo } : {}) };
+      // GM-20 DT12: 1 por vez, por entrega. A regra é `coberturaDoOrquestrador` (a do painel), lida sobre o diário que o `gravar` acabou de ler.
+      const umPorVez = (_candidato, lidos) => {
+        if (forma.executor === undefined) return;
+        const ord = ordenar(lidos);
+        const ocupada = [...coberturaDoOrquestrador(ord.ok ? ord.eventos : [])].find(([t]) => t !== task);
+        if (ocupada !== undefined) throw new Falha('executor_ocupado', `a task ${ocupada[0]} já está com o orquestrador nesta entrega (1 por vez); nada foi gravado`, { task: ocupada[0] });
+      };
+      return { evento: gravar(c, plano, 'task.iniciada', dados, umPorVez), ...(aviso.length > 0 ? { aviso } : {}) };
     }
     case 'concluir': {
       tarefa(plano, task);

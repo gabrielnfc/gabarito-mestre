@@ -580,6 +580,14 @@ function opcionalSha(o: Obj): string | null {
   return typeof v === 'string' && SHA_RE.test(v) ? null : 'campo `sha` inválido: esperado sha de commit (40 ou 64 hex minúsculos)';
 }
 
+const EXECUTOR_TASK = 'orquestrador';
+const MOTIVO_EXECUTOR_MAX = 500;
+function executorDaTask(o: Obj): string | null {
+  if (!Object.hasOwn(o, 'executor') || o.executor === undefined) return null;
+  if (o.executor !== EXECUTOR_TASK) return `campo \`executor\` inválido: só \`${EXECUTOR_TASK}\` ou ausente`;
+  return textoLinha(o, 'motivo', MOTIVO_EXECUTOR_MAX);
+}
+
 /** Tipos da E1/E2 que ganharam só campos opcionais: `dados` que não é objeto segue aceito (nada que existe hoje passa a ser recusado). */
 const REGRAS_OPCIONAIS: ReadonlyMap<string, Regra> = new Map<string, Regra>([
   [
@@ -600,6 +608,8 @@ const REGRAS_OPCIONAIS: ReadonlyMap<string, Regra> = new Map<string, Regra>([
           : `campo \`modelo\` inválido: esperado um de ${MODELOS_TASK.join(' | ')}`,
         // GM-14 T31 Emenda 12: `sha` do `iniciar revisor` (o do diff despachado); na leitura, ausente = diário 2.0.0.
         opcionalSha(o),
+        // GM-20 REQ-EXE-1 (DT10): `executor` só `orquestrador` e, com ele, `motivo` texto de 1 linha não vazio; ausente = diário 2.2.2. A recusa de revisor e correção é do CLI.
+        executorDaTask(o),
       );
     },
   ],

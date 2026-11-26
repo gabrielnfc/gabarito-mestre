@@ -915,7 +915,8 @@ function projetarLegado(plano: Plano, eventos: Evento[] | null, entrada: Entrada
     const ms = msDe(r.ultimo);
     const desdeS = Number.isFinite(agora) && Number.isFinite(ms) ? Math.max(0, Math.floor((agora - ms) / 1000)) : undefined;
     const papel = PAPEL_DO_ESTADO[r.estado];
-    const nome = papel === undefined ? undefined : nomes.get(chaveDoPar(t.id, papel));
+    // GM-20 REQ-EXE-2: a task que o orquestrador executa tem o orquestrador como dono (o nome do par segue intocado em `nomesPorPapel`)
+    const nome = quem.orquestrador.has(t.id) ? 'orquestrador' : papel === undefined ? undefined : nomes.get(chaveDoPar(t.id, papel));
     tasks.push({
       id: t.id,
       ...(typeof t.titulo === 'string' ? { titulo: t.titulo } : {}),
@@ -1247,6 +1248,8 @@ function projetarNovo(plano: Plano | null, eventos: Evento[] | null, entrada: En
 
   // ATENÇÃO (FIEL-10 c): só travado ou com problema
   const atencao: string[] = [];
+  // GM-20 REQ-EXE-2 (D-G44, "sempre visível"): o desvio do orquestrador aparece com e sem o mod, enquanto a cobertura vale
+  for (const [t, motivo] of equipeAtiva.orquestrador) atencao.push(`${t} com o orquestrador: ${cortarMotivo(motivo)}`);
   if (ativos !== null) {
     for (const t of equipeAtiva.esperando) atencao.push(`${t} sem agente trabalhando`);
     const d = equipeAtiva.desconhecidos;

@@ -282,6 +282,20 @@ test('forma-iniciada-modelo-fora: modelo opcional, só haiku|sonnet|opus|fable',
   for (const m of ['gpt', 'Sonnet', 'opus ', '', null, 5, ['opus']]) ruim('task.iniciada', { task: 'T1', papel: 'implementador', modelo: m }, /modelo/);
 });
 
+test('forma-task-iniciada-executor (GM-20 REQ-EXE-1, ME1-d): `executor` só `orquestrador`, com `motivo` texto de 1 linha não vazio; sem `executor` nada muda', () => {
+  const base = { task: 'T1', papel: 'implementador' };
+  ok('task.iniciada', { ...base, executor: 'orquestrador', motivo: 'o subagent não tem a regra de contrato' });
+  ok('task.iniciada', { ...base, executor: 'orquestrador', motivo: 'm'.repeat(500) });
+  ok('task.iniciada', base); // o diário 2.2.2 segue válido
+  ok('task.iniciada', { ...base, modelo: 'opus' });
+  for (const e of ['humano', 'Orquestrador', 'orquestrador ', 'sombra', '', null, 5, true, ['orquestrador'], {}]) {
+    ruim('task.iniciada', { ...base, executor: e, motivo: 'm' }, /executor/);
+  }
+  for (const m of [undefined, '', '   ', '\n', 'a\nb', null, 5, ['m'], 'm'.repeat(501)]) {
+    ruim('task.iniciada', { ...base, executor: 'orquestrador', ...(m === undefined ? {} : { motivo: m }) }, /motivo/);
+  }
+});
+
 test('forma-integrada-mortas-maior-que-total: mutacoes {total, mortas} inteiros ≥ 0 com mortas ≤ total', () => {
   ok('task.integrada', { task: 'T1', mutacoes: { total: 5, mortas: 5 } });
   ok('task.integrada', { task: 'T1', mutacoes: { total: 5, mortas: 0 } });

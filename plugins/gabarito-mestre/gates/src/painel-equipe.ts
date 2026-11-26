@@ -504,6 +504,37 @@ function proximoNome(pacote: PacoteNomes, usados: ReadonlySet<string>): string {
   return 'agente';
 }
 
+/** Estados em que a task já não está em voo: o executor não a ocupa (a cobertura do orquestrador some). */
+const FORA_DE_VOO: readonly EstadoTask[] = ['integrada', 'adiada', 'cortada'];
+
+/**
+ * GM-20 REQ-EXE-1/2 (D-G44, DT10 a DT12): a regra ÚNICA de "task com o orquestrador", lida pelo `loop.mjs iniciar --executor` (o "1 por vez") e
+ * pelo painel (alerta, ATENÇÃO, dono no PLANO). `task` → `motivo` de toda task não integrada (nem fora do alvo) cujo ÚLTIMO evento de ciclo
+ * (`task.iniciada` ou `task.reaberta`) é um `task.iniciada` com `executor === 'orquestrador'` e `motivo` texto não vazio: vale o último, e
+ * `reabrir` ou um novo `iniciar` sem executor encerram. Recebe o diário já ordenado; entrada que não é lista ⇒ vazio, nunca lança.
+ */
+export function coberturaDoOrquestrador(ordenado: unknown): Map<string, string> {
+  const cobertura = new Map<string, string>();
+  if (!Array.isArray(ordenado)) return cobertura;
+  const ultimo = new Map<string, Evento>();
+  const fila = new Map<string, Evento[]>();
+  for (const e of ordenado as unknown[]) {
+    if (!ehObjeto(e) || !TIPOS_DE_TASK.includes(e.tipo as string) || !ehObjeto(e.dados) || typeof e.dados.task !== 'string') continue;
+    const ev = e as unknown as Evento;
+    const task = (ev.dados as { task: string }).task;
+    fila.set(task, [...(fila.get(task) ?? []), ev]);
+    if (ev.tipo === 'task.iniciada' || ev.tipo === 'task.reaberta') ultimo.set(task, ev);
+  }
+  for (const [task, ev] of ultimo) {
+    const d = ev.dados as Record<string, unknown>;
+    if (ev.tipo !== 'task.iniciada' || d.executor !== 'orquestrador' || typeof d.motivo !== 'string' || d.motivo.trim() === '') continue;
+    const r = estadoDe(fila.get(task) as Evento[]);
+    if ('invalido' in r || FORA_DE_VOO.includes(r.estado)) continue;
+    cobertura.set(task, d.motivo);
+  }
+  return cobertura;
+}
+
 export type Ativo = { agente: AgenteVivo; id: string; casamento: Casamento; nome: string };
 export type AtivosDaEquipe = {
   /** `null` = sem mod (`entrada.agentes === null`). */
@@ -515,6 +546,11 @@ export type AtivosDaEquipe = {
   /** `${task}:${papel}` com ativo casado. */
   cobertos: Set<string>;
   estados: Map<string, EstadoTask>;
+  /**
+   * GM-20 REQ-EXE-2: `task` → `motivo` das tasks que o orquestrador executa (`coberturaDoOrquestrador`) e que seguem em `implementando`; elas contam como
+   * cobertas (sem alerta, glifo `●`). Vale com e sem o mod, porque o motivo é fato do diário.
+   */
+  orquestrador: Map<string, string>;
 };
 
 /**
@@ -554,7 +590,9 @@ export function resolverAtivos(plano: Plano, eventos: Evento[] | null, entrada: 
   const lista: Evento[] = Array.isArray(eventos) ? eventos : [];
   const ord = ordemSegura(lista);
   const estados = estadosDasTasks(plano, ord);
-  const vazio: AtivosDaEquipe = { ativos: null, desconhecidos: 0, esperando: [], cobertos: new Set(), estados };
+  const cobertura = coberturaDoOrquestrador(ord ?? []);
+  const orquestrador = new Map<string, string>([...cobertura].filter(([t]) => estados.get(t) === 'implementando'));
+  const vazio: AtivosDaEquipe = { ativos: null, desconhecidos: 0, esperando: [], cobertos: new Set(), estados, orquestrador };
   if (entrada.agentes === null || entrada.agentes === undefined) return vazio;
   const brutos = Array.isArray(entrada.agentes) ? (entrada.agentes as unknown[]) : [];
   const extra = (entrada as { handbacks?: unknown }).handbacks;
@@ -606,13 +644,14 @@ export function resolverAtivos(plano: Plano, eventos: Evento[] | null, entrada: 
   }
   const cobertos = new Set<string>();
   for (const x of ativos) if (x.casamento.task !== null && x.casamento.papel !== null) cobertos.add(`${x.casamento.task}:${x.casamento.papel}`);
+  for (const t of orquestrador.keys()) cobertos.add(`${t}:implementador`); // GM-20: o orquestrador cobre a task em `implementando`
   const esperando: string[] = [];
   for (const t of plano.tasks) {
     const estado = estados.get(t.id);
     const papel = estado === undefined ? undefined : PAPEL_DO_ESTADO[estado];
     if (papel !== undefined && !cobertos.has(`${t.id}:${papel}`)) esperando.push(t.id);
   }
-  return { ativos: ativos.map((x) => ({ agente: x.agente, id: x.id, casamento: x.casamento, nome: x.nome as string })), desconhecidos, esperando, cobertos, estados };
+  return { ativos: ativos.map((x) => ({ agente: x.agente, id: x.id, casamento: x.casamento, nome: x.nome as string })), desconhecidos, esperando, cobertos, estados, orquestrador };
 }
 
 /** `tok` ausente ou corrompido é `null` (nunca 0: zero é medida, e ausente não é medida); o `contexto` válido segue valendo. */
