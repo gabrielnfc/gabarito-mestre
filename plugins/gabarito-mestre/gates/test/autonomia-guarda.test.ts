@@ -1,12 +1,14 @@
 /**
- * Interruptor de autonomia do orquestrador (decisão do dono, 2026-11-12): `~/.claude/gabarito-autonomia.json` = `{"orquestrador": true}`
- * troca todo `ask` do orquestrador por passagem silenciosa com evento `guarda.autonomia_usada`. `segredo` e subagent não mudam.
+ * Interruptor de autonomia do orquestrador (decisão do dono, 2026-11-12): `~/.claude/gabarito-autonomia.json` = `{"orquestrador": true}`.
+ * GM-22 T3 (D-G52, DT6): com o nível `publica` a autonomia cala SÓ publicar (a tabela está em `autonomia-tabela.test.ts`); integridade,
+ * escrita no interruptor, teto e `cd` perdido seguem `ask` com qualquer nível; `segredo` e subagent não mudam. Os casos que esperavam
+ * `silencio` em integridade e no interruptor viraram `ask` aqui; o caso equivalente de cada um também está na tabela.
  *
  * MUTAÇÕES PRESCRITAS:
  *  A1  converter também o anel `segredo` ⇒ `autonomia-segredo-continua-ask` falha
  *  A2  converter também o `deny` do subagent ⇒ `autonomia-subagent-continua-deny` falha
  *  A4  converter também o teto (Q17) ⇒ `autonomia-ligada-teto-continua-ask` falha
- *  A5  converter a escrita no interruptor com a autonomia DESLIGADA ⇒ `autonomia-escrita-no-interruptor-pede-desligada-e-passa-ligada` falha
+ *  A5  calar a escrita no interruptor com qualquer nível ⇒ `autonomia-escrita-no-interruptor-pede-sempre` falha
  *  A6  `MARCA_INTERRUPTOR` sem `/i` ⇒ `autonomia-escapes-do-interruptor` falha
  *  A7  `decidir` casar `'gabarito-autonomia'` em vez de `'gabarito-auto'` ⇒ idem
  *  A8  `cp` na lista de leitores simples ⇒ idem
@@ -25,6 +27,7 @@ import type { Contexto, EntradaHook } from '../src/tipos.ts';
 
 const CTX: Contexto = { branchAtual: 'feat/GM-1-x', refLinkado: null, remoteUrl: 'git@github.com:org/app.git', raiz: '/repo', pluginRoot: '/plugin' };
 const bash = (command: string, sub = false): EntradaHook => ({ tool_name: 'Bash', tool_input: { command }, permission_mode: 'default', session_id: 's', cwd: '/repo', ...(sub ? { agent_id: 'a1' } : {}) });
+const NIVEIS = ['nenhuma', 'trabalha', 'publica'] as const;
 
 describe('autonomia do orquestrador', () => {
   test('autonomia-desligada-vale-ask', () => {
@@ -33,46 +36,48 @@ describe('autonomia do orquestrador', () => {
     assert.equal(d.permissionDecision, 'ask');
   });
 
-  test('autonomia-ligada-integridade-passa-com-evento', () => {
-    const d = decidir(bash('git remote add x y'), null, CTX, true);
-    assert.equal(d.faixa, 'silencio');
-    assert.equal(d.permissionDecision, undefined);
-    assert.equal(d.evento?.tipo, 'guarda.autonomia_usada');
-    assert.equal(d.evento?.dados.anel, 'integridade');
-    assert.equal(JSON.stringify(d.evento).includes('remote add'), false, 'nunca o comando');
+  test('autonomia-ligada-integridade-continua-ask (era silencio com evento até a 2.3.0)', () => {
+    for (const nivel of ['trabalha', 'publica'] as const) {
+      const d = decidir(bash('git remote add x y'), null, CTX, nivel);
+      assert.equal(d.faixa, 'ask', nivel);
+      assert.equal(d.permissionDecision, 'ask', nivel);
+      assert.equal(d.evento?.tipo, 'guarda.ask', nivel);
+      assert.equal(d.evento?.dados.anel, 'integridade', nivel);
+      assert.equal(JSON.stringify(d.evento).includes('remote add'), false, 'nunca o comando');
+    }
   });
 
   test('autonomia-ligada-teto-continua-ask', () => {
-    const d = decidir(bash(`echo ${'a'.repeat(TETO_COMANDO + 1)}`), null, CTX, true);
+    const d = decidir(bash(`echo ${'a'.repeat(TETO_COMANDO + 1)}`), null, CTX, 'publica');
     assert.equal(d.faixa, 'ask');
     assert.equal(d.evento?.tipo, 'guarda.ask');
     assert.equal(d.evento?.dados.motivo, 'teto');
   });
 
   test('autonomia-ligada-teto-com-anel-no-prefixo-continua-ask', () => {
-    const d = decidir(bash(`git remote add x y; echo ${'a'.repeat(TETO_COMANDO + 1)}`), null, CTX, true);
+    const d = decidir(bash(`git remote add x y; echo ${'a'.repeat(TETO_COMANDO + 1)}`), null, CTX, 'publica');
     assert.equal(d.faixa, 'ask', 'o resto do comando não foi lido: pode haver segredo');
   });
 
   test('autonomia-cd-perdido-continua-ask', () => {
     const e = bash(`${'cd a;'.repeat(2100)} cd /repo/.git; echo x > config`);
     assert.equal(decidir(e, null, CTX).faixa, 'ask');
-    const d = decidir(e, null, CTX, true);
+    const d = decidir(e, null, CTX, 'publica');
     assert.equal(d.classificacao.cdPerdido, true);
     assert.equal(d.faixa, 'ask', 'a guarda perdeu o diretório: não leu tudo');
   });
 
-  // Emenda da spec pelo dono (2026-11-12): com a autonomia LIGADA o orquestrador passa também nos casos do interruptor e da marca
-  // (com evento). Desligada, escrita no interruptor continua `ask`: é o que impede o agente de ligar a autonomia sozinho.
-  // O subagent é `deny` sempre.
+  // GM-22 DT6 (D-G53) revoga a emenda de 2026-11-12: a escrita no interruptor é integridade e pede SEMPRE ao orquestrador, em qualquer
+  // nível (é o que impede o agente de ligar a autonomia sozinho). O subagent é `deny` sempre.
   test('autonomia-interruptor-ignora-caixa-do-diretorio', () => {
     const escrita = (file_path: string): EntradaHook => ({ tool_name: 'Write', tool_input: { file_path, content: '{}' }, permission_mode: 'default', session_id: 's', cwd: '/repo' });
     for (const p of ['/home/u/.CLAUDE/gabarito-autonomia.json', '/home/u/.claude/GABARITO-AUTONOMIA.JSON']) {
-      assert.equal(decidir(escrita(p), null, CTX, false).faixa, 'ask', p);
-      assert.equal(decidir({ ...escrita(p), agent_id: 'a1' }, null, CTX, true).faixa, 'deny', p);
-      const d = decidir(escrita(p), null, CTX, true);
-      assert.equal(d.faixa, 'silencio', p);
-      assert.equal(d.evento?.tipo, 'guarda.autonomia_usada', p);
+      for (const nivel of NIVEIS) {
+        const d = decidir(escrita(p), null, CTX, nivel);
+        assert.equal(d.faixa, 'ask', `${p} ${nivel}`);
+        assert.equal(d.evento?.tipo, 'guarda.ask', `${p} ${nivel}`);
+        assert.equal(decidir({ ...escrita(p), agent_id: 'a1' }, null, CTX, nivel).faixa, 'deny', `${p} ${nivel}`);
+      }
     }
   });
 
@@ -83,49 +88,46 @@ describe('autonomia do orquestrador', () => {
       'cd ~/.claude && cp a gabarito-autonomia.json', // cp não é leitor (A8)
     ];
     for (const c of casos) {
-      const off = decidir(bash(c), null, CTX, false);
-      assert.equal(off.faixa, 'ask', c);
-      assert.equal(off.evento?.tipo, 'guarda.ask', c);
-      assert.equal(decidir(bash(c, true), null, CTX, false).faixa, 'deny', c);
-      assert.equal(decidir(bash(c, true), null, CTX, true).faixa, 'deny', c);
-      const on = decidir(bash(c), null, CTX, true);
-      assert.equal(on.faixa, 'silencio', c);
-      assert.equal(on.evento?.tipo, 'guarda.autonomia_usada', c);
+      for (const nivel of NIVEIS) {
+        const o = decidir(bash(c), null, CTX, nivel);
+        assert.equal(o.faixa, 'ask', `${c} ${nivel}`);
+        assert.equal(o.evento?.tipo, 'guarda.ask', `${c} ${nivel}`);
+        assert.equal(decidir(bash(c, true), null, CTX, nivel).faixa, 'deny', `${c} ${nivel}`);
+      }
     }
   });
 
-  test('autonomia-escrita-no-interruptor-pede-desligada-e-passa-ligada', () => {
+  test('autonomia-escrita-no-interruptor-pede-sempre', () => {
     const alvo = '~/.claude/gabarito-autonomia.json';
     const escrita: EntradaHook = { tool_name: 'Write', tool_input: { file_path: '/home/u/.claude/gabarito-autonomia.json', content: '{}' }, permission_mode: 'default', session_id: 's', cwd: '/repo' };
     for (const e of [bash(`echo x > ${alvo}`), bash(`git remote add x y; echo x > ${alvo}`), escrita]) {
-      const off = decidir(e, null, CTX, false);
-      assert.equal(off.faixa, 'ask');
-      assert.equal(off.evento?.tipo, 'guarda.ask');
-      const on = decidir(e, null, CTX, true);
-      assert.equal(on.faixa, 'silencio');
-      assert.equal(on.evento?.tipo, 'guarda.autonomia_usada');
-      assert.equal(JSON.stringify(on.evento).includes('echo x'), false, 'nunca o comando');
+      for (const nivel of NIVEIS) {
+        const d = decidir(e, null, CTX, nivel);
+        assert.equal(d.faixa, 'ask', nivel);
+        assert.equal(d.evento?.tipo, 'guarda.ask', nivel);
+        assert.equal(JSON.stringify(d.evento).includes('echo x'), false, 'nunca o comando');
+      }
     }
   });
 
-  test('citar-o-nome-do-interruptor-passa-ligada-e-pede-desligada (falso positivo medido)', () => {
+  test('citar-o-nome-do-interruptor: Edit segue silencio; PR com a marca pede em todo nível (falso positivo medido)', () => {
     const edicao: EntradaHook = { tool_name: 'Edit', tool_input: { file_path: '/repo/CHANGELOG.md', old_string: 'a', new_string: 'o interruptor gabarito-autonomia.json' }, permission_mode: 'default', session_id: 's', cwd: '/repo' };
-    assert.equal(decidir(edicao, null, CTX, true).faixa, 'silencio');
-    assert.equal(decidir(edicao, null, CTX, false).faixa, 'silencio', 'texto citado em Edit nunca foi alvo: segue em silêncio');
     const pr = bash('gh pr create --body "muda gabarito-autonomia.json"');
-    assert.equal(decidir(pr, null, CTX, true).faixa, 'silencio');
-    assert.equal(decidir(pr, null, CTX, false).faixa, 'ask');
-    assert.equal(decidir(bash('gh pr create --body "muda gabarito-autonomia.json"', true), null, CTX, true).faixa, 'deny');
+    for (const nivel of NIVEIS) {
+      assert.equal(decidir(edicao, null, CTX, nivel).faixa, 'silencio', `texto citado em Edit nunca foi alvo: segue em silêncio (${nivel})`);
+      assert.equal(decidir(pr, null, CTX, nivel).faixa, 'ask', nivel);
+      assert.equal(decidir(bash('gh pr create --body "muda gabarito-autonomia.json"', true), null, CTX, nivel).faixa, 'deny', nivel);
+    }
   });
 
   test('autonomia-segredo-continua-ask', () => {
-    const d = decidir(bash('cat .env'), null, CTX, true);
+    const d = decidir(bash('cat .env'), null, CTX, 'publica');
     assert.equal(d.faixa, 'ask');
     assert.equal(d.evento?.tipo, 'guarda.ask');
   });
 
   test('autonomia-subagent-continua-deny', () => {
-    const d = decidir(bash('git remote add x y', true), null, CTX, true);
+    const d = decidir(bash('git remote add x y', true), null, CTX, 'publica');
     assert.equal(d.faixa, 'deny');
     assert.equal(d.permissionDecision, 'deny');
   });

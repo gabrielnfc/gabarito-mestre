@@ -17,7 +17,7 @@ import { homedir, tmpdir } from 'node:os';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { precisaContexto } from './classificar-alvo.ts';
-import { decidir } from './decidir.ts';
+import { decidir, type NivelAutonomia } from './decidir.ts';
 import { append, dirEntrega, lerEstrito } from './diario.ts';
 import { consultasAbertas, diarioEmOrdem, promptSombra } from './sombra.ts';
 import { encerramentoDe, trilhaDe } from './trilha.ts';
@@ -30,7 +30,7 @@ const ID_PADRAO = '[A-Z]+-\\d+';
 const CHAVES_AMBIENTE: Array<keyof AmbienteDecl> = ['hosts', 'projetos', 'bancos', 'mcps', 'variaveis', 'branches'];
 
 type Fonte = 'origin' | 'local' | 'nenhuma';
-type Guarda = { config: ConfigGuarda | null; fonte: Fonte; divergente: boolean; localIgnorada: boolean; onboarding: boolean; idPadrao: string; autonomia: boolean };
+type Guarda = { config: ConfigGuarda | null; fonte: Fonte; divergente: boolean; localIgnorada: boolean; onboarding: boolean; idPadrao: string; autonomia: boolean; entregaAutonomia: boolean };
 
 // ---------------------------------------------------------------------------------------------------------------
 // fs e git
@@ -119,13 +119,15 @@ function lerGuarda(raiz: string): Guarda {
     // Autonomia por projeto (REQ-AUT-2 b): metade da regra, só a config de origin/HEAD (mudada por merge) vale; a árvore local nunca liga.
     // Só o valor exato liga, e a passagem ainda exige o interruptor (`principal`: config E interruptor).
     const autonomia = objeto(origem.guarda)?.autonomia === 'orquestrador';
-    return { config: o.config, fonte: 'origin', divergente, localIgnorada, onboarding: true, idPadrao: o.idPadrao, autonomia };
+    // GM-22 DT2: `entrega.autonomia` (a resposta `publica`) também só vale lida de origin/HEAD; a árvore local nunca liga.
+    const entregaAutonomia = objeto(origem.entrega)?.autonomia === true;
+    return { config: o.config, fonte: 'origin', divergente, localIgnorada, onboarding: true, idPadrao: o.idPadrao, autonomia, entregaAutonomia };
   }
   if (local !== null) {
     const l = normalizar(local, 'local');
-    return { config: l.config, fonte: 'local', divergente: false, localIgnorada: false, onboarding: true, idPadrao: l.idPadrao, autonomia: false };
+    return { config: l.config, fonte: 'local', divergente: false, localIgnorada: false, onboarding: true, idPadrao: l.idPadrao, autonomia: false, entregaAutonomia: false };
   }
-  return { config: null, fonte: 'nenhuma', divergente: false, localIgnorada: false, onboarding: false, idPadrao: ID_PADRAO, autonomia: false };
+  return { config: null, fonte: 'nenhuma', divergente: false, localIgnorada: false, onboarding: false, idPadrao: ID_PADRAO, autonomia: false, entregaAutonomia: false };
 }
 
 /**
@@ -326,6 +328,12 @@ export function lerAutonomia(caminho: string = join(homedir(), '.claude', 'gabar
   } catch {
     return false;
   }
+}
+
+/** GM-22 DT2: `publica` = guarda + `entrega.autonomia` de origin/HEAD + interruptor; `trabalha` = guarda + interruptor; o resto `nenhuma`. */
+function nivelDeAutonomia(guarda: Guarda | null): NivelAutonomia {
+  if (guarda?.autonomia !== true || !lerAutonomia()) return 'nenhuma';
+  return guarda.entregaAutonomia ? 'publica' : 'trabalha';
 }
 
 function aviso(msg: string): void {
@@ -668,7 +676,7 @@ function principal(): void {
   const guarda = raizSessao === null ? null : lerGuarda(raizSessao);
   const pluginRoot = process.env.CLAUDE_PLUGIN_ROOT || join(dirname(fileURLToPath(import.meta.url)), '..', '..');
   const contexto = montarContexto(entrada, raizCwd ?? raizSessao, cwd, pluginRoot, pausa.raizes, ancoraDaSessao(process.env.CLAUDE_PROJECT_DIR));
-  const r = decidir(entrada, guarda?.config ?? null, contexto, guarda?.autonomia === true && lerAutonomia());
+  const r = decidir(entrada, guarda?.config ?? null, contexto, nivelDeAutonomia(guarda));
 
   const sessao = typeof entrada.session_id === 'string' && SESSAO_RE.test(entrada.session_id) ? entrada.session_id : null;
   const mensagens: string[] = [];
