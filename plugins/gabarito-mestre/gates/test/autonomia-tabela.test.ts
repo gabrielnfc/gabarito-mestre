@@ -9,6 +9,8 @@
  *  MP2-e  calar a escrita no interruptor com `publica` ⇒ a linha "integridade" (interruptor) falha
  *  MP2-f  subagente com `publica` passa ⇒ `subagente-igual-nos-3-niveis` e a tabela falham
  *  MP3-a  sufixo do motivo com nível `nenhuma` ⇒ `motivo-igual-sem-autonomia` falha
+ *  DEFESA EM PROFUNDIDADE (equivalentes, sem teste que as mate): `!c.destrutivo`, `c.anel === null` e `!naoLeuTudo` na regra de calar (decidir.ts:124) —
+ *     tirar qualquer uma NÃO derruba teste, porque `publicar` já exclui destrutivo, anel e comando acima do teto/`cd` perdido; ficam como cinto e suspensório.
  *  MP3-b  sufixo no `deny` do subagente ⇒ `motivo-subagente-igual` falha
  */
 import { test, describe } from 'node:test';
