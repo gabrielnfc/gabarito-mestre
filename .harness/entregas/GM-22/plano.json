@@ -1,0 +1,95 @@
+{
+  "entrega": "GM-22",
+  "spec": "docs/superpowers/specs/2026-11-24-gm22-hotfix-guarda-design.md",
+  "tasks": [
+    {
+      "id": "T1",
+      "titulo": "Hooks do git no anel de integridade",
+      "deps": [],
+      "arquivos": [
+        "plugins/gabarito-mestre/gates/src/aneis.ts",
+        "plugins/gabarito-mestre/gates/dist/aneis.js",
+        "plugins/gabarito-mestre/gates/test/anel-hooks-git.test.ts",
+        "plugins/gabarito-mestre/hooks/test/corpus/guarda-integridade.jsonl",
+        "plugins/gabarito-mestre/gates/test/corpus-guarda.test.ts"
+      ],
+      "reqs": [
+        "REQ-HKS-1",
+        "REQ-HKS-2"
+      ]
+    },
+    {
+      "id": "T2",
+      "titulo": "Classificador marca publicar",
+      "deps": [],
+      "arquivos": [
+        "plugins/gabarito-mestre/gates/src/tipos.ts",
+        "plugins/gabarito-mestre/gates/src/classificar-alvo.ts",
+        "plugins/gabarito-mestre/gates/dist/classificar-alvo.js",
+        "plugins/gabarito-mestre/gates/test/classificar-publicar.test.ts"
+      ],
+      "reqs": [
+        "REQ-PUB-1"
+      ]
+    },
+    {
+      "id": "T3",
+      "titulo": "Autonomia cala só publicar",
+      "deps": [
+        "T1",
+        "T2"
+      ],
+      "arquivos": [
+        "plugins/gabarito-mestre/gates/src/decidir.ts",
+        "plugins/gabarito-mestre/gates/src/guarda.ts",
+        "plugins/gabarito-mestre/gates/dist/decidir.js",
+        "plugins/gabarito-mestre/gates/dist/guarda.js",
+        "plugins/gabarito-mestre/gates/test/autonomia-tabela.test.ts",
+        "plugins/gabarito-mestre/gates/test/autonomia-guarda.test.ts",
+        "plugins/gabarito-mestre/gates/test/autonomia-refs.test.ts",
+        "plugins/gabarito-mestre/gates/test/autonomia-processo.test.mjs"
+      ],
+      "reqs": [
+        "REQ-PUB-2",
+        "REQ-PUB-3"
+      ]
+    },
+    {
+      "id": "T4",
+      "titulo": "Onboarding diz o que a autonomia cala",
+      "deps": [],
+      "arquivos": [
+        "plugins/gabarito-mestre/gates/scripts/onboarding.mjs",
+        "plugins/gabarito-mestre/gates/test/onboarding.test.mjs",
+        "plugins/gabarito-mestre/gates/test/onboarding-texto.test.mjs",
+        "plugins/gabarito-mestre/skills/gabarito-instalar/trocar.md",
+        "README.md"
+      ],
+      "reqs": [
+        "REQ-TXT-1",
+        "REQ-PUB-3"
+      ]
+    },
+    {
+      "id": "T5",
+      "titulo": "Versão 2.3.1 e CHANGELOG",
+      "deps": [
+        "T1",
+        "T2",
+        "T3",
+        "T4"
+      ],
+      "arquivos": [
+        "plugins/gabarito-mestre/.claude-plugin/plugin.json",
+        "plugins/gabarito-mestre/gates/package.json",
+        "plugins/gabarito-mestre/gates/test/package.test.mjs",
+        "plugins/gabarito-mestre/scripts/test/texto.test.sh",
+        "CHANGELOG.md",
+        "docs/backlog.md"
+      ],
+      "reqs": [
+        "REQ-VRS-1"
+      ]
+    }
+  ]
+}
