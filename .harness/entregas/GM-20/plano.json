@@ -232,8 +232,7 @@
       ],
       "reqs": [
         "REQ-CRD-1"
-      ],
-      "teste_afetado": "Opção (A), D-G43/D-G46: card-desatualizado-conta-feito-e-avisa, card-desatualizado-reaberta-nao-avisa, card-desatualizado-render, herdar-e-painel-mesma-contagem-desatualizados e a cláusula negativa card-desatualizado-nunca-escreve-card (lê bytes, mtime e lista da pasta de cards antes e depois de painel.mjs estado/texto; afirma igualdade). O lado herdar --gravar é de herdar-nao-escreve-card (T10), que segue verde"
+      ]
     },
     {
       "id": "T12",
