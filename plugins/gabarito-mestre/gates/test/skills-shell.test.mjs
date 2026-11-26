@@ -369,7 +369,8 @@ test('skill-loop-description-com-task-e-modelo: despacho com a descricao do item
   assert.match(t, /`descricao` do item, sem mudar\. Ela é "<task> <resto>": o 1º token é o id da task\./);
   const cli = readFileSync(join(PLUGIN, 'gates/scripts/loop.mjs'), 'utf8');
   assert.ok(cli.includes('descricao: `${item.task} ${item.papel}`'), 'a descricao do item mudou');
-  assert.match(cli, /iniciar: \{ pos: 2, flags: \['entrega', 'sessao', 'modelo'\] \}/);
+  assert.match(cli, /iniciar: \{ pos: 2, flags: \['entrega', 'sessao', 'modelo', 'executor', 'motivo'\] \}/);
+  assert.ok(t.includes('--executor orquestrador --motivo'), 'a skill não cita o desvio --executor orquestrador --motivo');
 });
 
 test('skill-loop-pouso-wakeup-autossuficiente: pousar, wakeup com prompt autossuficiente, pedir limpar e push, pendente não despacha', () => {
