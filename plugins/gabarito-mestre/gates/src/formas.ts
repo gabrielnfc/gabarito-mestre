@@ -486,8 +486,8 @@ const entregaReaberta: Regra = (o) => primeiro(chaveExtra(o, ['entrega', 'em'], 
 
 /** Nunca o comando cru: `comando` (ou qualquer chave fora da lista) é recusada. */
 const guardaAutonomiaUsada: Regra = (o) => primeiro(
-  chaveExtra(o, ['anel', 'alvo', 'acao', 'ambiente'], '`guarda.autonomia_usada` carrega só {anel, alvo, acao, ambiente}: nunca o comando'),
-  textoLinha(o, 'anel', 60), textoLinha(o, 'alvo', 200), textoLinha(o, 'acao', 60), textoLinha(o, 'ambiente', 60),
+  chaveExtra(o, ['anel', 'alvo', 'acao', 'ambiente'], '`guarda.autonomia_usada` carrega só {anel?, alvo, acao, ambiente}: nunca o comando'),
+  campo(o, 'anel') === undefined ? null : textoLinha(o, 'anel', 60), textoLinha(o, 'alvo', 200), textoLinha(o, 'acao', 60), textoLinha(o, 'ambiente', 60),
 );
 
 /** Tamanho máximo de `abordagem_nova` (a borda `liberar --abordagem-nova` do loop.mjs usa o mesmo limite). */

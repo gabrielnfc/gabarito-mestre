@@ -791,6 +791,7 @@ test('formas-quatro-eventos: cada forma válida passa; cada campo lido, trocado,
     ruim(tipo, { ...base, extra: 1 }, /`extra`/);
     for (const k of Object.keys(base)) {
       const { [k]: _fora, ...sem } = base;
+      if (tipo === 'guarda.autonomia_usada' && k === 'anel') continue; // `anel` é opcional (emenda 3, REQ-PUB-2)
       ruim(tipo, sem, new RegExp(`\`${k}\``));
     }
     ruim(tipo, undefined, /ausente/);
@@ -825,6 +826,11 @@ test('formas-quatro-eventos: cada forma válida passa; cada campo lido, trocado,
   for (const m of ['ontem', 7, '2026-13-01T00:00:00Z']) ruim('entrega.reaberta', { ...REAB, em: m }, /`em`/);
   // guarda.autonomia_usada: cada campo é texto de 1 linha
   for (const k of Object.keys(AUT)) for (const v of ['', 'a\nb', 7, null]) ruim('guarda.autonomia_usada', { ...AUT, [k]: v }, new RegExp(`\`${k}\``));
+  // emenda 3: `anel` opcional (o evento de publicar não tem anel); presente e inválido segue recusado; os outros 3 seguem obrigatórios
+  const { anel: _a, ...semAnel } = AUT;
+  ok('guarda.autonomia_usada', semAnel);
+  for (const v of ['', 'a\nb', 7, null]) ruim('guarda.autonomia_usada', { ...semAnel, anel: v }, /`anel`/);
+  for (const k of ['alvo', 'acao', 'ambiente']) { const { [k]: _x, ...sem } = semAnel as Record<string, unknown>; ruim('guarda.autonomia_usada', sem, new RegExp(`\`${k}\``)); }
 });
 
 test('task-fora-sombra-sem-fonte-recusa: a origem sombra cita a decisão; a do dono não precisa', () => {

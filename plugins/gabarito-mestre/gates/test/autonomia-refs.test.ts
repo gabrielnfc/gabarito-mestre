@@ -1,7 +1,7 @@
 /**
  * Escrita em `refs/remotes` ou `packed-refs` por interpretador (python3, node, perl): segmento Bash que cita a ref e não é leitor
- * simples nem `git` (os `git` seguem pela classificação própria) é integridade com escrita. Com a autonomia ligada o orquestrador
- * passa como no resto da integridade; o subagent segue `deny`. Leitores seguem em silêncio.
+ * simples nem `git` (os `git` seguem pela classificação própria) é integridade com escrita. GM-22 T3: integridade pede em todo nível
+ * de autonomia (D-G52); o subagent segue `deny`. Leitores seguem em silêncio.
  *
  * MUTAÇÕES PRESCRITAS:
  *  R1  tirar `packed-refs` da marca ⇒ `refs-interpretador-packed-pede` falha
@@ -37,12 +37,14 @@ describe('escrita em refs por interpretador', () => {
     assert.equal(decidir(bash(c), null, CTX).faixa, 'ask');
   });
 
-  test('refs-interpretador-autonomia-passa-orquestrador-e-barra-subagent', () => {
+  test('refs-interpretador-autonomia-continua-ask-orquestrador-e-barra-subagent', () => {
     const c = `python3 -c "open('.git/${REF}/origin/main','w')"`;
-    const d = decidir(bash(c), null, CTX, true);
-    assert.equal(d.faixa, 'silencio');
-    assert.equal(d.evento?.tipo, 'guarda.autonomia_usada');
-    assert.equal(decidir(bash(c, true), null, CTX, true).faixa, 'deny');
+    for (const nivel of ['trabalha', 'publica'] as const) {
+      const d = decidir(bash(c), null, CTX, nivel);
+      assert.equal(d.faixa, 'ask', nivel);
+      assert.equal(d.evento?.tipo, 'guarda.ask', nivel);
+      assert.equal(decidir(bash(c, true), null, CTX, nivel).faixa, 'deny', nivel);
+    }
   });
 
   test('refs-leitores-git-do-subagent-em-silencio (R4: sem a isenção de git, falha)', () => {
