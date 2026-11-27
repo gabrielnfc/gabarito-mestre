@@ -20,6 +20,7 @@ import { existsSync, lstatSync, readFileSync, readdirSync, realpathSync } from '
 import { isAbsolute, join } from 'node:path';
 import { cardDe, ehColunaFl1, ehFeito, ehTerminal, padraoLegadoValido, planoLegadoDe, planoMdDoCard, primeiroTermo, TERMINAIS_PADRAO, terminaisValidos, worktreesDe } from '../dist/projeto.js';
 import { append as anexarAoDiario, dirEntrega, lerEstrito } from '../dist/diario.js';
+import { formaInvalida } from '../dist/formas.js';
 import { idPadraoDe } from '../lib/config.mjs';
 import { aplicarConfig, ArquivoInvalido } from './onboarding-config.mjs';
 import { projetoDoRepo } from './painel.mjs';
@@ -324,9 +325,10 @@ export function herdarTasks(raiz, { rodar, entrega, arquivo, gravar = false, dry
     if (noPlano.has(it.task)) return { ...base, estado: 'recusada', motivo: 'task: está no plano.json da entrega (o loop mede, não se herda)' };
     if (jaHerdadas.has(it.task)) return { ...base, estado: 'ja_herdada' };
     const o = conferirOrigem(raiz, it.origem, rodar);
-    return o.motivo === undefined
-      ? { ...base, estado: 'ok', _dados: { task: it.task, origem: { tipo: o.tipo, ref: o.ref }, ...(it.titulo === undefined ? {} : { titulo: it.titulo }) } }
-      : { ...base, estado: 'recusada', motivo: o.motivo };
+    if (o.motivo !== undefined) return { ...base, estado: 'recusada', motivo: o.motivo };
+    const _dados = { task: it.task, origem: { tipo: o.tipo, ref: o.ref }, ...(it.titulo === undefined ? {} : { titulo: it.titulo }) };
+    const forma = formaInvalida('task.herdada', _dados);
+    return forma === null ? { ...base, estado: 'ok', _dados } : { ...base, estado: 'recusada', motivo: `titulo: fora da forma do diário (${forma})` };
   });
   const recusadas = tasks.filter((t) => t.estado === 'recusada').length;
   const novas = tasks.filter((t) => t.estado === 'ok');

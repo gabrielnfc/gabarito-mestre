@@ -20,6 +20,8 @@ import { fileURLToPath } from 'node:url';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { montarNoDisco } from './painel-fixtures/adotado.mjs';
 import { projetoDoRepo } from '../scripts/painel.mjs';
+import { herdarTasks } from '../scripts/onboarding-herdar.mjs';
+import { rodarReal } from '../scripts/onboarding.mjs';
 import { ehColunaFl1, ehFeito, ehTerminal } from '../dist/projeto.js';
 
 const AQUI = dirname(fileURLToPath(import.meta.url));
@@ -739,6 +741,26 @@ test('herdar-tasks-recusa-tudo-ou-nada: task que está no plano.json da entrega 
 test('herdar-tasks-recusa-tudo-ou-nada: task repetida na lista', () => recusa('task-repetida', { task: 'T4', origem: 'pr:10' }, /repetid/));
 test('herdar-tasks-recusa-tudo-ou-nada: origem com tipo desconhecido', () => recusa('origem-tipo', { task: 'T3', origem: 'branch:feat/x' }, /origem/));
 test('herdar-tasks-recusa-tudo-ou-nada: id de task fora da forma', () => recusa('task-id', { task: '../T3', origem: 'pr:10' }, /task/));
+test('herdar-tasks-recusa-tudo-ou-nada: titulo vazio (a forma do diário recusa)', () => recusa('titulo-vazio', { task: 'T3', origem: 'pr:10', titulo: '' }, /titulo/));
+test('herdar-tasks-recusa-tudo-ou-nada: titulo multilinha', () => recusa('titulo-multilinha', { task: 'T3', origem: 'pr:10', titulo: 'a\nb' }, /titulo/));
+test('herdar-tasks-recusa-tudo-ou-nada: titulo com mais de 160 caracteres', () => recusa('titulo-longo', { task: 'T3', origem: 'pr:10', titulo: 'x'.repeat(161) }, /titulo/));
+test('herdar-tasks-recusa-tudo-ou-nada: titulo inválido sem --gravar também sai recusada e nada é gravado', async () => {
+  const { dir } = await repoTasks('t-titulo-le');
+  for (const titulo of ['', 'a\nb', 'x'.repeat(161)]) {
+    const r = tasks(dir, [{ task: 'T4', origem: 'pr:10' }, { task: 'T3', origem: 'pr:10', titulo }]);
+    assert.equal(r.rc, 0, r.out + r.err);
+    assert.deepEqual(r.j.tasks.map((t) => t.estado), ['ok', 'recusada']);
+    assert.match(r.j.tasks[1].motivo, /titulo/);
+    assert.equal(existsSync(DIARIO_HERDAR(dir)), false);
+  }
+});
+test('herdar-tasks-recusa-tudo-ou-nada: historico que o git não consegue conferir (timeout) tem motivo próprio', async () => {
+  const { dir, sha } = await repoTasks('t-anc-motivo');
+  const rodar = (cmd, args, o) => (args[0] === 'merge-base' ? { rc: null, stdout: '', stderr: '', motivo: 'timeout' } : rodarReal(cmd, args, o));
+  const r = herdarTasks(dir, { rodar, entrega: 'PBI-7', arquivo: lista(dir, [{ task: 'T3', origem: `commit:${sha}` }]) });
+  assert.equal(r.tasks[0].estado, 'recusada');
+  assert.match(r.tasks[0].motivo, /não consegui conferir o histórico \(timeout\)/);
+});
 
 test('herdar-tasks-idempotente: a 2ª rodada com a mesma lista não grava nada (ja_herdada); lista com 1 nova grava só a nova', async () => {
   const { dir, sha } = await repoTasks('t-idem');

@@ -1941,7 +1941,8 @@ test('herdada-fora-do-loop: TIPOS_DE_TASK e TIPOS_DE_PROGRESSO não ganham task.
   const base = diario(ini('b'));
   const com = diario(herdada, ini('b'));
   assert.deepEqual(proximaAcao(plano(['a', 'b']), com, sinais()), proximaAcao(plano(['a', 'b']), base, sinais()));
-  assert.deepEqual(estadoDe(com.filter((e) => TIPOS_DE_TASK.includes(e.tipo))), estadoDe(base));
+  assert.deepEqual(estadoDe(com), { invalido: 'tipo fora do contrato de task' }, 'estadoDe recusa task.herdada: não é evento de task');
+  assert.notDeepEqual(estadoDe(base), estadoDe(com));
   assert.equal(proximaAcao(plano(['a']), diario(herdada), sinais()).tipo, 'despachar', 'herdar a task a não a tira do plano: o loop só lê task.iniciada e companhia');
 });
 
