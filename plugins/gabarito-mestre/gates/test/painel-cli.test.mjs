@@ -1360,6 +1360,8 @@ describe('T18: painel.mjs estado em toda fase, fora do loop', { timeout: 120_000
   const publicada = (extra = [], prEstado = 'mergeado') => {
     const m = repoT18({ specs: [SPEC12], planos: { 'GM-12': ['T1', 'T2'] } });
     evEm(m, 'GM-12', 'task.iniciada', { task: 'T1', papel: 'implementador' });
+    // GM-21 DT1: "publicada" exige plano sem task aberta; o plano do fixture é fechado trocando o `plano.json` por um sem tasks (o diário de T1 segue; evento fora do plano é ignorado)
+    writeFileSync(join(m.repo, '.harness', 'entregas', 'GM-12', 'plano.json'), JSON.stringify({ entrega: 'GM-12', tasks: 'fechado' }));
     for (const [tipo, dados, agente] of extra) evEm(m, 'GM-12', tipo, dados, { agente });
     evEm(m, 'GM-12', 'fato.medido', { chave: 'pr', fonte: 'gh', valor: { numero: 7, estado: prEstado, branch: 'feat/GM-12-painel' } });
     return m;

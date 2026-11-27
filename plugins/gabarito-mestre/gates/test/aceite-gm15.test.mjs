@@ -85,7 +85,7 @@ test('aceite-foto-do-checkout-funciona-com-HEAD-destacado: branch nomeada e HEAD
 // ── o replay da GM-14 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 const SPEC_PROXIMA = 'GM-15 Fluidez do loop'; // "<PBI> <título da spec>"
 /** Repo descartável na branch da GM-14, com onboarding, a spec da próxima entrega (GM-15) e o diário real da GM-14 (com ou sem o `events.sessao-1.jsonl`). */
-function replayGm14({ comSessao1, branch = 'enabler/GM-14-clareza' }) {
+function replayGm14({ comSessao1, branch = 'enabler/GM-14-clareza', cortaT8 = true }) {
   const d = join(raizSegura(realpathSync(mkdtempSync(join(tmpdir(), 'aceite gm14 ')))), 'r');
   mkdirSync(d, { recursive: true });
   git(d, 'init', '-q', '-b', 'main');
@@ -101,6 +101,8 @@ function replayGm14({ comSessao1, branch = 'enabler/GM-14-clareza' }) {
   const reais = readFileSync(join(FIX, 'eventos.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l));
   assert.ok(reais.length > 900, 'preparo: o diário real da GM-14 (fixture) está inteiro');
   for (const e of reais) w(d, 'GM-14', e.sessao, e.tipo, e.dados, e.ts, e.agente);
+  // GM-21 DT1: a GM-14 real fechou sem a T8 (cortada pelo dono); sem o evento o plano segue aberto e o PR não encerra/publica. O painel `--entrega GM-14` (limite declarado) mantém a T8 no teto.
+  if (cortaT8) w(d, 'GM-14', 'loop', 'task.fora', { task: 'T8', como: 'cortada', motivo: 'cortada pelo dono no fechamento da GM-14', origem: 'dono' }, '2026-11-15T12:15:00.000Z', 'orquestrador');
   return d;
 }
 
@@ -261,7 +263,7 @@ for (const comSessao1 of [true, false]) {
 // LIMITE DECLARADO (D-G21, backlog 2.1.1 / D-G20): o painel da própria GM-14 (`--entrega GM-14`) mostra itens antigos do dono enquanto ela não encerrar. Estado MEDIDO, asserido
 // como é (não `todo`): o T8 no teto com o botão "liberar mais uma rodada" e a pergunta de gatilho antiga. Resolve-se na 2.1.1 com o encerramento pela versão final.
 test('aceite-replay-gm14-limite-painel-da-gm14: `--entrega GM-14` com os PRs reais mostra o T8 no teto e a pergunta antiga (limite declarado, D-G21)', () => {
-  const d = replayGm14({ comSessao1: false });
+  const d = replayGm14({ comSessao1: false, cortaT8: false });
   assert.equal(medir(d).ok, true);
   const r = cli(PAINEL, d, ['estado', '--entrega', 'GM-14', '--agentes']);
   assert.equal(r.status, 0, r.stdout + r.stderr);
