@@ -162,7 +162,8 @@ describe('GM-14 T34: pouso é regra do produto (FIEL-14 a, b, c, e, f)', () => {
     assert.doesNotMatch(painelDa(amb, 'S2'), /limpar a conversa/);
   });
 
-  const semConfig = (amb) => { spawnSync('rm', [join(amb.dir, 'harness.config.json')]); return amb; }; // sem config em lugar nenhum (a guarda vê onboarding em qualquer config válida)
+  // GM-21 T3 (emenda 8, REQ-MIG-1): `proxima` exige gates.suites, então "sem config" vira config mínima só com suítes (sem `fluxo`); as asserções não mudam
+  const semConfig = (amb) => { writeFileSync(join(amb.dir, 'harness.config.json'), JSON.stringify({ gates: { suites: ["echo '# pass 1'"] } })); return amb; };
   test('proxima-sem-onboarding-nao-trava-pelo-pouso (FIEL-14 h; GM-15 T23, critério da guarda): sem config o pouso gravado não trava proxima nem o painel; com onboarding trava (controle)', () => {
     const amb = semConfig(plano1());
     assert.equal(amb.cli(['pousar', '--sessao', 'S1']).rc, 0);
@@ -1576,5 +1577,18 @@ describe('GM-21 T3: plano executável conferido antes do abrir e do proxima (REQ
     const c = semCfg.cli(['proxima', '--vivos', '0']);
     assert.deepEqual(c.j.acao, { tipo: 'esperar', motivo: 'plano_nao_executavel' });
     assert.ok(c.j.aviso.some((a) => a.includes('gates.suites')), JSON.stringify(c.j.aviso));
+  });
+
+  test('proxima-config-ausente-conta-como-sem-suites (emenda 8, DT4): sem harness.config.json o proxima tira a task, avisa gates.suites e espera; o abrir recusa', () => {
+    const amb = comTask({});
+    spawnSync('rm', [join(amb.dir, 'harness.config.json')]);
+    const p = amb.cli(['proxima', '--vivos', '0']);
+    assert.equal(p.rc, 0, p.out + p.err);
+    assert.deepEqual(p.j.acao, { tipo: 'esperar', motivo: 'plano_nao_executavel' });
+    assert.ok(p.j.aviso.some((a) => a.includes('gates.suites') && a.includes('ausente')), JSON.stringify(p.j.aviso));
+    assert.ok(p.j.aviso.includes('harness.config.json ausente'), JSON.stringify(p.j.aviso));
+    const a = amb.cli(['abrir', 'T1']);
+    assert.equal(a.j.erro, 'plano_nao_executavel', a.out);
+    assert.deepEqual(ladoDe(amb), { branches: '', worktrees: [] });
   });
 });

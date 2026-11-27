@@ -734,9 +734,21 @@ describe('integrar', () => {
     assert.ok(!amb.gitChamadas().some((l) => / merge /.test(l)));
   });
 
-  test('integrar-gate-sem-suite-reprova', () => {
+  test('abrir-sem-suite-recusa (GM-21 T3, irmão de integrar-gate-sem-suite-reprova): config {} ⇒ abrir recusa plano_nao_executavel e nada é criado', () => {
     const amb = ambiente({ config: {} });
+    const r = amb.cli(['abrir', 'T1']);
+    assert.equal(r.rc, 1, r.out);
+    assert.equal(r.j.erro, 'plano_nao_executavel');
+    assert.ok(!existsSync(amb.wt('T1')));
+  });
+
+  test('integrar-gate-sem-suite-reprova', () => {
+    // GM-21 T3 (emenda 8): o abrir agora recusa config sem suíte; a worktree nasce com config válida e a base perde as suítes antes do integrar (o rebase leva a config {} à worktree)
+    const amb = ambiente();
     amb.aprovar('T1');
+    writeFileSync(join(amb.dir, 'harness.config.json'), '{}');
+    g(amb.dir, 'add', 'harness.config.json');
+    g(amb.dir, 'commit', '-q', '-m', 'chore: sem suites');
     const r = amb.cli(['integrar', 'T1']);
     assert.equal(r.rc, 1);
     assert.equal(r.j.erro, 'gate_reprovado');
@@ -796,8 +808,16 @@ describe('integrar', () => {
     const fora = join(novoTmp('loop-mut-'), 'fora.json');
     writeFileSync(fora, JSON.stringify([{ nome: 'viva', arquivo: 'src/t1.txt', de: 'x', para: 'y', teste: 'true' }]));
     const amb = ambiente();
-    writeFileSync(join(amb.entregas, 'plano.json'), JSON.stringify(planoDe([{ id: 'T1', deps: [], arquivos: ['src/t1.txt'], mutacoes: `../${fora.split('/').slice(-2).join('/')}` }])));
+    const mutacoes = `../${fora.split('/').slice(-2).join('/')}`;
+    // GM-21 T3 (emenda 8): o abrir recusa mutacoes fora da raiz (irmão abaixo); a worktree nasce com o plano válido e o plano muda antes do integrar
+    writeFileSync(join(amb.entregas, 'plano.json'), JSON.stringify(planoDe([{ id: 'T1', deps: [], arquivos: ['src/t1.txt'], mutacoes }])));
+    const ab = amb.cli(['abrir', 'T1']);
+    assert.equal(ab.j.erro, 'plano_nao_executavel', ab.out);
+    assert.match(ab.j.mensagem, /fora da raiz/);
+    assert.ok(!existsSync(amb.wt('T1')));
+    writeFileSync(join(amb.entregas, 'plano.json'), JSON.stringify(planoDe([{ id: 'T1', deps: [], arquivos: ['src/t1.txt'] }])));
     amb.aprovar('T1');
+    writeFileSync(join(amb.entregas, 'plano.json'), JSON.stringify(planoDe([{ id: 'T1', deps: [], arquivos: ['src/t1.txt'], mutacoes }])));
     const r = amb.cli(['integrar', 'T1']);
     assert.equal(r.rc, 1);
     assert.equal(r.j.erro, 'mutacoes_invalidas');

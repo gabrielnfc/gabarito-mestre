@@ -1467,8 +1467,7 @@ function ofertaDeLiberacao(c, plano, eventos, task, cfgLote, aviso) {
 /** `despachar` só com as tasks cujo plano é executável; sem nenhuma, `esperar plano_nao_executavel`. Os problemas (e os da config, 1 vez) vão para `aviso`. */
 function tirarNaoExecutaveis(c, plano, eventos, cfg, acao, aviso) {
   if (acao.tipo !== 'despachar') return acao;
-  // config ausente não entra aqui (o `proxima` já avisa `harness.config.json ausente`; o FIEL-14 h depende de repo sem config): o `abrir` recusa com o motivo
-  const conf = conferirExecutavel({ raiz: c.raiz, plano, eventos, cfg: cfg ?? undefined, tasks: acao.itens.map((i) => i.task), semConfig: cfg === null });
+  const conf = conferirExecutavel({ raiz: c.raiz, plano, eventos, cfg, tasks: acao.itens.map((i) => i.task) });
   const itens = acao.itens.filter((i) => (conf.porTask[i.task] ?? []).length === 0);
   if (itens.length === acao.itens.length) return acao;
   const vistos = new Set();

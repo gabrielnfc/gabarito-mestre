@@ -76,15 +76,15 @@ function problemasDeTesteAfetado(raiz, t) {
 
 /**
  * `{ ok, problemas, porTask }`. `problemas`: `{task|null, campo, codigo, motivo}`; `task: null` é da config. `porTask[id]` = problemas da task + os da config
- * (só as tasks conferidas: não integradas nem fora; `tasks` restringe a conferência a esses ids). `semConfig: true` pula a conferência da config (repo sem `harness.config.json`). Escopo = o do gate (`escopoDaTask` + `escopo`, `loop.mjs integrar`).
+ * (só as tasks conferidas: não integradas nem fora; `tasks` restringe a conferência a esses ids). Escopo = o do gate (`escopoDaTask` + `escopo`, `loop.mjs integrar`).
  */
-export function conferirExecutavel({ raiz, plano, eventos, cfg, tasks, semConfig = false }) {
+export function conferirExecutavel({ raiz, plano, eventos, cfg, tasks }) {
   const ord = ordenar(eventos ?? []);
   const est = ord.ok ? estadosPorTask(plano.tasks.map((t) => t.id), ord.eventos, true) : { ok: false };
   const conferidas = plano.tasks.filter((t) => (tasks === undefined || tasks.includes(t.id))
     && !(est.ok && NAO_CONFERIDAS.has(est.estados.get(t.id)?.estado)));
   const emendas = projetarEmendas(eventos ?? []);
-  const daConfig = semConfig ? [] : problemasDeSuites(cfg);
+  const daConfig = problemasDeSuites(cfg);
   const problemas = [...daConfig];
   const porTask = {};
   for (const t of conferidas) {
