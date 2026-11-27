@@ -253,6 +253,8 @@ _(Emenda 6, T1)_ Entra no escopo da T1 `gates/test/stop-loop.test.mjs`, só `pub
 Ondas (ordem da D-G57: primeiro o que trava o loop, itens 2, 4, 5 e l.122): **1a** T1, T2, T4 em paralelo (item 2; item 4 b; item 5; nenhum arquivo em comum) · **1b** T3 (T1, T4; item 4 a e c, l.122) · **2** T5 (T3, T4), T12 (T2), T9, T10 (T3) · **3** T6 (T2, T12) · **4** T7 (T6) e T8 (T1, T6) em paralelo: escopos disjuntos, `dist/` listado por arquivo (`projeto.js`, `painel-esquadrao.js` na T7; `formas.js`, `depende.js`, `painel.js` na T8) · **5** T11. Motivo: `onboarding.mjs`/`harness-doctor.mjs` são de T2, T12 e T6; `loop.mjs` de T3 e T5; `loop-cli-5.test.mjs` de T1, T3 e T5; `gate-task.mjs` de T4, T3 e T5; `formas.ts`/`dist/formas.js` de T6 e T8; `painel-medir.mjs` de T1 e T8; `texto.test.sh` de T3, T10 e T11. O build do `dist/` de cada task regrava só os arquivos do seu escopo (conferir no review: `git diff --stat` sem `dist/` alheio).
 Emenda 1: `painel.mjs` é de T1 e T9; a T9 depende de T1 e segue na onda 2.
 
+Emenda 8 (T3): entram no escopo da T3, só para fixtures que chamam `abrir`/`proxima` sem plano executável ganharem `harness.config.json` com `gates.suites` ou plano executável, sem mudar asserção: `gates/test/liberar-teto.test.mjs` (D1-*) e `gates/test/conversa-pontos.test.mjs` (cópia real da GM-13). Em `gates/test/loop-cli.test.mjs`, `integrar-gate-sem-suite-reprova` e `integrar-mutacoes-fora-da-raiz-recusa` semeiam a worktree sem o `abrir` e ganham irmãos que provam a recusa no `abrir`. Config ausente conta como config sem `gates.suites` (REQ-MIG-1, sem exceção).
+
 ## CHANGELOG [2.4.0] previsto
 
 ```
