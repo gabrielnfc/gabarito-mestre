@@ -441,7 +441,7 @@ describe('T13 doctor — aprendizado sem destino, onboarding não detectado, sem
     const plug = mkdtempSync(join(tmpdir(), 'doctor-sem-dist-'));
     mkdirSync(join(plug, 'scripts'), { recursive: true });
     mkdirSync(join(plug, 'lib'), { recursive: true });
-    for (const f of ['harness-doctor.mjs', 'versionamento-check.mjs', 'db-template.mjs', 'gate-task.mjs']) copyFileSync(join(dirname(SCRIPT), f), join(plug, 'scripts', f));
+    for (const f of ['harness-doctor.mjs', 'versionamento-check.mjs', 'db-template.mjs']) copyFileSync(join(dirname(SCRIPT), f), join(plug, 'scripts', f));
     for (const f of ['cli', 'config', 'git', 'datas']) copyFileSync(join(dirname(SCRIPT), '..', 'lib', `${f}.mjs`), join(plug, 'lib', `${f}.mjs`));
     const r = spawnSync(process.execPath, [join(plug, 'scripts', 'harness-doctor.mjs'), '--json'], { cwd: base(), encoding: 'utf8', timeout: 20000 });
     assert.equal(r.status === 0 || r.status === 1, true, r.stderr);
@@ -851,14 +851,8 @@ describe('GM-21 T2 doctor — suites-declaradas (REQ-MIG-2)', () => {
     const invalida = achado(doctor.run(comCfg('{"gates": ')));
     assert.equal(invalida.found, false);
     assert.match(invalida.evidence, /harness\.config\.json inválido/);
-    // entradas inválidas: a evidência vem do `normalizarSuites` do gate (não é a frase de "sem suíte")
-    const soInvalidas = achado(doctor.run(comCfg({ gates: { suites: [{ nome: 'x' }, { nome: 'y', cmd: '  ' }, 5, null] } })));
-    assert.equal(soInvalidas.found, false);
-    assert.match(soInvalidas.evidence, /suíte x: comando vazio ou ausente/);
-    // mesma régua do gate (normalizarSuites): UMA entrada inválida, mesmo ao lado de uma válida, é FALTA — o gate e o abrir recusam
-    const mista = achado(doctor.run(comCfg({ gates: { suites: [{ nome: 'x' }, { cmd: 'npm test' }] } })));
-    assert.equal(mista.found, false);
-    assert.match(mista.evidence, /suíte x: comando vazio ou ausente/);
+    // O doctor só CONTA o declarado (REQ-MIG-2): a régua do gate fica no conferirExecutavel da T3, não aqui.
+    assert.equal(achado(doctor.run(comCfg({ gates: { suites: [{ nome: 'x' }, { cmd: 'npm test' }] } }))).evidence, '2 suíte(s)');
   });
 
   test('doctor-suites-declaradas-nao-muda-nivel: o aviso não derruba o nível nem o exit code (CLI real)', () => {

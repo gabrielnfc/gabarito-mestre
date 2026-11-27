@@ -174,7 +174,7 @@ function lerConfig(wt) {
 // Com --red, o resumo e o rc de partes diferentes de um comando composto se misturam: só comando simples.
 const COMPOSTO = /[;&|`\n\r]|\$\(/;
 
-export function normalizarSuites(lista, comRed = false) {
+function normalizarSuites(lista, comRed = false) {
   if (!Array.isArray(lista)) return { suites: [], erros: ['suítes devem ser uma lista'] };
   const suites = [];
   const erros = [];
