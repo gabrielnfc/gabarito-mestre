@@ -42,7 +42,7 @@ import { fusoValido } from '../dist/painel-hora.js';
 import { paraTexto } from '../dist/painel-texto.js';
 import { lerX } from '../dist/pouso.js';
 import { sessoesDeRetomada } from '../dist/pouso-pendente.js';
-import { encerramentoDe, idDaBranch, trilhaDe } from '../dist/trilha.js';
+import { avisoDePlanoAberto, encerramentoDe, idDaBranch, trilhaDe } from '../dist/trilha.js';
 import { proximaEntrega } from '../dist/depende.js';
 import { cardDe, padraoLegadoValido, planoLegadoDe, planoMdDoCard, projetarProjeto, terminaisValidos, worktreesDe } from '../dist/projeto.js';
 import { temOnboarding } from './cartao-sessao.mjs';
@@ -768,6 +768,11 @@ export function estadoDoPainel(cwd, opts = {}) {
     // `diario_invalido`. Ele só não aparece em PRONTO/modo/id/fase (a regra de "publicada" é a de `trilhaDe`, a única).
     // GM-21 DT1: com task aberta no plano, a fase PR de `trilhaDe` não é cumprida pelo PR mergeado: a entrega segue identificada e o plano NÃO é descartado aqui.
     const planoDoDiario = plano;
+    // GM-21 DT1 (r1 MAJOR-1): o aviso de PR mergeado que não publica por causa do plano aberto sai AQUI (onde o dono lê), sem estado: a cada leitura enquanto vale
+    if (plano !== null && id !== null && eventos !== null) {
+      const av = avisoDePlanoAberto(eventos, id, idPadrao, { tasks: plano.tasks.map((t) => t.id) });
+      if (av !== null) avisos.push(`PR #${av.pr} mergeado não encerra a ${id}: tasks abertas ${av.abertas.join(', ')}; se a entrega acabou, /gabarito-mestre:encerrar ${id} ${av.pr}`.slice(0, 300));
+    }
     const descartado = plano !== null && opts.entrega === undefined && eventos !== null && trilhaDe(fatos, eventos).identificada !== true;
     if (descartado) plano = null;
 

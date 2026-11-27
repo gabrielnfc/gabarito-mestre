@@ -1128,17 +1128,13 @@ describe('medir: grava o encerramento da entrega (REQ-ENT-1 a, c)', () => {
       }
     });
 
-    test('aviso-encerrar-uma-vez (ME1-f): o aviso de plano aberto sai na 1ª medição do PR na sessão, não na 2ª, e volta numa sessão nova; fora do diário e de `falhas`', () => {
+    test('medir-nao-emite-aviso-de-plano (r1 MAJOR-1): o aviso de plano aberto sai no `painel.mjs estado` (entrega-encerrada-cli.test.mjs), nunca no resultado do `medir` (o mod descarta essa saída e gastaria o aviso)', () => {
       const d = repo7();
       const r1 = medir7(d, [PR10]);
-      assert.deepEqual(r1.avisos, ['PR #10 mergeado não encerra a PBI-7: tasks abertas T2; se a entrega acabou, /gabarito-mestre:encerrar PBI-7 10']);
+      assert.equal(r1.ok, true, JSON.stringify(r1.falhas));
+      assert.equal(r1.avisos, undefined, 'a 1ª medição do PR não traz aviso');
       assert.deepEqual(r1.falhas, []);
-      assert.equal(r1.ok, true, 'aviso não derruba ok');
-      const r2 = medir7(d, [PR10]);
-      assert.equal(r2.avisos, undefined, 'a 2ª medição da mesma sessão não repete');
-      assert.equal(medir7(d, [PR10]).avisos, undefined);
-      const r3 = medir7(d, [PR10], { sessao: SID2 });
-      assert.equal(r3.avisos?.length, 1, 'sessão nova: o fato pr é gravado de novo nela, o aviso também');
+      assert.equal(medir7(d, [PR10], { sessao: SID2 }).avisos, undefined, 'nem numa sessão nova');
       assert.equal(ler(dirDe(d, 'PBI-7')).filter((e) => /avis/.test(e.tipo)).length, 0, 'nenhum evento novo');
     });
 

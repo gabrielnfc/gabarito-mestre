@@ -606,3 +606,11 @@ test('fase-pr-com-plano-aberto-nao-cumpre (ME1-d, emenda 1): PR mergeado e nenhu
   // gh falhou: a regra de hoje (a fase PR é `?`, nunca ✓ por causa do plano)
   assert.equal(trilhaDe(fatos({ plano, specs: [], gh: 'falhou' }), expandir([T1_INTEGRADA, pr(10, 'mergeado')])).marcas[5], '?');
 });
+
+test('fase-pr-encerramento-do-dono-vale (r1 MAJOR-2): entrega.encerrada vigente com T2 aberta ⇒ publicada (a mesma regra de entregaPublicada); reaberta volta a identificada', () => {
+  const f = fatos({ plano: { tasks: ['T1', 'T2'] }, specs: [] });
+  const dono: Compacto = { t: 'entrega.encerrada', d: { entrega: 'GM-20', pr: 10, via: 'dono', mergeado_em: '2026-11-01T00:00:00.000Z' } };
+  assert.equal(trilhaDe(f, expandir([T1_INTEGRADA, pr(10, 'mergeado'), dono])).identificada, false, 'o encerramento manda');
+  const reaberta: Compacto = { t: 'entrega.reaberta', d: { entrega: 'GM-20', em: '2026-11-02T00:00:00.000Z' } };
+  assert.equal(trilhaDe(f, expandir([T1_INTEGRADA, pr(10, 'mergeado'), dono, reaberta])).identificada, true, 'reaberta: plano aberto volta a valer');
+});

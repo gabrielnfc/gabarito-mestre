@@ -189,6 +189,26 @@ export function tasksAbertas(tasks          , eventos          )           {
   });
 }
 
+/**
+ * GM-21 DT1 (r1 MAJOR-2): o plano aberto impede a fase PR (a regra única de "publicada") SALVO com `entrega.encerrada` vigente: o encerramento do dono manda,
+ * em `trilhaDe` como em `entregaPublicada` (guarda.ts). `plano` ausente ⇒ nunca impede (a regra de hoje).
+ */
+export function planoImpedePublicada(plano                            , eventos          , entrega        )          {
+  return plano !== null && planoAberto(plano.tasks, eventos) && !encerramentoDe(eventos, entrega).encerrada;
+}
+
+/**
+ * GM-21 DT1 (r1 MAJOR-1): o aviso do `painel.mjs estado`: a entrega tem PR mergeado (o último, sem PR aberto) que NÃO a publica só por causa do plano aberto.
+ * Devolve `{pr, abertas}` ou `null`. Mesmos fatos e mesma regra da fase PR de `trilhaDe` (sem leitura do `gh`: só o diário); sem estado, a cada leitura.
+ */
+export function avisoDePlanoAberto(eventos          , entrega        , idPadrao        , plano                            )                                           {
+  const ord = Array.isArray(eventos) ? ordenar(eventos) : { ok: false          };
+  if (!ord.ok || plano === null || !planoImpedePublicada(plano, ord.eventos, entrega)) return null;
+  const p = prs(ord.eventos, entrega, idPadrao);
+  if (p.ultimo === null || p.ultimo.estado !== 'mergeado' || p.aberto !== null) return null;
+  return { pr: p.ultimo.numero, abertas: tasksAbertas(plano.tasks, ord.eventos) };
+}
+
 /** `true` se `tasksAbertas` não é vazia. */
 export function planoAberto(tasks          , eventos          )          {
   return tasksAbertas(tasks, eventos).length > 0;
@@ -318,7 +338,7 @@ export function trilhaDe(fatos             , eventos          )         {
   let celPr        ;
   if (f.gh === 'falhou' || corrompido || (pr.total === 0 && semFonte)) celPr = { fato: naoConferi(IDX.pr), propaga: true };
   // GM-21 DT1 (emenda 1): a regra única de "publicada" é esta fase; com task aberta no plano, o PR mergeado não a cumpre (a entrega segue identificada).
-  else celPr = { fato: pr.ultimo !== null && pr.ultimo.estado === 'mergeado' && pr.aberto === null && !(plano !== null && planoAberto(plano.tasks, evs)), propaga: false };
+  else celPr = { fato: pr.ultimo !== null && pr.ultimo.estado === 'mergeado' && pr.aberto === null && !planoImpedePublicada(plano, evs, candidato), propaga: false };
 
   if (ligada === null && !(segundo && celPr.fato !== true)) return naoIdentificada(f, evs, candidato);
   const entrega = candidato;

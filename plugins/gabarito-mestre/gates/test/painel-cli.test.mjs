@@ -1400,7 +1400,8 @@ describe('T18: painel.mjs estado em toda fase, fora do loop', { timeout: 120_000
       const i = estado(publicada(extra, 'aberto'), { agentes: VIVO }).estado;
       assert.deepEqual([p.trilha.identificada, i.trilha.identificada], [false, true], `${nome}: preparo`);
       for (const campo of ['atencao', 'recente', 'parar']) assert.deepEqual(p[campo], i[campo], `${nome}: ${campo}`);
-      assert.deepEqual(p.agora.agentes, i.agora.agentes, `${nome}: AGORA`);
+      // MINOR-1 (r1): com o plano fechado não há task em voo para o vivo casar: AGORA vazio nas duas (um vivo que voltasse a casar T1 o tornaria não vazio)
+      assert.deepEqual([p.agora.agentes, i.agora.agentes], [[], []], `${nome}: AGORA`);
       assert.doesNotMatch(JSON.stringify(p.depende), /diário fora da tabela/, nome);
       // o plano some da apresentação: a identificada o mostra, a publicada não (T47: o plano descartado só sai de PRONTO/modo/id/fase/plano)
       assert.equal(i.plano.total, 1, `${nome}: a identificada tem o plano (T2 cortada fora do total)`);

@@ -19,6 +19,7 @@ import { spawnSync, execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { raizSegura } from './_raiz-segura.mjs';
 import { append, ler } from '../dist/diario.js';
+import { entregaPublicada, SESSAO_QUALQUER } from '../dist/guarda.js';
 import { botoesPorLinha, estadoParaDesenho, linhasDaPane } from '../../mod/painel.mjs';
 
 const AQUI = dirname(fileURLToPath(import.meta.url));
@@ -424,8 +425,11 @@ test('painel-plano-aberto-segue-identificado (P9, emenda 1): só o PR do plano (
     const m = medirPbi7(d, [PR10_7]);
     assert.equal(ler(dirDe(d, 'PBI-7')).filter((e) => e.tipo === 'entrega.encerrada').length, 0, `${branch}: nada encerrado`);
     assert.deepEqual(ler(dirDe(d, 'PBI-7')).filter((e) => e.tipo === 'fato.medido' && e.dados.chave === 'pr').map((e) => e.dados.valor.numero), [10], 'o PR #10 segue gravado');
-    assert.equal(m.avisos?.length, 1, `${branch}: o aviso de plano aberto sai no medir`);
-    assert.match(m.avisos[0], /^PR #10 mergeado não encerra a PBI-7: tasks abertas T2; se a entrega acabou, \/gabarito-mestre:encerrar PBI-7 10$/);
+    assert.equal(m.avisos, undefined, `${branch}: o medir não carrega o aviso (o mod descarta a saída dele)`);
+    // MAJOR-1 (r1): o aviso sai no `painel.mjs estado` (onde o dono lê), com T2 e o comando, 1 entrada só, a cada leitura (o estado não grava, não gasta cota)
+    const lerAvisos = () => { const r = painel(d, ['estado']); assert.equal(r.status, 0, r.stdout + r.stderr); return JSON.parse(r.stdout).avisos.filter((a) => /não encerra a PBI-7/.test(a)); };
+    assert.deepEqual(lerAvisos(), ['PR #10 mergeado não encerra a PBI-7: tasks abertas T2; se a entrega acabou, /gabarito-mestre:encerrar PBI-7 10'], branch);
+    assert.equal(lerAvisos().length, 1, `${branch}: a 2ª leitura do estado traz o mesmo, sem duplicar`);
     const e = estado(d);
     assert.equal(e.entregue ?? null, null, `${branch}: a entrega não virou "entregue"`);
     assert.equal(e.id, 'PBI-7', `${branch}: o plano não é descartado`);
@@ -436,10 +440,31 @@ test('painel-plano-aberto-segue-identificado (P9, emenda 1): só o PR do plano (
     assert.deepEqual(e.plano.tasks.map((t) => [t.id, t.estado]), [['T1', 'integrada'], ['T2', 'pendente']], `${branch}: a próxima é a T2`);
     // com o PR do loop aberto (#11) o estado é o mesmo (regressão)
     const m2 = medirPbi7(d, [PR10_7, PR11_7]);
-    assert.equal(m2.avisos, undefined, 'a mesma sessão não repete o aviso');
+    assert.equal(m2.avisos, undefined);
+    // o #11 só vira fato na sessão cujo head é o dele (o `medir` consulta `--head=<branch>`): com ele gravado e aberto, nenhum PR mergeado "é o último": sem aviso
+    const tem11 = ler(dirDe(d, 'PBI-7')).some((x) => x.tipo === 'fato.medido' && x.dados.chave === 'pr' && x.dados.valor.numero === 11);
+    assert.equal(lerAvisos().length, tem11 ? 0 : 1, `${branch}: aviso só enquanto o #10 é o último e não há PR aberto (#11 gravado: ${tem11})`);
+    assert.equal(tem11, branch === 'feat/PBI-7-loop', 'preparo: o #11 é gravado só na sessão do head dele');
     const e2 = estado(d);
     assert.equal(e2.entregue ?? null, null);
     assert.equal(e2.id, 'PBI-7');
     assert.deepEqual([e2.plano.feitas, e2.plano.total], [1, 2]);
   }
+});
+
+// MAJOR-2 (r1): o encerramento do dono vale em TODO leitor: com `entrega.encerrada` (via dono) e T2 aberta, o painel mostra a entrega como a base (publicada: modo 'projeto'), igual à guarda.
+test('painel-encerrada-do-dono-com-plano-aberto (P9, r1 MAJOR-2): entrega.encerrada do dono + T2 aberta ⇒ o estado é o mesmo do plano fechado; sem o encerramento, segue em curso', () => {
+  const dono = (d) => w(d, 'PBI-7', 'loop', 'entrega.encerrada', { entrega: 'PBI-7', pr: 10, via: 'dono', mergeado_em: '2026-11-20T12:00:00.000Z' }, '2026-11-20T12:30:00.000Z', 'dono');
+  const campos = (e) => [e.modo, e.id, e.pronto, e.trilha.identificada, e.parar];
+  const d = pbi7('feat/PBI-7-loop');
+  medirPbi7(d, [PR10_7]);
+  assert.deepEqual([estado(d).modo, estado(d).id], ['entrega', 'PBI-7'], 'controle: sem o encerramento do dono segue em curso');
+  dono(d);
+  assert.equal(entregaPublicada(d, 'PBI-7', SESSAO_QUALQUER), true, 'a guarda dá publicada');
+  const base = pbi7('feat/PBI-7-loop');
+  medirPbi7(base, [PR10_7]);
+  w(base, 'PBI-7', 'loop', 'task.fora', { task: 'T2', como: 'cortada', motivo: 'fora do corte', origem: 'dono' }, '2026-11-19T11:00:00.000Z');
+  const e = estado(d);
+  assert.deepEqual(campos(e), campos(estado(base)), 'igual à base (plano fechado, publicada)');
+  assert.deepEqual([e.modo, e.trilha.identificada, e.pronto], ['projeto', false, null]);
 });
