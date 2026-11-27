@@ -708,6 +708,47 @@ describe('diário estável (D-M2)', { timeout: 60_000 }, () => {
   });
 });
 
+/** GM-21 REQ-TIT-1 (DT13): cards em `fluxo.mapeamento.FL1` (origin/HEAD) lidos do checkout; o título do card vale antes do da spec. */
+function comCards(cards) {
+  const m = montar({ origem: { fluxo: { mapeamento: { FL1: 'docs/cards' } } }, spec: '# PBI-7 Implementation Plan\n\ncorpo\n' });
+  mkdirSync(join(m.repo, 'docs', 'cards'), { recursive: true });
+  for (const [nome, texto] of Object.entries(cards)) writeFileSync(join(m.repo, 'docs', 'cards', nome), texto);
+  return m;
+}
+const CARD = (id, corpo) => `---\nid: ${id}\nstatus: Em andamento\n---\n\n${corpo}`;
+
+describe('GM-21 T9 título pelo card', { timeout: 60_000 }, () => {
+  test('titulo-do-card: o título é o `# ` do card da entrega, não o da spec', () => {
+    const m = comCards({ 'a.md': CARD(ENTREGA, '# Login por e-mail\n\ntexto\n'), 'b.md': CARD('GM-99', '# Outro card\n') });
+    assert.equal(estado(m).estado.titulo, 'Login por e-mail');
+    const sem = montar({ origem: { fluxo: { mapeamento: { FL1: 'docs/cards' } } }, semSpec: true });
+    mkdirSync(join(sem.repo, 'docs', 'cards'), { recursive: true });
+    writeFileSync(join(sem.repo, 'docs', 'cards', 'a.md'), CARD(ENTREGA, '# Card sem plano\n'));
+    assert.equal(estado(sem).estado.titulo, 'Card sem plano', 'vale também sem spec');
+  });
+
+  test('titulo-card-ambiguo: 2 cards com o mesmo id ⇒ título da spec e aviso', () => {
+    const m = comCards({ 'a.md': CARD(ENTREGA, '# Primeiro\n'), 'b.md': CARD(ENTREGA, '# Segundo\n') });
+    const r = estado(m);
+    assert.equal(r.estado.titulo, 'PBI-7 Implementation Plan');
+    assert.ok(r.avisos.some((a) => /card/.test(a) && a.includes(ENTREGA)), JSON.stringify(r.avisos));
+  });
+
+  test('titulo-sem-card-igual: sem card, card sem `# `, card de outro id ou FL1 ausente ⇒ título da spec, sem aviso de card', () => {
+    const casos = [
+      comCards({}),
+      comCards({ 'a.md': CARD(ENTREGA, 'sem titulo\n') }),
+      comCards({ 'a.md': CARD('GM-99', '# Outro\n') }),
+      montar({ spec: '# PBI-7 Implementation Plan\n' }),
+    ];
+    for (const m of casos) {
+      const r = estado(m);
+      assert.equal(r.estado.titulo, 'PBI-7 Implementation Plan');
+      assert.ok(!r.avisos.some((a) => /card/.test(a)), JSON.stringify(r.avisos));
+    }
+  });
+});
+
 describe('spec, título, pausa, teto e política', { timeout: 60_000 }, () => {
   test('titulo-do-h1-mesmos-bytes: título do 1º H1 e specSha do MESMO arquivo; H2 e sem H1 ⇒ título null', () => {
     const m = montar({ spec: 'preâmbulo\n\n## não é H1\n# Meu H1 real\n# outro\n' });

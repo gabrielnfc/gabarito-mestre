@@ -450,6 +450,28 @@ function carregarPacote(nome, raiz, avisos) {
 
 // ─────────────────────────────────────────────────────────────── estado
 
+/**
+ * GM-21 REQ-TIT-1 (DT13): título do card do PBI (`# ` depois do frontmatter) em `fluxo.mapeamento.FL1`, frontmatter `id` igual à entrega.
+ * Sem pasta, sem card ou card sem `# ` ⇒ `null` (vale o título de hoje); 2 cards com o mesmo `id` ⇒ `null` e aviso.
+ */
+function tituloDoCard(raiz, cfg, id, idPadrao, avisos) {
+  const fl1 = relativoSeguro(cfg?.fluxo?.mapeamento?.FL1);
+  if (fl1 === null || raiz === null || id === null) return null;
+  let idRe;
+  try { idRe = new RegExp(idPadrao); } catch { idRe = /^[A-Z]+-\d+$/; }
+  let nomes = [];
+  try { nomes = readdirSync(join(raiz, fl1)).filter((n) => n.endsWith('.md')).sort(); } catch { return null; }
+  const achados = [];
+  for (const n of nomes) {
+    const texto = lerTextoSeguro(join(raiz, fl1, n));
+    const card = texto === null ? null : cardDe(n, texto, idRe);
+    if (card !== null && card.id === id) achados.push(card);
+  }
+  if (achados.length > 1) { avisos.push(`card ambíguo: ${achados.length} cards com id ${id} em ${fl1}; título da spec`); return null; }
+  const t = achados[0]?.titulo;
+  return typeof t === 'string' && t !== '' ? t : null;
+}
+
 const tituloDe = (bytes) => {
   for (const linha of bytes.toString('utf8').split('\n')) {
     const m = /^# (.+)$/.exec(linha.replace(/\r$/, ''));
@@ -786,6 +808,9 @@ export function estadoDoPainel(cwd, opts = {}) {
       const daEntrega = specs.filter((s) => s.pbi === id);
       if (daEntrega.length === 1 && daEntrega[0].titulo !== '') titulo = daEntrega[0].titulo;
     }
+
+    // GM-21 DT13: o título do card do PBI vale antes do da spec
+    titulo = tituloDoCard(sessaoRaiz, origin.cfg, id, idPadrao, avisos) ?? titulo;
 
     // origem: política (GM-15 T36: o teto de consultas à Sombra saiu; `sombra.teto` é ignorado)
     const config = lerConfigEntrega(origin.cfg);
