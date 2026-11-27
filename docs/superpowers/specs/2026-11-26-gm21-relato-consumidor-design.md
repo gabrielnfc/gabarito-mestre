@@ -259,6 +259,8 @@ Emenda 9 (T3): no mesmo molde da emenda 8 (só `harness.config.json` com `gates.
 
 Emenda 10 (T12): entram no escopo da T12 `gates/src/tipos.ts` (só `'orquestrador'` em `PapelModelo`), `gates/test/harness-doctor-110.test.mjs` (caso "dentro da validade: sem aviso": a fixture passa a gravar o alias do papel `orquestrador`, sem mudar a asserção) e `gates/test/onboarding-fx4.test.mjs` (`previa-mostra-troca-de-alias` e `r2 alias`: a asserção passa ao que a DT3 prescreve, troca citando `modelos.orquestrador` e o alias do papel `orquestrador`, não mais `revisor_final`).
 
+Emenda 11 (T12): entra no escopo da T12 `gates/test/fumaca-e5.test.mjs`, só `fumaca-onboarding-respostas`: a config esperada byte a byte passa a ter `orquestracao.modelo.alias` igual ao do papel `orquestrador` no perfil da fixture (`qualidade` ⇒ `opus`, DT3), sem mudar outro byte.
+
 ## CHANGELOG [2.4.0] previsto
 
 ```
