@@ -40,6 +40,7 @@ import { ehEntrypoint } from '../lib/cli.mjs';
 import { lerGuarda, lerConfigOrigin, lerBaseDaEntrega, idPadraoDe, DENY_GUARDA, CHAVES_MORTAS, ORDEM_MODELO, PERFIS_MODELO, resolverPerfil } from '../lib/config.mjs';
 import { diasEntre } from '../lib/datas.mjs';
 import { execFileSync } from 'node:child_process';
+import { normalizarSuites } from './gate-task.mjs';
 import { checar, validarBranch, DEFAULTS as VERSIONAMENTO_DEFAULTS } from './versionamento-check.mjs';
 
 /** Igual a `MOTIVO_BRANCHPADRAO` de onboarding.mjs (D-1); cópia para o doctor não depender do onboarding (teste de igualdade em harness-doctor-loop). */
@@ -921,9 +922,11 @@ export const CHECKS = [
     detect: (ix, cfg) => {
       if (cfg.configInvalido) return { found: false, evidence: 'harness.config.json inválido: não li gates.suites' };
       const lista = cfg.gates !== null && typeof cfg.gates === 'object' ? cfg.gates.suites : undefined;
-      // Mesma régua do gate (`normalizarSuites`): texto não vazio, ou objeto com `cmd` texto não vazio.
-      const validas = Array.isArray(lista) ? lista.filter((s) => (typeof s === 'string' ? s.trim() !== '' : s !== null && typeof s === 'object' && typeof s.cmd === 'string' && s.cmd.trim() !== '')) : [];
-      return validas.length > 0 ? { found: true, evidence: `${validas.length} suíte(s)` } : { found: false, evidence: 'o abrir recusa sem suíte: declare gates.suites' };
+      // A MESMA função do gate e do abrir (`normalizarSuites`): uma entrada inválida já é FALTA, nunca ignorada.
+      if (!Array.isArray(lista)) return { found: false, evidence: 'o abrir recusa sem suíte: declare gates.suites' };
+      const { suites, erros } = normalizarSuites(lista);
+      if (erros.length > 0) return { found: false, evidence: `gates.suites inválida (o gate e o abrir recusam): ${erros.join('; ')}` };
+      return suites.length > 0 ? { found: true, evidence: `${suites.length} suíte(s)` } : { found: false, evidence: 'o abrir recusa sem suíte: declare gates.suites' };
     },
   },
   {

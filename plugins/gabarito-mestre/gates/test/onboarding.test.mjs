@@ -18,7 +18,7 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { CHAVES_AUTONOMIA, ORDEM_ITENS, coletarFatos, detectar, detectarSuites, rodarReal, lerWorkflow, TIMEOUT_MCP_MS, perguntas, previa, configDasRespostas, gravar, MOTIVO_BRANCHPADRAO, MAX_PERGUNTAS } from '../scripts/onboarding.mjs';
+import { CHAVES_AUTONOMIA, ORDEM_ITENS, coletarFatos, detectar, detectarSuites, itensDaPrevia, rodarReal, lerWorkflow, TIMEOUT_MCP_MS, perguntas, previa, configDasRespostas, gravar, MOTIVO_BRANCHPADRAO, MAX_PERGUNTAS } from '../scripts/onboarding.mjs';
 import { coletar as coletarCartao } from '../scripts/cartao-sessao.mjs';
 import { lerConfigEntrega, politicaEfetiva } from '../dist/entrega.js';
 import { PERFIS_MODELO } from '../lib/config.mjs';
@@ -780,7 +780,7 @@ const arquivoResp = (conteudo) => {
 /** `gravar` pelo núcleo, com o `claude` falso e o git real. */
 const gravarCom = (raiz, respostas, { claude = CLICKUP, previaClaude = claude, hoje = HOJE, fuso = FUSO, dryRun = false, bruto, semPrevia = false } = {}) => {
   // `_previa` = `itens` de `detectar` como o dono os viu (o `claude` da prévia pode diferir do do gravar).
-  const com = semPrevia || respostas === null ? respostas : { ...respostas, _previa: JSON.parse(JSON.stringify(detectar(fatosDe(raiz, { claude: previaClaude })))) };
+  const com = semPrevia || respostas === null ? respostas : { ...respostas, _previa: JSON.parse(JSON.stringify(itensDaPrevia(fatosDe(raiz, { claude: previaClaude })))) };
   return gravar(raiz, arquivoResp(bruto ?? com), { rodar: rodarCom(claude), hoje, fuso, dryRun });
 };
 const itensLista = (raiz, opts) => detectar(fatosDe(raiz, opts));
@@ -1370,7 +1370,7 @@ describe('gravar', () => {
     const verDepois = depois.find((i) => i.item === 'versionamento');
     assert.equal(verDepois.estado, 'ambiguo', 'segue aberto');
     assert.notDeepEqual(verDepois.valor, verAntes.valor, 'o valor do fato acima do teto mudou');
-    const v = gravarCom(acima, { ...FIXAS, tipo_repo: 'app', planejamento: null }, { claude: SEM_MCP, bruto: { ...FIXAS, tipo_repo: 'app', planejamento: null, _previa: JSON.parse(JSON.stringify(antes)) } });
+    const v = gravarCom(acima, { ...FIXAS, tipo_repo: 'app', planejamento: null }, { claude: SEM_MCP, bruto: { ...FIXAS, tipo_repo: 'app', planejamento: null, _previa: JSON.parse(JSON.stringify([...antes, ...itensDaPrevia(fatosDe(acima, { claude: SEM_MCP })).slice(-1)])) } });
     assert.deepEqual([v.ok, v.erro], [false, 'deteccao_mudou']);
     assert.match(v.motivo, /versionamento/);
     assert.equal(temCfg(acima), false, 'nada escrito');
@@ -1409,7 +1409,7 @@ describe('gravar', () => {
     const w = fs.writeFileSync;
     const rn = fs.renameSync;
     const raiz = fixtureComGit('completa', 'trunk');
-    const respostas = arquivoResp({ ...FIXAS, _previa: JSON.parse(JSON.stringify(detectar(fatosDe(raiz)))) });
+    const respostas = arquivoResp({ ...FIXAS, _previa: JSON.parse(JSON.stringify(itensDaPrevia(fatosDe(raiz)))) });
     fs.writeFileSync = (c, ...r) => { if (String(c).startsWith(raiz)) escritas.push(String(c)); return w(c, ...r); };
     fs.renameSync = (a, b) => { if (String(a).startsWith(raiz)) renames.push([String(a), String(b)]); return rn(a, b); };
     syncBuiltinESMExports();
@@ -2026,7 +2026,8 @@ describe('suites (gates.suites)', () => {
     assert.equal(r.status, 0, r.stderr);
     return JSON.parse(r.stdout);
   };
-  const base = () => detectarCli(comPackage({ name: 'app-completo', version: '1.0.0' }));
+  // Valor literal esperado (nada de comparar com a mesma detecção): fixture `completa` sem script test pergunta as 3 fixas + planejamento, com ou sem script test.
+  const IDS_ESPERADOS = ['politica', 'autonomia', 'perfil', 'planejamento'];
 
   test('onboarding-detecta-suites: scripts.test ⇒ prévia, config gravada, nenhuma pergunta nova (CLI real)', () => {
     const raiz = comPackage(pkgTeste('vitest run'));
@@ -2035,8 +2036,11 @@ describe('suites (gates.suites)', () => {
     const s = detectarCli(raiz);
     assert.deepEqual(s.suites, [{ nome: 'unit', cmd: 'npm test' }]);
     assert.match(s.previa, /^- suítes de teste: npm test \(fonte: package\.json:\d+ \(scripts\.test\)\)$/m);
-    assert.deepEqual(s.perguntas.map((p) => p.id), base().perguntas.map((p) => p.id), 'nenhuma pergunta nova');
-    assert.deepEqual(s.itens.map((i) => i.item), ORDEM_ITENS, 'a detecção dos 5 itens não ganha item');
+    assert.deepEqual(s.perguntas.map((p) => p.id), IDS_ESPERADOS, 'nenhuma pergunta nova');
+    assert.deepEqual(detectar(fatosDe(raiz)).map((i) => i.item), ORDEM_ITENS, 'a detecção dos 5 itens não ganha item');
+    assert.deepEqual(s.itens.map((i) => i.item), [...ORDEM_ITENS, 'suites'], 'a prévia (`itens`) leva a suíte detectada para o deteccao_mudou cobri-la');
+    assert.deepEqual(s.itens.at(-1).valor, [{ nome: 'unit', cmd: 'npm test' }]);
+    assert.deepEqual(detectarCli(comPackage(pkgTeste(PLACEHOLDER))).itens.map((i) => i.item), ORDEM_ITENS, 'sem suíte detectada, `itens` segue com os 5');
     // gravar: UMA escrita com as seções do onboarding e gates.suites juntas
     const seco = gravarCom(raiz, FIXAS, { dryRun: true });
     assert.equal(seco.ok, true, JSON.stringify(seco));
@@ -2093,7 +2097,7 @@ describe('suites (gates.suites)', () => {
       const s = detectarCli(raiz);
       assert.equal(s.suites, null);
       assert.doesNotMatch(s.previa, /suítes de teste/);
-      assert.deepEqual(s.perguntas.map((p) => p.id), base().perguntas.map((p) => p.id), 'nenhuma pergunta nova');
+      assert.deepEqual(s.perguntas.map((p) => p.id), IDS_ESPERADOS, 'nenhuma pergunta nova');
       assert.equal(gravarCom(raiz, FIXAS).ok, true);
       assert.equal('gates' in cfgDe(raiz), false, JSON.stringify(pkg));
     }
@@ -2105,7 +2109,7 @@ describe('suites (gates.suites)', () => {
   });
 
   test('onboarding-placeholder-nao-grava: o `test` do npm init não vira suíte, em qualquer forma de escrever', () => {
-    const formas = [PLACEHOLDER, "echo 'Error: no test specified' && exit 1", `  ${PLACEHOLDER}  `, 'echo Error: no test specified && exit 1', 'echo "Error: no test specified"&&exit 1'];
+    const formas = [PLACEHOLDER, "echo 'Error: no test specified' && exit 1", `  ${PLACEHOLDER}  `, 'echo Error: no test specified && exit 1', 'echo "Error: no test specified"&&exit 1', 'echo "Error: no test specified"; exit 1', 'echo "Error: no test specified" || exit 1', 'echo no test specified'];
     for (const t of formas) {
       const raiz = comPackage(pkgTeste(t));
       assert.equal(detectarSuites(fatosDe(raiz)), null, t);
@@ -2115,6 +2119,28 @@ describe('suites (gates.suites)', () => {
     }
     // vizinho: teste de verdade que apenas menciona `echo` não é o placeholder
     assert.deepEqual(detectarSuites(fatosDe(comPackage(pkgTeste('echo ok && node --test')))).suites, [{ nome: 'unit', cmd: 'npm test' }]);
+  });
+
+  test('onboarding-previa-suites-deteccao-mudou: suítes entram na _previa; divergência da detecção falha fechado (nos dois sentidos)', () => {
+    // prévia SEM suíte (placeholder); dono troca scripts.test; gravar não pode gravar o que ele nunca viu
+    const raiz = comPackage(pkgTeste(PLACEHOLDER));
+    const viu = JSON.parse(JSON.stringify(itensDaPrevia(fatosDe(raiz))));
+    assert.equal(viu.some((i) => i.item === 'suites'), false, 'nada detectado: a prévia não mostrou suíte');
+    writeFileSync(join(raiz, 'package.json'), JSON.stringify(pkgTeste('vitest run')));
+    const r = gravarCom(raiz, FIXAS, { bruto: { ...FIXAS, _previa: viu } });
+    assert.deepEqual([r.ok, r.erro], [false, 'deteccao_mudou']);
+    assert.match(r.motivo, /suites/);
+    assert.equal(temCfg(raiz), false, 'nada escrito');
+    // inverso: prévia mostrou a suíte, o script sumiu antes do gravar
+    const raiz2 = comPackage(pkgTeste('vitest run'));
+    const viu2 = JSON.parse(JSON.stringify(itensDaPrevia(fatosDe(raiz2))));
+    assert.equal(viu2.find((i) => i.item === 'suites').estado, 'detectado');
+    writeFileSync(join(raiz2, 'package.json'), JSON.stringify({ name: 'app-completo', version: '1.0.0' }));
+    const r2 = gravarCom(raiz2, FIXAS, { bruto: { ...FIXAS, _previa: viu2 } });
+    assert.deepEqual([r2.ok, r2.erro], [false, 'deteccao_mudou']);
+    assert.match(r2.motivo, /suites/);
+    // sem divergência: grava
+    assert.equal(gravarCom(comPackage(pkgTeste('vitest run')), FIXAS).ok, true);
   });
 
   test('onboarding-suites-config-corrompida: config ilegível não vira gates.suites (a falha segue a de hoje)', () => {

@@ -14,7 +14,7 @@ import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { spawnSync, execFileSync } from 'node:child_process';
 import * as doctor from '../scripts/harness-doctor.mjs';
-import { MOTIVO_BRANCHPADRAO, ORDEM_ITENS, coletarFatos, detectar, perguntas, gravar, rodarReal } from '../scripts/onboarding.mjs';
+import { MOTIVO_BRANCHPADRAO, ORDEM_ITENS, coletarFatos, detectar, itensDaPrevia, perguntas, gravar, rodarReal } from '../scripts/onboarding.mjs';
 import * as diario from '../dist/diario.js';
 import { repo, agents, SCRIPT, git, repoComGit, AGORA, horasAtras, arq, heartbeatLocal, ARQ_DIARIO } from './_doctor-helpers.mjs';
 
@@ -441,7 +441,7 @@ describe('T13 doctor — aprendizado sem destino, onboarding não detectado, sem
     const plug = mkdtempSync(join(tmpdir(), 'doctor-sem-dist-'));
     mkdirSync(join(plug, 'scripts'), { recursive: true });
     mkdirSync(join(plug, 'lib'), { recursive: true });
-    for (const f of ['harness-doctor.mjs', 'versionamento-check.mjs', 'db-template.mjs']) copyFileSync(join(dirname(SCRIPT), f), join(plug, 'scripts', f));
+    for (const f of ['harness-doctor.mjs', 'versionamento-check.mjs', 'db-template.mjs', 'gate-task.mjs']) copyFileSync(join(dirname(SCRIPT), f), join(plug, 'scripts', f));
     for (const f of ['cli', 'config', 'git', 'datas']) copyFileSync(join(dirname(SCRIPT), '..', 'lib', `${f}.mjs`), join(plug, 'lib', `${f}.mjs`));
     const r = spawnSync(process.execPath, [join(plug, 'scripts', 'harness-doctor.mjs'), '--json'], { cwd: base(), encoding: 'utf8', timeout: 20000 });
     assert.equal(r.status === 0 || r.status === 1, true, r.stderr);
@@ -688,7 +688,7 @@ const semClaude = (cmd, args, opts) => (cmd === 'claude' ? { rc: 0, stdout: 'No 
 function onboardingNoRepo(dir, { recalibrar = false, hoje = new Date().toISOString().slice(0, 10) } = {}) {
   const fatos = coletarFatos(dir, { rodar: semClaude, hoje });
   const itens = detectar(fatos);
-  const resp = { _previa: JSON.parse(JSON.stringify(itens)), ...(recalibrar ? { _recalibrar: true } : {}) };
+  const resp = { _previa: JSON.parse(JSON.stringify(itensDaPrevia(fatos))), ...(recalibrar ? { _recalibrar: true } : {}) };
   for (const p of perguntas(itens, fatos.configExistente)) resp[p.id] = p.default;
   const arqResp = join(mkdtempSync(join(tmpdir(), 'fx3-resp-')), 'respostas.json');
   writeFileSync(arqResp, JSON.stringify(resp));
@@ -838,7 +838,6 @@ describe('GM-21 T2 doctor — suites-declaradas (REQ-MIG-2)', () => {
   test('doctor-suites-declaradas-nao-valem: lista vazia, entrada sem cmd, tipo errado, gates torto e config inválida ⇒ FALTA (falha nunca vira ok)', () => {
     const casos = {
       'lista vazia': { gates: { suites: [] } },
-      'só entrada sem cmd': { gates: { suites: [{ nome: 'x' }, { nome: 'y', cmd: '  ' }, 5, null] } },
       'não é lista': { gates: { suites: 'npm test' } },
       'gates não objeto': { gates: 'x' },
       'gates null': { gates: null },
@@ -852,8 +851,14 @@ describe('GM-21 T2 doctor — suites-declaradas (REQ-MIG-2)', () => {
     const invalida = achado(doctor.run(comCfg('{"gates": ')));
     assert.equal(invalida.found, false);
     assert.match(invalida.evidence, /harness\.config\.json inválido/);
-    // uma entrada válida entre inválidas conta só a válida
-    assert.equal(achado(doctor.run(comCfg({ gates: { suites: [{ nome: 'x' }, { cmd: 'npm test' }] } }))).evidence, '1 suíte(s)');
+    // entradas inválidas: a evidência vem do `normalizarSuites` do gate (não é a frase de "sem suíte")
+    const soInvalidas = achado(doctor.run(comCfg({ gates: { suites: [{ nome: 'x' }, { nome: 'y', cmd: '  ' }, 5, null] } })));
+    assert.equal(soInvalidas.found, false);
+    assert.match(soInvalidas.evidence, /suíte x: comando vazio ou ausente/);
+    // mesma régua do gate (normalizarSuites): UMA entrada inválida, mesmo ao lado de uma válida, é FALTA — o gate e o abrir recusam
+    const mista = achado(doctor.run(comCfg({ gates: { suites: [{ nome: 'x' }, { cmd: 'npm test' }] } })));
+    assert.equal(mista.found, false);
+    assert.match(mista.evidence, /suíte x: comando vazio ou ausente/);
   });
 
   test('doctor-suites-declaradas-nao-muda-nivel: o aviso não derruba o nível nem o exit code (CLI real)', () => {

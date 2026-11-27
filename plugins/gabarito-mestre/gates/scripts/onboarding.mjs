@@ -396,7 +396,7 @@ function detectarTipoRepo(f) {
 // GM-21 T2 (REQ-MIG-2, DT5): `gates.suites` detectada de `package.json:scripts.test`. Não é item do onboarding (não vira
 // pergunta nem entra em ORDEM_ITENS): só a prévia mostra e o `gravar` escreve. Config que já tem `gates.suites` (mesmo lista
 // vazia) ou `gates` que não é objeto fica como está: o onboarding nunca sobrescreve o que o dono declarou.
-const PLACEHOLDER_NPM_TEST = /^echo\s+(["']?)error: no test specified\1\s*&&\s*exit\s+1$/i;
+const PLACEHOLDER_NPM_TEST = /no test specified/i; // qualquer script que contenha o texto do `npm init`, em qualquer forma de escrever
 /** `{ suites: [{nome, cmd}], fonte }` ou `null`. Pura. */
 export function detectarSuites(f) {
   if (configErro(f) !== null) return null; // ilegível ≠ ausente: nada é gravado por cima
@@ -407,6 +407,14 @@ export function detectarSuites(f) {
   if (typeof t !== 'string' || t.trim() === '' || PLACEHOLDER_NPM_TEST.test(t.trim())) return null;
   return { suites: [{ nome: 'unit', cmd: 'npm test' }], fonte: `package.json:${linhaDeChave(f.textos?.packageJson, ['scripts', 'test']) ?? '?'} (scripts.test)` };
 }
+
+/** Item `suites` da prévia (NÃO é item do onboarding): só existe quando detectado; faz o `deteccao_mudou` do `gravar` cobrir a detecção de suítes (DT5). `null` = nada detectado. */
+export function itemSuites(f) {
+  const s = detectarSuites(f);
+  return s === null ? null : { item: 'suites', estado: 'detectado', valor: s.suites, fonte: s.fonte, candidatos: [] };
+}
+/** `itens` como o dono os vê e o `_previa` os devolve: os 5 do onboarding + `suites` quando detectada. */
+export const itensDaPrevia = (f) => [...detectar(f), ...[itemSuites(f)].filter((i) => i !== null)];
 
 const PREFIXO_ENV = /^(PROD|PRODUCTION|STAGING|STG|HOMOLOG|HML)_/;
 const CLASSE_DO_PREFIXO = { PROD: 'producao', PRODUCTION: 'producao', STAGING: 'staging', STG: 'staging', HOMOLOG: 'homolog', HML: 'homolog' };
@@ -935,11 +943,14 @@ export function gravar(raiz, caminhoRespostas, { rodar = rodarReal, hoje = hojeI
   }
   const itens = detectar(fatos);
   // Fato que mudou desde a prévia (estado ou valor), abaixo OU acima do teto de perguntas: falha fechado (P1 T6b, MAJOR-1 da r1).
+  // Inclui `suites` (GM-21 T2, DT5): o que o `gravar` escreve é o que a prévia mostrou.
   const visto = new Map(previaVista.map((i) => [i.item, i]));
-  const mudou = itens.filter((i) => {
+  const atuais = itensDaPrevia(fatos);
+  const mudou = atuais.filter((i) => {
     const v = visto.get(i.item);
     return !v || v.estado !== i.estado || JSON.stringify(v.valor ?? null) !== JSON.stringify(i.valor ?? null);
   }).map((i) => i.item);
+  if (visto.has('suites') && !atuais.some((i) => i.item === 'suites')) mudou.push('suites'); // a prévia mostrou a suíte e ela sumiu
   if (mudou.length > 0) return falha('deteccao_mudou', `fato mudou desde a prévia: ${mudou.join(', ')}; rode detectar de novo`);
   const ps = perguntas(itens, fatos.configExistente);
   const ids = new Set(ps.map((p) => p.id));
@@ -1023,7 +1034,7 @@ function main(argv) {
     const nova = recal === null && semCalibracao(par) ? calibracaoDaMaquina(hoje) : null;
     const calibracao = recal !== null ? [recal.texto] : nova !== null ? [`o paralelismo será calibrado para esta máquina (${nova.cores} núcleos): ${textoParalelismo(nova.paralelismo)}`] : [];
     const suitesDet = detectarSuites(fatos);
-    saida({ ok: true, itens, suites: suitesDet === null ? null : suitesDet.suites, perguntas: ps, previaSimples: previaSimples(itens, ps), previa: previa(itens, ps, { fuso, calibracao, existente: fatos.configExistente, suites: suitesDet }), ...(recal !== null ? { recalibrar: { antes: recal.antes, depois: recal.depois, cores: recal.cores } } : {}) });
+    saida({ ok: true, itens: itensDaPrevia(fatos), suites: suitesDet === null ? null : suitesDet.suites, perguntas: ps, previaSimples: previaSimples(itens, ps), previa: previa(itens, ps, { fuso, calibracao, existente: fatos.configExistente, suites: suitesDet }), ...(recal !== null ? { recalibrar: { antes: recal.antes, depois: recal.depois, cores: recal.cores } } : {}) });
     return 0;
   } catch (e) {
     saida({ ok: false, erro: 'falha', motivo: String(e.message).split('\n')[0] });
