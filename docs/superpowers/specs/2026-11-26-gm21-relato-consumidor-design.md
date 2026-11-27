@@ -257,6 +257,8 @@ Emenda 8 (T3): entram no escopo da T3, só para fixtures que chamam `abrir`/`pro
 
 Emenda 9 (T3): no mesmo molde da emenda 8 (só `harness.config.json` com `gates.suites` na fixture, sem mudar asserção), entram no escopo da T3 `gates/test/comando-dono.test.mjs`, `gates/test/emenda-dono.test.mjs` e `gates/test/e2e/conversa-2026-11-11/rodar-a1.mjs` (helper da cópia de `conversa-pontos`).
 
+Emenda 10 (T12): entram no escopo da T12 `gates/src/tipos.ts` (só `'orquestrador'` em `PapelModelo`), `gates/test/harness-doctor-110.test.mjs` (caso "dentro da validade: sem aviso": a fixture passa a gravar o alias do papel `orquestrador`, sem mudar a asserção) e `gates/test/onboarding-fx4.test.mjs` (`previa-mostra-troca-de-alias` e `r2 alias`: a asserção passa ao que a DT3 prescreve, troca citando `modelos.orquestrador` e o alias do papel `orquestrador`, não mais `revisor_final`).
+
 ## CHANGELOG [2.4.0] previsto
 
 ```
