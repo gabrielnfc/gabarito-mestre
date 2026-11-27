@@ -261,6 +261,8 @@ Emenda 10 (T12): entram no escopo da T12 `gates/src/tipos.ts` (só `'orquestrado
 
 Emenda 11 (T12): entra no escopo da T12 `gates/test/fumaca-e5.test.mjs`, só `fumaca-onboarding-respostas`: a config esperada byte a byte passa a ter `orquestracao.modelo.alias` igual ao do papel `orquestrador` no perfil da fixture (`qualidade` ⇒ `opus`, DT3), sem mudar outro byte.
 
+Emenda 12 (T12): o oráculo de `fumaca-onboarding-respostas` mora em `gates/test/fumaca-e5/caminhada.mjs` (`configEsperada`, tabela do alias por perfil); esse arquivo entra no escopo da T12 só para a tabela do alias passar a `opus` nos 3 perfis (DT3), sem mudar outro byte do oráculo.
+
 ## CHANGELOG [2.4.0] previsto
 
 ```
