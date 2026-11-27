@@ -10,7 +10,7 @@ import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { avaliar, falhas, desviosDaTask } from '../scripts/gate-task.mjs';
+import { avaliar, falhas, contagem, desviosDaTask } from '../scripts/gate-task.mjs';
 import { append } from '../dist/diario.js';
 
 const CLI = join(dirname(fileURLToPath(import.meta.url)), '../scripts/gate-task.mjs');
@@ -1063,5 +1063,103 @@ describe('gate-task: sem dist/ o gate segue e avisa (GM-11 T13 r2)', () => {
     const c = rodar(semDist(), wt, base);
     assert.equal(c.status, 0, c.stdout + c.stderr);
     assert.ok(!/desvio/i.test(c.stdout), c.stdout);
+  });
+});
+
+// GM-21 T4 (REQ-CNT-1): contagem de vitest e jest pelo resumo de texto. A suíte é o texto impresso (cat de arquivo fora do repo).
+describe('gate-task: contagem de vitest e jest (GM-21 T4)', () => {
+  const E = String.fromCharCode(27);
+  const saida = (txt, rc = 0) => {
+    const f = join(mkdtempSync(join(tmpdir(), 'gate-task-out-')), 'saida.txt');
+    writeFileSync(f, txt);
+    return script(`cat ${f}\nexit ${rc}`);
+  };
+  const roda = async (txt, rc = 0, extra = {}) => {
+    const { dir, base } = repo();
+    commit(dir, 'src/b.txt', 'b\n');
+    return avaliar({ wt: dir, base, suites: [{ nome: 's', cmd: saida(txt, rc) }], ...extra });
+  };
+  const vitestVerde = ' Test Files  1 passed (1)\n      Tests  3 passed (3)\n   Duration  1.2s\n';
+  const node = 'ℹ tests 5\nℹ suites 0\nℹ pass 4\nℹ fail 1\n';
+
+  test('conta-vitest-verde: Tests 3 passed (3) rc 0 dá verde: 3', async () => {
+    const r = await roda(vitestVerde);
+    assert.equal(r.reprova, 0, texto(r));
+    assert.match(texto(r), /s verde: 3 teste\(s\)/);
+    assert.equal(r.testes, 3);
+  });
+
+  test('conta-vitest-com-ansi: o mesmo texto com cores ANSI dá o mesmo', async () => {
+    const r = await roda(` ${E}[2mTest Files${E}[22m  ${E}[1m${E}[32m1 passed${E}[39m${E}[22m (1)\n      ${E}[2mTests${E}[22m  ${E}[1m${E}[32m3 passed${E}[39m${E}[22m${E}[90m (3)${E}[39m\n`);
+    assert.equal(r.reprova, 0, texto(r));
+    assert.match(texto(r), /s verde: 3 teste\(s\)/);
+  });
+
+  test('vitest-falha-reprova: 1 failed com rc 0 reprova com a causa; com rc 1 reprova e não é RED conhecido', async () => {
+    const txt = '      Tests  1 failed | 3 passed | 1 skipped (5)\n';
+    const r0 = await roda(txt);
+    assert.ok(r0.reprova > 0);
+    assert.match(texto(r0), /rc=0 mas a saída declara fail 1/);
+    const r1 = await roda(txt, 1);
+    assert.ok(r1.reprova > 0);
+    assert.doesNotMatch(texto(r1), /só RED conhecido/);
+    assert.match(texto(r1), /rc=1/);
+  });
+
+  test('vitest-so-falhas: Tests 3 failed (3) rc 1 reprova com fail 3 declarado', async () => {
+    const r = await roda('      Tests  3 failed (3)\n', 1);
+    assert.ok(r.reprova > 0);
+    assert.doesNotMatch(texto(r), /só RED conhecido/);
+    assert.match(texto(r), /fail 3 declarado pelo resumo/);
+    assert.deepEqual(contagem('      Tests  3 failed (3)\n'), { tests: 3, pass: 0, fail: 3, node: false });
+  });
+
+  test('vitest com --red: rc 1 com nome conhecido nunca vira RED conhecido (só node/TAP)', async () => {
+    const r = await roda(' ✓ outro\n ✖ esperado\n      Tests  1 failed | 2 passed (3)\n', 1, { red: ['esperado'] });
+    assert.ok(r.reprova > 0);
+    assert.doesNotMatch(texto(r), /só RED conhecido/);
+  });
+
+  test('conta-jest-verde: Tests: 3 passed, 3 total dá verde: 3', async () => {
+    const r = await roda('Test Suites: 1 passed, 1 total\nTests:       3 passed, 3 total\n');
+    assert.equal(r.reprova, 0, texto(r));
+    assert.match(texto(r), /s verde: 3 teste\(s\)/);
+  });
+
+  test('conta-jest-com-pulado: 1 skipped, 3 passed, 4 total dá verde: 3 (pulado não é prova)', async () => {
+    const r = await roda('Tests:       1 skipped, 3 passed, 4 total\n');
+    assert.equal(r.reprova, 0, texto(r));
+    assert.match(texto(r), /s verde: 3 teste\(s\)/);
+    assert.deepEqual(contagem('Tests:       1 skipped, 3 passed, 4 total\n'), { tests: 4, pass: 3, fail: 0, node: false });
+  });
+
+  test('jest com falha: 1 failed, 3 passed rc 1 reprova; ordem das partes não importa', async () => {
+    const r = await roda('Tests:       1 failed, 3 passed, 4 total\n', 1);
+    assert.ok(r.reprova > 0);
+    assert.doesNotMatch(texto(r), /só RED conhecido/);
+    assert.deepEqual(contagem('Tests:       3 passed, 1 todo, 1 failed, 5 total\n'), { tests: 5, pass: 3, fail: 1, node: false });
+  });
+
+  test('test-files-nao-conta: só Test Files / Test Suites passou ⇒ rc=0 sem prova', async () => {
+    const r = await roda(' Test Files  2 passed (2)\n');
+    assert.ok(r.reprova > 0);
+    assert.match(texto(r), /rc=0 sem prova/);
+    const j = await roda('Test Suites: 2 passed, 2 total\n');
+    assert.match(texto(j), /rc=0 sem prova/);
+    assert.deepEqual(contagem(' Test Files  2 passed (2)\nTest Suites: 2 failed, 2 total\n'), { tests: null, pass: null, fail: null, node: false });
+  });
+
+  test('node-test-igual: saída do node --test conta e relata como antes (byte a byte)', async () => {
+    assert.deepEqual(contagem(node), { tests: 5, pass: 4, fail: 1, node: true });
+    assert.deepEqual(contagem('ℹ tests 3\nℹ pass 3\nℹ fail 0\n'), { tests: 3, pass: 3, fail: 0, node: true });
+    const r = await roda('ℹ tests 3\nℹ pass 3\nℹ fail 0\n');
+    assert.equal(r.reprova, 0, texto(r));
+    assert.match(texto(r), /^ok {5}s verde: 3 teste\(s\) \(\d+\.\ds\)$/m);
+    assert.equal(r.testes, 3);
+  });
+
+  test('RED conhecido segue só para node: nome + fail declarado igual', async () => {
+    const r = await roda('✖ esperado (1.2ms)\nℹ tests 1\nℹ fail 1\n', 1, { red: ['esperado'] });
+    assert.match(texto(r), /só RED conhecido: 1/);
   });
 });

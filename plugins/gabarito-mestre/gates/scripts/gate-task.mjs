@@ -110,7 +110,8 @@ export function falhas(out) {
     const m = /^\s*(?:✖|not ok \d+ - )\s*(.+?)(?:\s+\(\d|$)/.exec(l) ?? /^\s*(?:FALHA|falhou)[: ]+(.+)$/.exec(l);
     if (m && !/^(failing tests|tests|suites)/i.test(m[1])) nomes.add(m[1].trim());
   }
-  return { nomes: [...nomes], declaradas: somar(out, 'fail') };
+  const c = contagem(out);
+  return { nomes: [...nomes], declaradas: c.fail, node: c.node };
 }
 
 /** Soma de `ℹ|# <chave> N` na saída (node --test, spec ou TAP); null se nenhuma linha. */
@@ -118,6 +119,38 @@ function somar(out, chave) {
   let t = null;
   for (const m of out.matchAll(new RegExp(`^\\s*(?:ℹ|#) ${chave} (\\d+)`, 'gm'))) t = (t ?? 0) + Number(m[1]);
   return t;
+}
+
+/** Soma `campo` das linhas de resumo `Tests ...` (vitest) e `Tests: ...` (jest); null sem linha. `Test Files`/`Test Suites` não casam. */
+function somarResumo(out, campo) {
+  let t = null;
+  for (const m of out.matchAll(/^\s*Tests:?\s+(\d+ (?:failed|passed|skipped|todo)\b.*)$/gm)) {
+    const c = new RegExp(`(\\d+) ${campo}\\b`).exec(m[1]);
+    t = (t ?? 0) + (c ? Number(c[1]) : 0);
+  }
+  return t;
+}
+
+/**
+ * Contagem da saída de uma suíte, sem cores ANSI: `{tests, pass, fail, node}` (null = sem resumo; `node` = leu node/TAP).
+ * Lê `ℹ|# tests|pass|fail N` (node) e o resumo `Tests` do vitest (`N failed | N passed | N skipped (N)`) e do jest
+ * (`N failed, N passed, N total`); cada parte é opcional e em qualquer ordem. Pulados e todo não são prova.
+ */
+export function contagem(saida) {
+  const out = saida.replace(/\x1b\[[0-9;]*[A-Za-z]/g, '');
+  const soma = (a, b) => (a === null && b === null ? null : (a ?? 0) + (b ?? 0));
+  const nodeTests = somar(out, 'tests'); const nodePass = somar(out, 'pass'); const nodeFail = somar(out, 'fail');
+  let total = null;
+  for (const m of out.matchAll(/^\s*Tests:?\s+\d+ (?:failed|passed|skipped|todo)\b.*$/gm)) {
+    const t = /\((\d+)\)\s*$/.exec(m[0]) ?? /(\d+) total\s*$/.exec(m[0]);
+    total = (total ?? 0) + (t ? Number(t[1]) : 0);
+  }
+  return {
+    tests: soma(nodeTests, total),
+    pass: soma(nodePass, somarResumo(out, 'passed')),
+    fail: soma(nodeFail, somarResumo(out, 'failed')),
+    node: nodeTests !== null || nodePass !== null || nodeFail !== null,
+  };
 }
 
 const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -288,23 +321,25 @@ export async function avaliar(opts) {
   for (const [i, x] of suites.entries()) if (eMod(x)) rs[i] = await exec(x);
   for (const [i, s] of rs.entries()) {
     const seg = (s.ms / 1000).toFixed(1);
-    const { nomes, declaradas } = falhas(s.out);
+    const { nomes, declaradas, node } = falhas(s.out);
+    const c = contagem(s.out);
     const novas = nomes.filter((n) => !red.has(n));
     const anormal = s.rc < 0 || s.rc > 128 || Boolean(s.sinal);
     if (s.rc === 0) {
-      const n = somar(s.out, 'pass') ?? somar(s.out, 'tests');
+      const n = c.pass ?? c.tests;
       if (declaradas > 0) falhar(`${s.nome} rc=0 mas a saída declara fail ${declaradas} (${seg}s)`);
       else if (suites[i].semContagem) {
         ok(`${s.nome} verde sem contagem de testes, marcador declarado (${seg}s)`);
         nSuites++; nSemContagem++;
       } else if (!n) falhar(`${s.nome} rc=0 sem prova: nenhum teste contado na saída (precisa de "tests N"/"pass N" com N>=1, ou --suite-sem-contagem) (${seg}s)`);
       else { ok(`${s.nome} verde: ${n} teste(s) (${seg}s)`); nSuites++; nTestes += n; }
-    } else if (!anormal && s.rc === 1 && !suites[i].semContagem && declaradas > 0 && nomes.length === declaradas && !novas.length) {
+    } else if (!anormal && s.rc === 1 && !suites[i].semContagem && node && declaradas > 0 && nomes.length === declaradas && !novas.length) {
       ok(`${s.nome} só RED conhecido: ${nomes.length} (${seg}s)`);
-      nSuites++; nTestes += somar(s.out, 'tests') ?? 0;
+      nSuites++; nTestes += c.tests ?? 0;
     } else {
       const motivo = anormal ? ' [rc anormal ou morte por sinal: nunca é RED]'
         : declaradas === null ? ' [saída sem resumo de falhas]'
+          : !node && declaradas > 0 ? ` [fail ${declaradas} declarado pelo resumo; RED conhecido só vale para node/TAP]`
           : declaradas !== nomes.length ? ` [${declaradas} falha(s) declarada(s), ${nomes.length} nome(s) reconhecido(s)]` : '';
       falhar(`${s.nome} rc=${s.rc} (${seg}s): ${novas.slice(0, 8).join(' | ') || s.out.split('\n').slice(-6).join(' / ')}${motivo}`);
     }
