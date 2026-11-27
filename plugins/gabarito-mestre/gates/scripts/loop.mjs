@@ -95,6 +95,7 @@ import { entregaPublicada, SESSAO_QUALQUER } from '../dist/guarda.js';
 import { coberturaDoOrquestrador } from '../dist/painel-equipe.js';
 import { idDaBranch } from '../dist/trilha.js';
 import { avaliar } from './gate-task.mjs';
+import { conferirExecutavel, escopo, linhaDoProblema } from './plano-executavel.mjs';
 import * as loopAprendizado from './loop-aprendizado.mjs';
 import { clonar, nomeBanco, soltar, validarDb } from './db-template.mjs';
 
@@ -780,6 +781,11 @@ function abrir(c, plano, task) {
   if (existsSync(pasta) && readdirSync(pasta).some((n) => n.toLowerCase() === task.toLowerCase())) {
     throw new Falha('worktree_existe', `já existe ${relative(c.raiz, join(pasta, task))} (ou colide por caixa); abrir não toca no que existe`);
   }
+  // GM-21 T3 (REQ-MIG-1): o plano é executável antes de criar qualquer coisa (worktree, branch, banco).
+  const conf = conferirExecutavel({ raiz: c.raiz, plano, eventos: lerDiarioEstrito(c.dirEntrega), cfg, tasks: [task] });
+  if (!conf.ok) {
+    throw new Falha('plano_nao_executavel', `o plano não é executável: ${conf.problemas.map(linhaDoProblema).join('; ')}; nada foi criado`, { problemas: conf.problemas });
+  }
   mkdirSync(pasta, { recursive: true });
   let baseSha;
   try {
@@ -945,12 +951,7 @@ function carregarMutacoes(c, t) {
   return lista;
 }
 
-/** Diretório vira `dir/`; arquivo fica exato. O gate trata `dir` sem barra como arquivo, e `dir` como arquivo reprovaria o que está dentro. */
-function escopo(wt, arquivos) {
-  return arquivos.map((a) => {
-    try { return statSync(join(wt, a)).isDirectory() ? `${a}/` : a; } catch { return a; }
-  });
-}
+// `escopo` (diretório vira `dir/`) vive em plano-executavel.mjs: o conferir do abrir e o gate do integrar usam a mesma função.
 
 function suitesDaTask(wt, t) {
   if (t.teste_afetado === undefined) return undefined;
@@ -1463,6 +1464,21 @@ function ofertaDeLiberacao(c, plano, eventos, task, cfgLote, aviso) {
   return { oferecer: true, dispensado: pr.dispensado, progresso: pr.progresso, motivo: pr.motivo, exigeAbordagem: !pr.dispensado && pr.progresso !== true };
 }
 
+/** `despachar` só com as tasks cujo plano é executável; sem nenhuma, `esperar plano_nao_executavel`. Os problemas (e os da config, 1 vez) vão para `aviso`. */
+function tirarNaoExecutaveis(c, plano, eventos, cfg, acao, aviso) {
+  if (acao.tipo !== 'despachar') return acao;
+  // config ausente não entra aqui (o `proxima` já avisa `harness.config.json ausente`; o FIEL-14 h depende de repo sem config): o `abrir` recusa com o motivo
+  const conf = conferirExecutavel({ raiz: c.raiz, plano, eventos, cfg: cfg ?? undefined, tasks: acao.itens.map((i) => i.task), semConfig: cfg === null });
+  const itens = acao.itens.filter((i) => (conf.porTask[i.task] ?? []).length === 0);
+  if (itens.length === acao.itens.length) return acao;
+  const vistos = new Set();
+  for (const p of acao.itens.flatMap((i) => conf.porTask[i.task] ?? [])) {
+    const linha = linhaDoProblema(p);
+    if (!vistos.has(linha)) { vistos.add(linha); aviso.push(`plano_nao_executavel: ${linha}`); }
+  }
+  return itens.length === 0 ? { tipo: 'esperar', motivo: 'plano_nao_executavel' } : { ...acao, itens };
+}
+
 function proxima(c, plano, flags) {
   const { cfg } = lerConfig(c.raiz);
   const eventos = lerDiarioEstrito(c.dirEntrega);
@@ -1483,7 +1499,9 @@ function proxima(c, plano, flags) {
   const clear = pedidoDeClear(eventos, temOnboarding(c.raiz), medicaoDoPouso(c.raiz, flags.sessao, sinais.x));
   // Adiamento NUNCA solta o pendente (r.9, C4): `adiado` implica pendente, então no teto nada novo despacha (nem revisor); só o `pousar` vira espera.
   const acaoNucleo = proximaAcao(plano, eventos, { ...sinais, politica: pol.politica, pousoPendente: clear.pendente || clear.adiado });
-  const acao = clear.adiado && acaoNucleo.tipo === 'pousar' ? { tipo: 'esperar', motivo: 'pouso_adiado' } : acaoNucleo;
+  const acaoDoPouso = clear.adiado && acaoNucleo.tipo === 'pousar' ? { tipo: 'esperar', motivo: 'pouso_adiado' } : acaoNucleo;
+  // GM-21 T3 (REQ-MIG-1): task com problema de plano não é despachada; o aviso diz por que. O `proximaAcao` puro (e o painel) não muda.
+  const acao = tirarNaoExecutaveis(c, plano, eventos, cfg, acaoDoPouso, aviso);
   if (acao.tipo === 'parar' && acao.motivo === 'diario_invalido') {
     throw new Falha('diario_invalido', 'o diário da entrega não passa na tabela de transições (evento fora de ordem ou de task desconhecida)', { acao, sinais });
   }

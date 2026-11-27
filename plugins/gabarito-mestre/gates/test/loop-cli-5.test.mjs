@@ -2,7 +2,7 @@
 // O corpo e o de bfa322ad por faixa; ver REQ-SEG-1 da spec da GM-19.
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, writeFileSync, readFileSync, existsSync, symlinkSync, rmSync } from 'node:fs';
+import { mkdirSync, writeFileSync, readFileSync, existsSync, symlinkSync, rmSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -11,7 +11,7 @@ import { trilhaDe } from '../dist/trilha.js';
 import { estadoDe as estadoNucleo, ordenar as ordenarNucleo } from '../dist/loop.js';
 import { coberturaDoOrquestrador } from '../dist/painel-equipe.js';
 import * as diario from '../dist/diario.js';
-import { AQUI, GITIGNORE_RAIZ, VERSAO_PLUGIN, CONFIG_PADRAO, planoDe, PLANO_PADRAO, ambiente, PLANO_REQ, IMPL_E, APROVA_E, INTEGRA_E, PROPOSTA, relogioDe, escreve, grava, bytesDoDiario, ambReq, comOrigin, proporArgs } from './_loop-cli-helpers.mjs';
+import { g, AQUI, GITIGNORE_RAIZ, VERSAO_PLUGIN, CONFIG_PADRAO, planoDe, PLANO_PADRAO, ambiente, PLANO_REQ, IMPL_E, APROVA_E, INTEGRA_E, PROPOSTA, relogioDe, escreve, grava, bytesDoDiario, ambReq, comOrigin, proporArgs } from './_loop-cli-helpers.mjs';
 // --- corpo movido ---
 describe('GM-14 T34: pouso é regra do produto (FIEL-14 a, b, c, e, f)', () => {
   const PAINEL_CLI = join(AQUI, '..', 'scripts', 'painel.mjs');
@@ -1446,5 +1446,135 @@ describe('GM-20 REQ-EXE-1: iniciar --executor orquestrador (D-G44, DT10 a DT12)'
     const e = amb.eventos().find((x) => x.tipo === 'task.iniciada');
     assert.deepEqual(Object.keys(e.dados).sort().filter((k) => !['modelo', 'executor', 'motivo'].includes(k)), ['papel', 'task']);
     assert.equal(estadoNucleo(ordenarNucleo(amb.eventos()).eventos.filter((x) => x.dados?.task === 'T1')).estado, 'implementando');
+  });
+});
+
+describe('GM-21 T3: plano executável conferido antes do abrir e do proxima (REQ-MIG-1, DT4; CLI real, P9)', () => {
+  const MUT = [{ nome: 'm1', arquivo: 'src/t1.txt', de: 'a', para: 'b', teste: 'npm test' }];
+  const ladoDe = (amb) => ({
+    branches: g(amb.dir, 'branch', '--list', 'wt/*').trim(),
+    worktrees: existsSync(join(amb.dir, '.harness', 'worktrees')) ? readdirSync(join(amb.dir, '.harness', 'worktrees')) : [],
+  });
+  const comTask = (extra = {}, config = CONFIG_PADRAO) => {
+    const amb = ambiente({ config, plano: planoDe([{ id: 'T1', deps: [], arquivos: ['src/t1.txt'], ...extra }]) });
+    return amb;
+  };
+  const recusou = (amb, r, task, campo) => {
+    assert.equal(r.rc, 1, r.out + r.err);
+    assert.equal(r.j.ok, false);
+    assert.equal(r.j.erro, 'plano_nao_executavel', r.out);
+    assert.deepEqual(ladoDe(amb), { branches: '', worktrees: [] }, 'nenhuma worktree nem branch');
+    assert.ok(r.j.problemas.some((p) => p.task === task && p.campo === campo), JSON.stringify(r.j.problemas));
+    for (const p of r.j.problemas) assert.ok(r.j.mensagem.includes(p.motivo) || r.out.includes(p.motivo), p.motivo);
+    assert.ok(r.j.mensagem.includes(task ?? 'gates.suites'), r.j.mensagem);
+  };
+
+  test('abrir-recusa-mutacoes-texto-livre: a forma da l.122 do backlog; a mensagem cita task, campo e motivo; nada criado', () => {
+    const amb = comTask({ mutacoes: 'mutar a função X e ver o teste cair' });
+    const r = amb.cli(['abrir', 'T1']);
+    recusou(amb, r, 'T1', 'mutacoes');
+    assert.equal(r.j.problemas.length, 1);
+    assert.match(r.j.mensagem, /T1/);
+    assert.match(r.j.mensagem, /mutacoes/);
+    assert.match(r.j.mensagem, /caminho/);
+  });
+
+  test('abrir-recusa-teste-afetado-caminho: arquivo existente sem bit de execução ⇒ recusa com o exemplo fixo; nada criado', () => {
+    const amb = comTask({ teste_afetado: 'src/t1.test.ts' });
+    writeFileSync(join(amb.dir, 'src/t1.test.ts'), 'x');
+    const r = amb.cli(['abrir', 'T1']);
+    recusou(amb, r, 'T1', 'teste_afetado');
+    assert.ok(r.j.mensagem.includes('use o comando, ex.: "npx vitest run src/t1.test.ts"'), r.j.mensagem);
+  });
+
+  test('abrir-recusa-sem-suites: config sem gates.suites, lista vazia ou item sem cmd ⇒ recusa citando a config; nada criado', () => {
+    for (const config of [{ loop: { slots: 2 } }, { gates: { suites: [] } }, { gates: { suites: [{ nome: 'x' }] } }]) {
+      const amb = comTask({}, config);
+      const r = amb.cli(['abrir', 'T1']);
+      recusou(amb, r, null, 'gates.suites');
+    }
+  });
+
+  test('abrir-plano-valido-igual: o formato da GM-16 (mutacoes em JSON com cwd, teste_afetado em comando) abre como antes', () => {
+    const amb = comTask({ mutacoes: 'mut.json', teste_afetado: 'npx vitest run src/t1.test.ts' });
+    writeFileSync(join(amb.dir, 'mut.json'), JSON.stringify([{ ...MUT[0], cwd: '.' }]));
+    const r = amb.cli(['abrir', 'T1']);
+    assert.equal(r.rc, 0, r.out + r.err);
+    assert.equal(r.j.task, 'T1');
+    assert.ok(existsSync(join(amb.dir, '.harness', 'worktrees', 'T1')));
+    assert.equal(r.j.problemas, undefined);
+  });
+
+  test('suites-em-texto-aceitas: gates.suites com texto puro não recusa (a régua é a do gate)', () => {
+    const amb = comTask({}, { gates: { suites: ["echo '# pass 1'", { cmd: "echo '# pass 1'", nome: 'b' }] } });
+    const r = amb.cli(['abrir', 'T1']);
+    assert.equal(r.rc, 0, r.out + r.err);
+  });
+
+  test('escopo-por-emenda-e-diretorio: arquivo da mutação dentro de diretório de `arquivos` ou do escopo ampliado por emenda aplicada não recusa; fora de ambos recusa', () => {
+    // diretório listado
+    const dir = comTask({ arquivos: ['src'], mutacoes: 'mut.json' });
+    writeFileSync(join(dir.dir, 'mut.json'), JSON.stringify([{ ...MUT[0], arquivo: 'src/fundo/x.txt' }]));
+    assert.equal(dir.cli(['abrir', 'T1']).rc, 0);
+    // fora do escopo sem emenda
+    const PLANO_INT = { entrega: 'GM-10', tasks: [{ id: 'T1', deps: [], arquivos: ['src/t1.txt'], reqs: ['REQ-A-1'], mutacoes: 'mut.json' }] };
+    const sem = ambiente({ plano: PLANO_INT });
+    writeFileSync(join(sem.dir, 'mut.json'), JSON.stringify([{ ...MUT[0], arquivo: 'src/extra.txt' }]));
+    const rec = sem.cli(['abrir', 'T1']);
+    recusou(sem, rec, 'T1', 'mutacoes');
+    assert.match(rec.j.mensagem, /src\/extra\.txt/);
+    // com emenda aprovada que traz o arquivo
+    const amb = ambiente({ plano: PLANO_INT });
+    writeFileSync(join(amb.dir, 'mut.json'), JSON.stringify([{ ...MUT[0], arquivo: 'src/extra.txt' }]));
+    comOrigin(amb, { sombra: { julga_emendas: true }, gates: { suites: ["echo '# pass 1'"] } });
+    assert.equal(amb.cli(proporArgs(amb, { task: 'T1', arquivos: 'src/extra.txt' })).rc, 0);
+    assert.equal(amb.cli(['emenda', 'julgar', '1', 'aprovar']).rc, 0);
+    const ok = amb.cli(['abrir', 'T1']);
+    assert.equal(ok.rc, 0, ok.out + ok.err);
+  });
+
+  test('conferir-ignora-integrada: task integrada ou fora com campo inválido não recusa o abrir da outra nem entra no aviso', () => {
+    const amb = ambiente({ plano: planoDe([
+      { id: 'T1', deps: [], arquivos: ['src/t1.txt'], mutacoes: 'texto livre' },
+      { id: 'T2', deps: [], arquivos: ['src/t2.txt'], mutacoes: 'texto livre' },
+      { id: 'T3', deps: [], arquivos: ['src/t3.txt'] },
+    ]) });
+    amb.semear([...IMPL_E('T1'), APROVA_E('T1'), INTEGRA_E('T1'), ['task.fora', { task: 'T2', como: 'cortada', motivo: 'x', origem: 'dono' }]]);
+    const p = amb.cli(['proxima', '--vivos', '0']);
+    assert.equal(p.rc, 0, p.out + p.err);
+    assert.deepEqual(p.j.acao.itens.map((i) => i.task), ['T3']);
+    assert.equal(JSON.stringify(p.j.aviso ?? []).includes('plano_nao_executavel') || JSON.stringify(p.j.aviso ?? []).includes('mutacoes'), false, JSON.stringify(p.j.aviso));
+    assert.equal(amb.cli(['abrir', 'T3']).rc, 0);
+  });
+
+  test('proxima-tira-invalida: 1 task inválida e outra válida ⇒ itens só com a válida; o aviso traz os problemas da inválida', () => {
+    const amb = ambiente({ plano: planoDe([
+      { id: 'T1', deps: [], arquivos: ['src/t1.txt'], mutacoes: 'mutar X' },
+      { id: 'T2', deps: [], arquivos: ['src/t2.txt'] },
+    ]) });
+    const r = amb.cli(['proxima', '--vivos', '0']);
+    assert.equal(r.rc, 0, r.out + r.err);
+    assert.equal(r.j.acao.tipo, 'despachar');
+    assert.deepEqual(r.j.acao.itens.map((i) => i.task), ['T2']);
+    const aviso = r.j.aviso.filter((a) => a.includes('T1') && a.includes('mutacoes'));
+    assert.equal(aviso.length, 1, JSON.stringify(r.j.aviso));
+    assert.equal(r.j.aviso.some((a) => a.includes('T2') && /mutacoes|teste_afetado/.test(a)), false);
+  });
+
+  test('proxima-todas-invalidas-espera: toda task com problema (ou a config) ⇒ esperar plano_nao_executavel, com o aviso de cada uma', () => {
+    const amb = ambiente({ plano: planoDe([
+      { id: 'T1', deps: [], arquivos: ['src/t1.txt'], mutacoes: 'mutar X' },
+      { id: 'T2', deps: [], arquivos: ['src/t2.txt'], teste_afetado: 'src/a.sh' },
+    ]) });
+    writeFileSync(join(amb.dir, 'src/a.sh'), 'x');
+    const r = amb.cli(['proxima', '--vivos', '0']);
+    assert.equal(r.rc, 0, r.out + r.err);
+    assert.deepEqual(r.j.acao, { tipo: 'esperar', motivo: 'plano_nao_executavel' });
+    assert.ok(r.j.aviso.some((a) => a.includes('T1') && a.includes('mutacoes')), JSON.stringify(r.j.aviso));
+    assert.ok(r.j.aviso.some((a) => a.includes('T2') && a.includes('teste_afetado')), JSON.stringify(r.j.aviso));
+    const semCfg = comTask({}, { loop: { slots: 2 } }); // config presente, sem gates.suites
+    const c = semCfg.cli(['proxima', '--vivos', '0']);
+    assert.deepEqual(c.j.acao, { tipo: 'esperar', motivo: 'plano_nao_executavel' });
+    assert.ok(c.j.aviso.some((a) => a.includes('gates.suites')), JSON.stringify(c.j.aviso));
   });
 });

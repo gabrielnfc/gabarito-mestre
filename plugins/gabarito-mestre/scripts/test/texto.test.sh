@@ -460,5 +460,11 @@ check "nota da 2.1.0: cita /reload-plugins, o foco reversível e a herança prom
 # GM-19 REQ-FURO-2 (F12): os casos de NOM-1 de texto-nom.test.sh só rodavam à mão. Sem argumento, o filho roda `--nom` e sai antes; sem recursão.
 check "texto-nom: os casos de NOM-1 de texto-nom.test.sh passam (rc 0)" 'bash "$P/scripts/test/texto-nom.test.sh" >/dev/null 2>&1' "texto-nom.test.sh falhou: rode-o sozinho"
 
+# GM-21 T3 (REQ-MIG-3, M12): o formato do plano.json está escrito em fluxo.md (§4.5) e a skill do loop aponta para ele
+echo "── GM-21 T3: campos da task do plano.json em fluxo.md"
+check "fluxo.md §4.5: cita teste_afetado, o formato de mutacoes com exemplo e plano_nao_executavel" 'grep -qF "teste_afetado" "$F" && grep -qF "{nome, arquivo, de, para, teste, cwd?}" "$F" && grep -qF "plano_nao_executavel" "$F"' "fluxo.md sem teste_afetado, sem {nome, arquivo, de, para, teste, cwd?} ou sem plano_nao_executavel"
+check "fluxo.md §4.5: o exemplo de mutacoes e de teste_afetado está lá (campo = valor)" 'grep -qF "\"teste_afetado\": \"npx vitest run" "$F" && grep -qF "\"mutacoes\": \".harness/entregas/" "$F"' "exemplo de mutacoes ou de teste_afetado ausente"
+check "SKILL.md do loop: 1 linha com o ponteiro para fluxo.md §4.5" 'grep -qF "reference/fluxo.md" "$P/skills/gabarito-loop/SKILL.md" && grep -qF "§4.5" "$P/skills/gabarito-loop/SKILL.md"' "skill do loop sem o ponteiro para fluxo.md §4.5"
+
 echo "── $falhas falha(s)"
 [ "$falhas" -eq 0 ]
