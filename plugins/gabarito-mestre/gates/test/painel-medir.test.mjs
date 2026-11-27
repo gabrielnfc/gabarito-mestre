@@ -1128,7 +1128,7 @@ describe('medir: grava o encerramento da entrega (REQ-ENT-1 a, c)', () => {
       }
     });
 
-    test('medir-nao-emite-aviso-de-plano (r1 MAJOR-1): o aviso de plano aberto sai no `painel.mjs estado` (entrega-encerrada-cli.test.mjs), nunca no resultado do `medir` (o mod descarta essa saída e gastaria o aviso)', () => {
+    test('medir-sem-aviso-de-plano (ME1-f; o `aviso-no-estado-some-ao-encerrar-ou-fechar` de entrega-encerrada-cli.test.mjs cobre o estado): o aviso de plano aberto nunca no resultado do `medir` (o mod descarta essa saída e gastaria o aviso)', () => {
       const d = repo7();
       const r1 = medir7(d, [PR10]);
       assert.equal(r1.ok, true, JSON.stringify(r1.falhas));

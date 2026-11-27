@@ -96,7 +96,7 @@ function ligadaPorResposta(evs          , re               , sessao         )   
   return null;
 }
 
-                                                                                                            
+                                                                                                                                     
 
 /**
  * Último estado medido por número; "último PR" = maior número; `aberto` = maior número aberto. GM-15 (T3): o PR achado por `via: 'titulo'`
@@ -116,11 +116,13 @@ function prs(evs          , entrega               , idPadrao        )           
   }
   let ultimo                     = null;
   let aberto                = null;
+  let mergeado                = null;
   for (const [numero, estado] of por) {
+    if (estado === 'mergeado' && (mergeado === null || numero > mergeado)) mergeado = numero;
     if (ultimo === null || numero > ultimo.numero) ultimo = { numero, estado };
     if (estado === 'aberto' && (aberto === null || numero > aberto)) aberto = numero;
   }
-  return { ultimo, aberto, total: por.size };
+  return { ultimo, aberto, mergeado, total: por.size };
 }
 
 const escapar = (id        )         => id.replace(/[.*+?^${}()|[\]\\-]/g, '\\$&');
@@ -198,15 +200,15 @@ export function planoImpedePublicada(plano                            , eventos 
 }
 
 /**
- * GM-21 DT1 (r1 MAJOR-1): o aviso do `painel.mjs estado`: a entrega tem PR mergeado (o último, sem PR aberto) que NÃO a publica só por causa do plano aberto.
+ * GM-21 DT1 (r1 MAJOR-1): o aviso do `painel.mjs estado`: a entrega tem PR mergeado (o de maior número; PR aberto não muda nada) que NÃO a publica só por causa do plano aberto.
  * Devolve `{pr, abertas}` ou `null`. Mesmos fatos e mesma regra da fase PR de `trilhaDe` (sem leitura do `gh`: só o diário); sem estado, a cada leitura.
  */
 export function avisoDePlanoAberto(eventos          , entrega        , idPadrao        , plano                            )                                           {
   const ord = Array.isArray(eventos) ? ordenar(eventos) : { ok: false          };
   if (!ord.ok || plano === null || !planoImpedePublicada(plano, ord.eventos, entrega)) return null;
   const p = prs(ord.eventos, entrega, idPadrao);
-  if (p.ultimo === null || p.ultimo.estado !== 'mergeado' || p.aberto !== null) return null;
-  return { pr: p.ultimo.numero, abertas: tasksAbertas(plano.tasks, ord.eventos) };
+  if (p.mergeado === null) return null;
+  return { pr: p.mergeado, abertas: tasksAbertas(plano.tasks, ord.eventos) };
 }
 
 /** `true` se `tasksAbertas` não é vazia. */

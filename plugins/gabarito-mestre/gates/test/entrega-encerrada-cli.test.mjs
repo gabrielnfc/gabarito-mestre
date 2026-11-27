@@ -441,10 +441,8 @@ test('painel-plano-aberto-segue-identificado (P9, emenda 1): só o PR do plano (
     // com o PR do loop aberto (#11) o estado é o mesmo (regressão)
     const m2 = medirPbi7(d, [PR10_7, PR11_7]);
     assert.equal(m2.avisos, undefined);
-    // o #11 só vira fato na sessão cujo head é o dele (o `medir` consulta `--head=<branch>`): com ele gravado e aberto, nenhum PR mergeado "é o último": sem aviso
-    const tem11 = ler(dirDe(d, 'PBI-7')).some((x) => x.tipo === 'fato.medido' && x.dados.chave === 'pr' && x.dados.valor.numero === 11);
-    assert.equal(lerAvisos().length, tem11 ? 0 : 1, `${branch}: aviso só enquanto o #10 é o último e não há PR aberto (#11 gravado: ${tem11})`);
-    assert.equal(tem11, branch === 'feat/PBI-7-loop', 'preparo: o #11 é gravado só na sessão do head dele');
+    // com o #11 aberto o aviso segue (a emenda 6 não tem ramo de PR aberto): o #10 é o último mergeado e o plano segue aberto
+    assert.equal(lerAvisos().length, 1, `${branch}: aviso inalterado com o #11`);
     const e2 = estado(d);
     assert.equal(e2.entregue ?? null, null);
     assert.equal(e2.id, 'PBI-7');
@@ -467,4 +465,24 @@ test('painel-encerrada-do-dono-com-plano-aberto (P9, r1 MAJOR-2): entrega.encerr
   const e = estado(d);
   assert.deepEqual(campos(e), campos(estado(base)), 'igual à base (plano fechado, publicada)');
   assert.deepEqual([e.modo, e.trilha.identificada, e.pronto], ['projeto', false, null]);
+});
+
+// ME1-f (emenda 6): o `medir` emite o aviso, ou o aviso continua com plano fechado/encerrada ⇒ este teste cai.
+test('aviso-no-estado-some-ao-encerrar-ou-fechar (emenda 6, DT1, P9): aviso em 2 leituras seguidas do estado; o medir não traz; some com entrega.encerrada do dono; some com a T2 fora do plano', () => {
+  const AV = /^PR #10 mergeado não encerra a PBI-7: tasks abertas T2; se a entrega acabou, \/gabarito-mestre:encerrar PBI-7 10$/;
+  const avisos = (d) => { const r = painel(d, ['estado']); assert.equal(r.status, 0, r.stdout + r.stderr); return JSON.parse(r.stdout).avisos.filter((a) => /não encerra a PBI-7/.test(a)); };
+  const d = pbi7('feat/PBI-7-loop');
+  assert.equal(medirPbi7(d, [PR10_7]).avisos, undefined, 'o medir não emite o aviso');
+  for (const n of [1, 2]) { const a = avisos(d); assert.equal(a.length, 1, `leitura ${n}`); assert.match(a[0], AV); }
+  assert.equal(medirPbi7(d, [PR10_7]).avisos, undefined, 'nem a 2ª medição');
+  assert.equal(avisos(d).length, 1, 'medir de novo não gasta o aviso do estado');
+  // some com o encerramento do dono (T2 segue aberta)
+  w(d, 'PBI-7', 'loop', 'entrega.encerrada', { entrega: 'PBI-7', pr: 10, via: 'dono', mergeado_em: '2026-11-20T12:00:00.000Z' }, '2026-11-20T12:30:00.000Z', 'dono');
+  assert.deepEqual(avisos(d), [], 'entrega.encerrada do dono');
+  // some ao fechar as tasks abertas
+  const f = pbi7('feat/PBI-7-loop');
+  medirPbi7(f, [PR10_7]);
+  assert.equal(avisos(f).length, 1, 'controle: com T2 aberta o aviso existe');
+  w(f, 'PBI-7', 'loop', 'task.fora', { task: 'T2', como: 'cortada', motivo: 'fora do corte', origem: 'dono' }, '2026-11-19T11:00:00.000Z');
+  assert.deepEqual(avisos(f), [], 'T2 fora do plano');
 });

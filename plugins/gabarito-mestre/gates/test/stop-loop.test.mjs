@@ -1705,15 +1705,28 @@ test('stop-leitura-que-nao-vale-e-sem-mod: velha (> 120 s), de fonte transcript 
 const PR_MERGEADO = (sessao = 'pub') => ev(sessao, 1, 'fato.medido', { chave: 'pr', fonte: 'gh', valor: { numero: 7, estado: 'mergeado', branch: 'wt/GM-10-8' } });
 const PR_ABERTO = (sessao = 'pub') => ev(sessao, 2, 'fato.medido', { chave: 'pr', fonte: 'gh', valor: { numero: 8, estado: 'aberto', branch: 'wt/GM-10-8' } });
 
+// GM-21 (emenda 6, T1): "publicada" exige plano sem task aberta (DT1): o plano tem T1 e T2, ambas `task.fora` (cortadas); o caso irmão deixa T1 e T2 abertas e o Stop bloqueia.
+const PLANO_2 = { entrega: 'GM-10', tasks: [{ id: 'T1', deps: [], arquivos: ['a.ts'] }, { id: 'T2', deps: [], arquivos: ['b.ts'] }] };
+// 1 arquivo de diário por task (sem a cadeia de hash entre linhas do mesmo arquivo, que o fixture não monta)
+const FORA = (task) => ev(`fora-${task}`, 1, 'task.fora', { task, como: 'cortada', motivo: 'fora do corte', origem: 'dono' });
+
 test('publicada-nao-recebe-loop.parar: entrega com PR mergeado e plano.json fica em silêncio nos Stops e nada é gravado nela', () => {
   const raiz = repo();
-  plano(raiz);
+  plano(raiz, PLANO_2);
   diario(raiz, 'pub', [PR_MERGEADO()]);
+  for (const t of ['T1', 'T2']) diario(raiz, `fora-${t}`, [FORA(t)]);
   const antes = linhasDoDiario(raiz).length;
   for (let i = 0; i < 6; i++) mudo(stop(raiz));
   assert.equal(linhasDoDiario(raiz).length, antes);
   assert.equal(linhasDoDiario(raiz).filter((e) => e.tipo === 'loop.parar').length, 0);
   assert.equal(existsSync(contadorDe(raiz)), false, 'o Stop não conta sem_progresso em publicada');
+});
+
+test('publicada-nao-com-plano-aberto (GM-21 emenda 6): o mesmo PR mergeado com T1 e T2 abertas não é publicada: o Stop bloqueia pedindo a T1', () => {
+  const raiz = repo();
+  plano(raiz, PLANO_2);
+  diario(raiz, 'pub', [PR_MERGEADO()]);
+  bloqueia(stop(raiz), /T1/);
 });
 
 test('encerrada-ligada-pelo-dono-segue-publicada (GM-15 T3, REQ-ENT-1 c): entrega.encerrada + dono.resposta ligando a sessão do Stop ⇒ silêncio, nada gravado', () => {
