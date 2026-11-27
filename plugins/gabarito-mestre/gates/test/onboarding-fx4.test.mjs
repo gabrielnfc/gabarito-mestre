@@ -111,11 +111,11 @@ const itensMin = [{ item: 'tipo_repo', estado: 'detectado', valor: 'app', fonte:
 const perg = (perfil) => [
   { id: 'politica', opcoes: [], default: 'sob_demanda' }, { id: 'autonomia', opcoes: [], default: false }, { id: 'perfil', opcoes: [], default: perfil },
 ];
-test('previa-mostra-troca-de-alias: config 1.1.x com alias opus + perfil padrao => linha com antigo, novo e perfil; alias igual => ausente', () => {
+test('previa-mostra-troca-de-alias: config 1.1.x com alias fable + perfil padrao => linha com antigo, novo (papel orquestrador) e perfil; alias igual => ausente', () => {
   const cfg = (alias) => ({ orquestracao: { modelo: { alias } } });
-  const com = previa(itensMin, perg('padrao'), { fuso: 'UTC', existente: cfg('opus') });
-  assert.match(com, /modelo do orquestrador: opus ⇒ fable \(vem do perfil padrao; para manter opus: perfil economia ou modelos\.revisor_final\)/);
-  const igual = previa(itensMin, perg('padrao'), { fuso: 'UTC', existente: cfg('fable') });
+  const com = previa(itensMin, perg('padrao'), { fuso: 'UTC', existente: cfg('fable') });
+  assert.match(com, /modelo do orquestrador: fable ⇒ opus \(vem do perfil padrao; para manter fable: modelos\.orquestrador\)/);
+  const igual = previa(itensMin, perg('padrao'), { fuso: 'UTC', existente: cfg('opus') });
   assert.doesNotMatch(igual, /modelo do orquestrador/);
   const economia = previa(itensMin, perg('economia'), { fuso: 'UTC', existente: cfg('opus') });
   assert.doesNotMatch(economia, /modelo do orquestrador/);
@@ -132,8 +132,8 @@ test('SKILL passo 4: item de 1 opcao nao e perguntado nem reformulado; pergunta 
 // ── FX4 r2
 test('r2 alias: a dica "para manter" so cita perfil que resolve para o alias antigo (sonnet nao e economia)', () => {
   const sonnet = previa(itensMin, perg('padrao'), { fuso: 'UTC', existente: { orquestracao: { modelo: { alias: 'sonnet' } } } });
-  assert.match(sonnet, /modelo do orquestrador: sonnet ⇒ fable/);
-  assert.match(sonnet, /para manter sonnet: modelos\.revisor_final\)/);
+  assert.match(sonnet, /modelo do orquestrador: sonnet ⇒ opus/);
+  assert.match(sonnet, /para manter sonnet: modelos\.orquestrador\)/);
   assert.doesNotMatch(sonnet, /perfil economia/);
 });
 

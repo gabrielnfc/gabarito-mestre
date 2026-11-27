@@ -920,3 +920,34 @@ test('vias-encerramento-deriva-de-vias-pr', () => {
   assert.ok(fonte.includes("[...VIAS_PR, 'dono']"), 'VIAS_ENCERRAMENTO deriva de VIAS_PR');
   assert.equal(fonte.split("'head', 'titulo'").length - 1, 1, "o literal 'head', 'titulo' só aparece na definição de VIAS_PR");
 });
+
+// GM-21 T6 (REQ-HER-1, DT8): `task.herdada {task, origem:{tipo, ref}, titulo?}`. Mutação MH1-a: aceitar `tipo` livre ⇒ cai `forma-task-herdada`.
+test('forma-task-herdada: commit (40 hex), pr (inteiro ≥ 1) e ledger (arquivo:linha) válidos; tipo fora dos 3, ref vazio, campo a mais e task fora de ID_RE recusam', () => {
+  const sha = 'a'.repeat(40);
+  ok('task.herdada', { task: 'T3', origem: { tipo: 'commit', ref: sha } });
+  ok('task.herdada', { task: 'T3', origem: { tipo: 'pr', ref: '10' } });
+  ok('task.herdada', { task: 'T3', origem: { tipo: 'ledger', ref: 'docs/ledger.md:42' } });
+  ok('task.herdada', { task: 'T3', origem: { tipo: 'pr', ref: '10' }, titulo: 'Rotina de treino' });
+  for (const tipo of ['branch', 'PR', '', null, 7, undefined]) ruim('task.herdada', { task: 'T3', origem: { tipo, ref: '10' } }, /tipo/);
+  for (const ref of ['', '  ', null, 10, undefined]) ruim('task.herdada', { task: 'T3', origem: { tipo: 'pr', ref } }, /ref/);
+  ruim('task.herdada', { task: 'T3', origem: { tipo: 'commit', ref: 'a'.repeat(39) } }, /ref/);
+  ruim('task.herdada', { task: 'T3', origem: { tipo: 'commit', ref: 'A'.repeat(40) } }, /ref/);
+  for (const ref of ['0', '-1', 'dez', '10abc']) ruim('task.herdada', { task: 'T3', origem: { tipo: 'pr', ref } }, /ref/);
+  for (const ref of ['docs/ledger.md', 'docs/ledger.md:0', ':42', 'docs/ledger.md:x']) ruim('task.herdada', { task: 'T3', origem: { tipo: 'ledger', ref } }, /ref/);
+  ruim('task.herdada', { task: 'T3', origem: { tipo: 'pr', ref: '10', extra: 1 } }, /extra/);
+  ruim('task.herdada', { task: 'T3', origem: { tipo: 'pr', ref: '10' }, extra: 1 }, /extra/);
+  for (const o of [undefined, null, 'pr:10', [], 7]) ruim('task.herdada', { task: 'T3', origem: o }, /origem/);
+  for (const t of ['', ' ', 'T 3', '../T3', '-T3', 'x'.repeat(33), null, 7]) ruim('task.herdada', { task: t, origem: { tipo: 'pr', ref: '10' } }, /task/);
+  ruim('task.herdada', { origem: { tipo: 'pr', ref: '10' } }, /task/);
+  for (const t of ['', 'a\nb', 7]) ruim('task.herdada', { task: 'T3', origem: { tipo: 'pr', ref: '10' }, titulo: t }, /titulo/);
+  ruim('task.herdada', undefined, /ausente/);
+  ruim('task.herdada', 'x', /corrompido/);
+  assert.ok(TIPOS_EVENTO.includes('task.herdada' as never));
+});
+
+test('fato-pr-rascunho-opcional (GM-21 T8, REQ-DEP-1): `rascunho` do fato `pr` é booleano e opcional; o fato de 2.3.1, sem ele, segue válido', () => {
+  ok('fato.medido', fato('pr', {}));
+  ok('fato.medido', fato('pr', { rascunho: true }));
+  ok('fato.medido', fato('pr', { rascunho: false }));
+  for (const x of ['true', 1, 0, null, '']) ruim('fato.medido', fato('pr', { rascunho: x }), /`rascunho`/);
+});

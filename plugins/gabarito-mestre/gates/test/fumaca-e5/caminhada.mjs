@@ -290,10 +290,10 @@ export function configEsperada(antes, itens, perguntas, respostas) {
     entrega.base = resolvido.versionamento;
     patch.versionamento = { resolvidoEm: HOJE };
   }
-  // GM-14 T7: o rótulo da pergunta virou frase para quem não programa; o alias do revisor final sai do perfil por tabela da spec (REQ-MOD-1), não do texto.
+  // GM-14 T7: o rótulo da pergunta virou frase para quem não programa; o alias do orquestrador (papel orquestrador, GM-21 DT3) sai do perfil por tabela da spec (REQ-MOD-1), não do texto.
   // Perfil fora das opções que o CLI devolveu ⇒ erro aqui, não alias inventado.
   if (!ps.perfil.opcoes.some((o) => o.valor === perfil)) throw new Error(`perfil ${perfil} não está nas opções de detectar`);
-  const alias = { economia: 'opus', padrao: 'fable', qualidade: 'fable' }[perfil];
+  const alias = { economia: 'opus', padrao: 'opus', qualidade: 'opus' }[perfil];
   const modeloAntes = antes.orquestracao?.modelo ?? {};
   // FX3 r2: 1º onboarding (paralelismo sem nenhum campo de calibração) grava a calibração por núcleos; com valor do dono, não mexe.
   // Conta escrita aqui, sem o código do onboarding: simultaneos = clamp(⌊n/4⌋, 1, 3), teto = clamp(⌊n/2⌋, 2, 8), limites = padrão, data de hoje.

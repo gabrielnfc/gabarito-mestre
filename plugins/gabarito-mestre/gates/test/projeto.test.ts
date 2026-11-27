@@ -42,10 +42,11 @@ import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  cardDe, cardDesatualizado, colunasFl1, ehColunaFl1, ehFeito, ehTerminal, planoMdDoCard, projetarProjeto, padraoLegadoValido, planoLegadoDe, ROTULO_FASE_NAO_MEDIDA, ROTULO_FORA_DO_LOOP, rotuloAgente, rotuloFase, tasksDoPlanoMd, terminaisValidos, worktreesDe,
+  AMOSTRA_MINIMA_PROJETO, cardDe, cardDesatualizado, colunasFl1, ehColunaFl1, ehFeito, ehTerminal, planoMdDoCard, projetarProjeto, padraoLegadoValido, planoLegadoDe, ROTULO_FASE_NAO_MEDIDA, ROTULO_FORA_DO_LOOP, rotuloAgente, rotuloFase, tasksDoPlanoMd, terminaisValidos, worktreesDe,
 } from '../src/projeto.ts';
 import type { ArvoreLida, EstadoProjeto, LinhaProjeto } from '../src/projeto.ts';
 import type { Evento } from '../src/tipos.ts';
+import { ritmoDasAnteriores } from '../src/painel.ts';
 import { arvore as arvoreAdotado } from './painel-fixtures/adotado.mjs';
 
 const FIX = join(dirname(fileURLToPath(import.meta.url)), 'fixtures', 'projeto');
@@ -81,7 +82,18 @@ function lerArvore(nome: string): ArvoreLida {
 }
 
 const PORCELANA = readFileSync(join(FIX, 'worktrees.txt'), 'utf8');
-const ler = (caminhos: string[]): ArvoreLida[] => caminhos.map((c) => lerArvore(c.replace('/FIX/', '')));
+/**
+ * GM-21 DT11: a fixture tem 3 tasks integradas e a previsão do projeto agora pede `AMOSTRA_MINIMA_PROJETO` (5). Para as asserções da conta (a)/(b) seguirem sobre
+ * a fixture sem mexer nela, a borda do teste soma 2 integradas de tasks FORA de qualquer plano (X1, X2) ao diário do PBI-4, esticando o fim para que o ritmo
+ * continue 3200 s: (6600 + 3000 + 6400) ÷ 5 = 3200. Nenhuma linha muda (só as tasks do plano contam nelas).
+ */
+const comAmostra = (a: ArvoreLida): ArvoreLida => {
+  const e = a.entregas.find((x) => x.id === 'PBI-4' && x.eventos !== null);
+  if (e === undefined || e.eventos === null) return a;
+  const ev = (seq: number, hms: string): Evento => ({ seq, ts: `2026-11-10T${hms}.000Z`, autor: 'a', sessao: 'amostra', agente: 'orquestrador', tipo: 'task.integrada', dados: { task: `X${seq - 9000}` }, hash_anterior: null }) as Evento;
+  return { ...a, entregas: a.entregas.map((x) => (x === e ? { ...x, eventos: [...(x.eventos ?? []), ev(9001, '13:36:39'), ev(9002, '13:36:40')] } : x)) };
+};
+const ler = (caminhos: string[]): ArvoreLida[] => caminhos.map((c) => comAmostra(lerArvore(c.replace('/FIX/', ''))));
 const linha = (e: EstadoProjeto, id: string): LinhaProjeto => {
   const l = e.linhas.find((x) => x.id === id);
   assert.ok(l, `linha ${id} ausente`);
@@ -259,7 +271,7 @@ test('sombra-sem-task-fora-do-loop: a Sombra sem task também é "agente fora do
 
 test('previsao-medida-e-estimada: ritmo medido × restantes (a); sem plano entra só na estimada (b), sinalizada', () => {
   const p = projetoCompleto().totais.previsao;
-  // ritmo: PBI-4 10:00→11:50 (2 integradas) + PBI-2 13:00→13:50 (1) = 160 min ÷ 3 = 3200 s
+  // ritmo: PBI-4 10:00→11:50 (2 integradas) + PBI-2 13:00→13:50 (1) + 2 da `comAmostra` = 16000 s ÷ 5 = 3200 s
   assert.equal(p.ritmoS, 3200);
   assert.ok(p.medida !== null);
   assert.equal(p.medida.restanteS, 3 * 3200);
@@ -894,4 +906,131 @@ test('card-desatualizado-regra: cada condição da função (card, encerrada, !e
   assert.equal(cardDesatualizado(card('Done'), enc, undefined), true, 'sem a config, Done é aberto');
   assert.equal(cardDesatualizado(card('Em execução'), [...enc, ev(2, 'entrega.reaberta')], undefined), false, 'reaberta depois');
   assert.equal(cardDesatualizado(card('Em execução'), [...enc, ev(2, 'entrega.reaberta'), ev(3, 'entrega.encerrada')], undefined), true, 'encerrada de novo');
+});
+
+// ── GM-21 T7 (REQ-HER-3 DT10, REQ-PRV-1 DT11): herdado separado de medido; previsão do projeto pede amostra ───────────────────────────────────────────────
+// Mutações: MH3-a herdada como integrada ⇒ projeto-conta-herdadas · MH3-b contar 2 vezes ⇒ herdada-e-integrada-conta-uma · MH3-c totais sem herdadas ⇒ totais-com-herdadas ·
+// MH3-d estimadas sem descontar herdadas ⇒ feito-nao-estima-herdada · MP1-a piso 1 ⇒ previsao-projeto-pede-5 · MP1-b piso no fallback da entrega ⇒ fallback-entrega-igual.
+const evh = (seq: number, min: number, tipo: string, dados: Record<string, unknown>): Evento =>
+  ({ seq, ts: new Date(Date.parse('2026-11-10T10:00:00.000Z') + min * 60_000).toISOString(), autor: 'a', sessao: 's', agente: 'orquestrador', tipo, dados, hash_anterior: null }) as Evento;
+/** ciclo completo de uma task até a integração (implementador, revisor, veredito, integrada), a partir do minuto `m`; 5 eventos, seq a partir de `seq`. */
+const cicloH = (seq: number, m: number, task: string): Evento[] => [
+  evh(seq, m, 'task.iniciada', { task, papel: 'implementador' }), evh(seq + 1, m + 1, 'task.concluida', { task }), evh(seq + 2, m + 2, 'task.iniciada', { task, papel: 'revisor' }),
+  evh(seq + 3, m + 5, 'review.veredito', { task, veredito: 'APROVADO', rodada: 1, major: 0, blocker: 0 }), evh(seq + 4, m + 6, 'task.integrada', { task }),
+];
+const planoDe = (...ids: string[]) => ({ ok: true as const, bruto: { entrega: 'PBI-7', tasks: ids.map((id) => ({ id, titulo: id, deps: [], arquivos: [`${id}.ts`] })) } });
+const herdadas = (ids: string[], seq0: number): Evento[] => ids.map((id, i) => evh(seq0 + i, 30 + i, 'task.herdada', { task: id, origem: { tipo: 'pr', ref: '10' } }));
+const T1A11 = Array.from({ length: 11 }, (_, i) => `T${i + 1}`);
+const arvPbi7 = (eventos: Evento[], ids = ['T12', 'T13'], extra: Evento[] = []): ArvoreLida[] =>
+  [{ caminho: '/r', cards: [], entregas: [{ id: 'PBI-7', plano: planoDe(...ids), eventos: [...eventos, ...extra] }] }];
+const ENCERRADA = evh(99, 120, 'entrega.encerrada', { entrega: 'PBI-7', pr: 1, via: 'gh', mergeado_em: '2026-11-10T12:00:00.000Z' });
+
+test('projeto-conta-herdadas: T12 integrada, T13 aberta, T1 a T11 herdadas fora do plano ⇒ 13 / 92 % / "12 feitas: 11 herdadas, 1 medida"', () => {
+  const l = linha(projetarProjeto(arvPbi7([...cicloH(1, 0, 'T12'), ...herdadas(T1A11, 6)]), OPC), 'PBI-7');
+  assert.deepEqual(l.tasks, { total: 13, integradas: 1, herdadas: 11, estimadas: 0, restantes: 1, fora: 0 });
+  assert.equal(l.pct, 92);
+  assert.equal(l.pctComEstimadas, 92);
+  assert.equal(l.texto, '92 % (12 feitas: 11 herdadas, 1 medida)');
+  // plural de "medida" e singular de "herdada"
+  const dois = linha(projetarProjeto(arvPbi7([...cicloH(1, 0, 'T12'), ...cicloH(6, 10, 'T13'), ...herdadas(['T1'], 11)], ['T12', 'T13', 'T14']), OPC), 'PBI-7');
+  assert.equal(dois.texto, '75 % (3 feitas: 1 herdada, 2 medidas)');
+});
+
+test('totais-com-herdadas: os totais carregam herdadas; o % do topo conta as herdadas como feitas; restantes as desconta', () => {
+  const t = projetarProjeto(arvPbi7([...cicloH(1, 0, 'T12'), ...herdadas(T1A11, 6)]), OPC).totais;
+  assert.equal(t.tasks, 13);
+  assert.equal(t.integradas, 1);
+  assert.equal(t.herdadas, 11);
+  assert.equal(t.estimadas, 0);
+  assert.equal(t.restantes, 1);
+  assert.equal(t.pct, 92);
+  assert.equal(t.pctComEstimadas, 92);
+});
+
+test('feito-nao-estima-herdada: PBI feito com 11 herdadas estima só a T13, nunca 12; as herdadas seguem herdadas', () => {
+  const e = projetarProjeto(arvPbi7([...cicloH(1, 0, 'T12'), ...herdadas(T1A11, 6), ENCERRADA]), OPC);
+  const l = linha(e, 'PBI-7');
+  assert.equal(l.feito, true);
+  assert.deepEqual(l.tasks, { total: 13, integradas: 1, herdadas: 11, estimadas: 1, restantes: 0, fora: 0 });
+  assert.equal(l.pct, 92);
+  assert.equal(l.pctComEstimadas, 100);
+  assert.equal(l.texto, 'feito (1 tasks estimadas)');
+  assert.equal(e.totais.estimadas, 1);
+  assert.equal(e.totais.herdadas, 11);
+  assert.equal(e.totais.restantes, 0);
+  assert.equal(e.totais.pctComEstimadas, 100);
+});
+
+test('herdada-e-integrada-conta-uma: a herdada de task do plano que o diário também integrou conta 1 vez, como medida', () => {
+  const l = linha(projetarProjeto(arvPbi7([...cicloH(1, 0, 'T12'), ...herdadas(['T12', 'T1'], 6)]), OPC), 'PBI-7');
+  assert.deepEqual(l.tasks, { total: 3, integradas: 1, herdadas: 1, estimadas: 0, restantes: 1, fora: 0 });
+  assert.equal(l.texto, '67 % (2 feitas: 1 herdada, 1 medida)');
+  // a herdada repetida (mesma task, 2 eventos) também conta 1 vez
+  const rep = linha(projetarProjeto(arvPbi7([...herdadas(['T1', 'T1'], 1)]), OPC), 'PBI-7');
+  assert.equal(rep.tasks?.herdadas, 1);
+  assert.equal(rep.tasks?.total, 3);
+});
+
+test('projeto-sem-herdada-igual: sem task.herdada o estado é o de antes, byte a byte (nem a chave herdadas aparece)', () => {
+  const e = projetarProjeto(arvPbi7([...cicloH(1, 0, 'T12')]), OPC);
+  const l = linha(e, 'PBI-7');
+  assert.equal(JSON.stringify(l.tasks), '{"total":2,"integradas":1,"estimadas":0,"restantes":1,"fora":0}');
+  assert.equal(l.texto, '50 % (1 de 2)');
+  assert.equal(l.pct, 50);
+  assert.equal(JSON.stringify(Object.keys(e.totais)), '["pbis","opcoes","terminais","feitos","foraDaConta","tasks","integradas","estimadas","restantes","pct","pctComEstimadas","previsao"]');
+});
+
+test('ritmo-ignora-herdada: a herdada não tem duração; o ritmo e a previsão são os mesmos com ou sem ela', () => {
+  const base = [...cicloH(1, 0, 'T12'), ...cicloH(6, 10, 'T13'), ...cicloH(11, 20, 'T14'), ...cicloH(16, 30, 'T15'), ...cicloH(21, 40, 'T16')];
+  const ids = ['T12', 'T13', 'T14', 'T15', 'T16', 'T17'];
+  const sem = projetarProjeto(arvPbi7(base, ids), OPC).totais.previsao;
+  const com = projetarProjeto(arvPbi7(base, ids, herdadas(['T1', 'T2', 'T3'], 26)), OPC).totais.previsao;
+  assert.equal(com.ritmoS, sem.ritmoS);
+  assert.equal(com.ritmoS, (46 * 60) / 5);
+  assert.equal(com.medida?.restanteS, sem.medida?.restanteS);
+});
+
+test('previsao-projeto-pede-5: com 1 a 4 tasks integradas no projeto a previsão não sai ("sem ritmo: N de 5 tasks medidas"); com 5, sai', () => {
+  assert.equal(AMOSTRA_MINIMA_PROJETO, 5);
+  const ids = ['T1', 'T2', 'T3', 'T4', 'T5', 'T6'];
+  const com = (n: number): EstadoProjeto['totais']['previsao'] =>
+    projetarProjeto(arvPbi7(ids.slice(0, n).flatMap((t, i) => cicloH(1 + 5 * i, 10 * i, t)), ids), OPC).totais.previsao;
+  for (const n of [1, 2, 3, 4]) {
+    const p = com(n);
+    assert.equal(p.medida, null, `n=${n}`);
+    assert.equal(p.estimada, null, `n=${n}`);
+    assert.equal(p.motivo, `sem ritmo: ${n} de 5 tasks medidas`, `n=${n}`);
+  }
+  const cinco = com(5);
+  assert.notEqual(cinco.medida, null);
+  assert.equal(cinco.motivo, null);
+});
+
+test('previsao-projeto-amostra-e-a-do-ritmo: integrada sem task.iniciada ou sem ts válido não entra na amostra (o piso conta o que o ritmo usa)', () => {
+  const ev = (seq: number, min: number, tipo: string, task: string, ts?: string): Evento =>
+    ({ seq, ts: ts ?? new Date(Date.parse('2026-11-10T10:00:00Z') + min * 60000).toISOString(), autor: 'a', sessao: 's', agente: 'o', tipo, dados: { task }, hash_anterior: null }) as Evento;
+  const plano = (id: string, ids: string[]) => ({ ok: true, bruto: { entrega: id, tasks: ids.map((t) => ({ id: t, titulo: t, deps: [], arquivos: [`${t}.ts`] })) } });
+  const A = [ev(1, 0, 'task.iniciada', 'T1'), ev(2, 60, 'task.integrada', 'T1')];
+  const B = ['T1', 'T2', 'T3', 'T4'].map((t, i) => ev(i + 1, 10 + i, 'task.integrada', t)); // sem task.iniciada: o ritmo ignora o diário
+  const arv = [{ caminho: '/r', cards: [], entregas: [{ id: 'PBI-1', plano: plano('PBI-1', ['T1', 'T2']), eventos: A }, { id: 'PBI-2', plano: plano('PBI-2', ['T1', 'T2', 'T3', 'T4', 'T5']), eventos: B }] }] as unknown as ArvoreLida[];
+  const p = projetarProjeto(arv, OPC).totais.previsao;
+  assert.equal(p.medida, null);
+  assert.equal(p.motivo, 'sem ritmo: 1 de 5 tasks medidas');
+});
+
+test('previsao-projeto-com-5-igual: com 5 integradas a previsão é a de hoje (ritmo × restantes)', () => {
+  const ids = ['T1', 'T2', 'T3', 'T4', 'T5', 'T6'];
+  const p = projetarProjeto(arvPbi7(ids.slice(0, 5).flatMap((t, i) => cicloH(1 + 5 * i, 10 * i, t)), ids), OPC).totais.previsao;
+  // 1ª iniciada 10:00, última integrada 10:46 ⇒ 2760 s ÷ 5 tasks; 1 restante
+  assert.equal(p.ritmoS, 552);
+  assert.equal(p.medida?.restanteS, 552);
+  assert.equal(typeof p.medida?.hora, 'string');
+  assert.equal(p.estimada, null);
+  assert.equal(p.motivo, null);
+});
+
+test('fallback-entrega-igual: o piso é só da visão de projeto; o ritmo do fallback da entrega segue valendo com 1 task integrada (M17)', () => {
+  const um = [{ id: 'GM-1', eventos: [evh(1, 0, 'task.iniciada', { task: 'T1', papel: 'implementador' }), evh(2, 60, 'task.integrada', { task: 'T1' })] }];
+  assert.equal(ritmoDasAnteriores(um, null), 3600);
+  assert.equal(ritmoDasAnteriores(um, 'GM-1'), null);
 });

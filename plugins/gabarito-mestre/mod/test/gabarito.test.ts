@@ -2563,6 +2563,23 @@ test('pane-avisos-uma-linha-warning: avisos do CLI viram 1 linha warning no alto
   await ui.unmount()
 })
 
+test('pane-aviso-longo-quebra-linha-e-mantem-o-comando: o aviso "PR #N mergeado não encerra" traz /gabarito-mestre:encerrar inteiro em 40, 60 e 100 colunas (r1 MINOR-3)', async ($, on) => {
+  const aviso = 'PR #10 mergeado não encerra a PBI-7: tasks abertas T2; se a entrega acabou, /gabarito-mestre:encerrar PBI-7 10'
+  const m = comPainel($, on, { avisos: [aviso, 'outro'] })
+  await arrancar(m)
+  for (const larg of [40, 60, 100]) {
+    const ui = await montarPane($, larg)
+    const textos = (await todosTextos(ui)).filter((t: string, k: number, a: string[]) => !/^\s*$/.test(t) && t !== a[k - 1])
+    const i = textos.findIndex((t: string) => t.includes('painel: aviso: PR #10'))
+    expect(i).toBeGreaterThanOrEqual(0)
+    const bloco = textos.slice(i, i + 6).join('\n')
+    expect(bloco).toContain('/gabarito-mestre:encerrar')
+    expect(bloco).toContain('PBI-7 10')
+    expect(bloco).toContain('(+1)')
+    await ui.unmount()
+  }
+})
+
 test('pane-redesenha-ao-atualizar: o refresh invalida o desenho; a Pane montada mostra o estado novo', async ($, on) => {
   const m = comPainel($, on, { estado: estadoPainel({ id: 'VELHO-1' }) })
   await arrancar(m)

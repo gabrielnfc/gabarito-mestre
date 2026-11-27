@@ -40,6 +40,7 @@ test('origem-tabela-cada-tipo', () => {
     'aprendizado': null, 'aprendizado.nada': null, 'dono.mensagem': null,
     'fato.medido': AUTO, 'nota': ORQ, 'dono.resposta': '(você respondeu: Sim)',
     'task.fora': VOCE, 'entrega.encerrada': AUTO, 'entrega.reaberta': VOCE, 'guarda.autonomia_usada': AUTO,
+    'task.herdada': null,
   };
   assert.deepEqual(Object.keys(esperado).sort(), [...TIPOS_EVENTO].sort(), 'cada TipoEvento tem expectativa explícita');
   const dados: Record<string, Record<string, unknown>> = {

@@ -236,6 +236,20 @@ Execução de 05/09/2026, no G3: as quatro prescritas foram mortas.
 | M3 aceitar `allowFullScan` com motivo vazio | suíte vermelha |
 | M4 tratar `OR` como `AND` | suíte vermelha |
 
+### Migration de banco
+
+O `teste` de uma mutação é um comando de shell, então uma mutação em SQL de migration não
+precisa de tipo novo de mutação nem de hook de banco. Duas formas, nesta ordem de preferência:
+
+1. **Fonte única (preferida).** Amarre a constante que a migration repete a uma fonte única
+   que o teste lê; mudar o valor na migration, ou na fonte, derruba o teste sem tocar em banco.
+2. **Banco local e efêmero.** Um `teste` que recria um banco local e efêmero e
+   reaplica as migrations antes de rodar a suíte, por exemplo:
+   `npm run db:reset:test && npx vitest run test/migrations.test.ts`.
+
+Regra central: o `teste` da mutação só toca banco local e efêmero, nunca banco de produção nem compartilhado. Se o comando
+de recriação não garante que o alvo é o banco local, use a forma 1.
+
 ---
 
 ## Dois defeitos que os próprios testes acharam

@@ -62,7 +62,9 @@ export type TipoEvento =
   | 'task.fora'
   | 'entrega.encerrada'
   | 'entrega.reaberta'
-  | 'guarda.autonomia_usada';
+  | 'guarda.autonomia_usada'
+  // GM-21 (T6, DT8): task herdada de antes do gabarito, com a origem, fora de TIPOS_DE_TASK (o loop nunca a lê como ciclo nem como progresso)
+  | 'task.herdada';
 export type Fonte = 'origin' | 'local';
 export type AmbienteDecl = {
   hosts?: string[];
@@ -183,7 +185,7 @@ export type PerfilModelo = 'economia' | 'padrao' | 'qualidade';
 /** Proposta de emenda aberta: `seq` na sessão fixa `emendas` e o REQ que ela congela. */
 export type PropostaAberta = { seq: number; req: string };
 /** Papel de custo/modelo (REQ-MOD-1); distinto de `Papel`, que é o papel de uma task do loop. */
-export type PapelModelo = 'implementador' | 'revisor' | 'sombra' | 'revisor_final' | 'spike' | 'basico';
+export type PapelModelo = 'implementador' | 'revisor' | 'sombra' | 'revisor_final' | 'spike' | 'basico' | 'orquestrador';
 export type AcaoLoop =
   | { tipo: 'despachar'; itens: { task: string; papel: Papel }[] }
   | { tipo: 'integrar'; tasks: string[] }

@@ -365,6 +365,18 @@ Uma coluna só existe quando representa uma espera ou uma decisão real, e cada 
 4. **Bloqueio é marcação, não coluna.** O card permanece onde está, sinalizado com a data do bloqueio e o responsável pelo desbloqueio. Qualquer impedimento conta: dependência externa, ambiente, review reprovado `rodadasAntesDeEscalar` vezes. No harness, a marcação é uma linha no ledger do PBI: `BLOQUEADA <AAAA-MM-DD> <motivo> — dono: <quem>`. Linha sem `dono:` é bloqueio sem responsável — aviso no cartão de sessão.
 5. **Envelhecimento tem limite.** Item parado em uma coluna além do tempo combinado entra na pauta da cadência do nível acima. No harness, o limite é `fluxo.envelhecimentoDias` (default 3): PBI sem movimento há mais dias que isso aparece no cartão de sessão como "envelhecido — pauta do nível acima".
 
+### 4.5 Campos da task do plano.json
+
+O `plano.json` da entrega (`.harness/entregas/<id>/plano.json`) lista `tasks[]`. O que o `loop.mjs abrir` e o gate leem de cada task:
+
+- `id` (texto, ex.: `"T1"`), `titulo` (texto livre), `deps` (ids das tasks que precisam estar integradas antes), `reqs` (ids de requisito, ex.: `["REQ-A-1"]`).
+- `arquivos`: o escopo da task; arquivo exato ou diretório (casa por prefixo). Emenda aplicada da própria task amplia o escopo.
+- `mutacoes`: o **caminho** de um arquivo JSON dentro do repositório, nunca texto livre. O arquivo é uma lista não vazia de `{nome, arquivo, de, para, teste, cwd?}` (`cwd` opcional, texto); `arquivo` fica dentro do escopo da task. Exemplo: `"mutacoes": ".harness/entregas/GM-21/mutacoes-T1.json"` e, nele, `[{"nome":"m1","arquivo":"src/a.ts","de":"a > b","para":"a >= b","teste":"npx vitest run src/a.test.ts"}]`.
+- `teste_afetado`: um **comando de shell**, não um caminho de arquivo. Exemplo: `"teste_afetado": "npx vitest run src/a.test.ts"`.
+- `gates.suites` (em `harness.config.json`, não na task): ao menos 1 suíte, texto (`"npm test"`) ou `{nome?, cmd, cwd?, semContagem?}`.
+
+O `abrir <task>` confere tudo isso antes de criar worktree, branch ou banco e recusa com `plano_nao_executavel`, citando a task, o campo e o motivo (e os da config). O `proxima` não despacha a task com problema: tira-a de `itens` e põe o motivo em `aviso`; sem nenhuma task válida, devolve `esperar` com motivo `plano_nao_executavel`. Task integrada ou fora não é conferida. Corrija o `plano.json` (ou a config) e repita.
+
 ## 5. Propagação entre níveis
 
 O card de um nível muda de estado por causa do que acontece no nível de baixo. Ninguém atualiza os três quadros na mão.

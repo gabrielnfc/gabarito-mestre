@@ -203,6 +203,7 @@ export const MODELOS_PADRAO = Object.freeze({
   revisor_final: Object.freeze({ modelo: 'fable' }),
   spike: Object.freeze({ modelo: 'opus' }),
   basico: Object.freeze({ modelo: 'haiku' }),
+  orquestrador: Object.freeze({ modelo: 'opus' }),
 });
 
 /** Ordem das famílias de modelo; o esforço não entra na comparação (Sombra D5). */
@@ -222,6 +223,7 @@ export const PERFIS_MODELO = Object.freeze({
     revisor_final: { modelo: 'opus' },
     spike: { modelo: 'sonnet' },
     basico: { modelo: 'haiku' },
+    orquestrador: { modelo: 'opus' },
   }),
   padrao: MODELOS_PADRAO,
   qualidade: congela({
@@ -231,6 +233,7 @@ export const PERFIS_MODELO = Object.freeze({
     revisor_final: { modelo: 'fable' },
     spike: { modelo: 'opus' },
     basico: { modelo: 'sonnet' },
+    orquestrador: { modelo: 'opus' },
   }),
 });
 

@@ -5,15 +5,22 @@
  * Sem `--gravar` só LÊ (nenhum arquivo muda): devolve `{ oferecer, entreguesSemPlano, planosLegados, statusFora, cardsDesatualizados }`.
  * Com `--gravar` grava SÓ `fluxo.planosLegados` e `fluxo.status.terminais`, pelo escritor do `gravar` (`aplicarConfig`: merge, tmp + rename,
  * diff), com `--dry-run` que só mostra o diff. Falha fechada: config ilegível/ausente, padrão inválido ou nenhuma das 2 flags ⇒ `Falha` e nada gravado.
- * NENHUM card é escrito (D-G46): `cardsDesatualizados` só lista. A importação de tasks com origem (`task.herdada`) é da GM-21, não daqui.
+ * NENHUM card é escrito (D-G46): `cardsDesatualizados` só lista.
+ *
+ * `onboarding.mjs herdar --tasks --entrega <ID> --arquivo <lista.json> [--gravar [--dry-run]]` (GM-21 T6, REQ-HER-2, DT8/DT9): importa tasks de uma entrega
+ * anterior ao gabarito, cada uma com a ORIGEM conferida (`commit:<sha>` ancestral de HEAD, `pr:<n>` MERGED pelo gh, `ledger:<arquivo>:<linha>` versionado
+ * e com a linha), como `task.herdada` em `events.herdar.jsonl` (sessão `herdar`). Sem `--gravar` só lê. Tudo ou nada: 1 recusada e nada é gravado.
+ * Task do `plano.json` da entrega é recusada (o loop mede); task já herdada é pulada (`ja_herdada`). Não toca plano, config nem card.
  *
  * A herança das regras da 1.x (GM-14 REQ-ONB-3 a) nunca foi implementada e fica no backlog; se voltar, entra como `herdar --regras`, sem dividir
  * o `--gravar` deste passo (o contrato antigo, `_onboarding/candidatos.json`, caiu). O id `herdar:<n>` e a forma `confirmacao` seguem dormentes.
  */
 
-import { lstatSync, readFileSync, readdirSync, realpathSync } from 'node:fs';
+import { existsSync, lstatSync, readFileSync, readdirSync, realpathSync } from 'node:fs';
 import { isAbsolute, join } from 'node:path';
 import { cardDe, ehColunaFl1, ehFeito, ehTerminal, padraoLegadoValido, planoLegadoDe, planoMdDoCard, primeiroTermo, TERMINAIS_PADRAO, terminaisValidos, worktreesDe } from '../dist/projeto.js';
+import { append as anexarAoDiario, dirEntrega, lerEstrito } from '../dist/diario.js';
+import { formaInvalida } from '../dist/formas.js';
 import { idPadraoDe } from '../lib/config.mjs';
 import { aplicarConfig, ArquivoInvalido } from './onboarding-config.mjs';
 import { projetoDoRepo } from './painel.mjs';
@@ -204,4 +211,138 @@ function gravarChaves(raiz, { planosLegados, terminais, dryRun }) {
 export function herdar(raiz, { rodar, gravar = false, planosLegados, terminais, dryRun = false } = {}) {
   const gravacao = gravar ? gravarChaves(raiz, { planosLegados, terminais, dryRun }) : {};
   return { ...gravacao, ...detectar(raiz, lerConfig(raiz).cfg, rodar) };
+}
+
+// ────────────────────────────────────────────────────────────── herdar --tasks (GM-21 T6)
+
+const ENTREGA_RE = /^[A-Z]+-\d+$/;
+const TASK_ID_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,31}$/;
+const SHA_ENTRADA_RE = /^[0-9a-f]{7,40}$/;
+const PR_RE = /^[1-9]\d{0,9}$/;
+const LISTA_MAX = 500;
+
+const saiu = (r) => !r || r.motivo || r.rc !== 0;
+
+/** `commit:<sha>`: o commit existe e é ancestral de HEAD (`merge-base --is-ancestor`). Devolve `{ ref }` com o sha por extenso, ou `{ motivo }`. */
+function conferirCommit(raiz, sha, rodar) {
+  if (!SHA_ENTRADA_RE.test(sha)) return { motivo: 'commit: sha inválido (7 a 40 hex minúsculos)' };
+  const cheio = rodar('git', ['rev-parse', '--verify', '--quiet', `${sha}^{commit}`], { cwd: raiz, timeoutMs: 10000 });
+  const ref = saiu(cheio) ? '' : cheio.stdout.trim();
+  if (!/^[0-9a-f]{40}$/.test(ref)) return { motivo: 'commit: não existe neste repositório' };
+  const anc = rodar('git', ['merge-base', '--is-ancestor', ref, 'HEAD'], { cwd: raiz, timeoutMs: 10000 });
+  if (anc?.motivo) return { motivo: `commit: não consegui conferir o histórico (${anc.motivo})` };
+  return anc?.rc === 0 ? { ref } : { motivo: 'commit: não é ancestral de HEAD (fora do histórico desta branch)' };
+}
+
+/** `pr:<n>`: `gh pr view <n>` diz MERGED. Sem gh, falha ou outro estado ⇒ recusa. */
+function conferirPr(raiz, n, rodar) {
+  if (!PR_RE.test(n)) return { motivo: 'pr: número inválido (inteiro ≥ 1)' };
+  const r = rodar('gh', ['pr', 'view', n, '--json', 'state'], { cwd: raiz, timeoutMs: 20000 });
+  if (r?.motivo === 'ausente') return { motivo: 'pr: gh ausente, não consigo conferir que o PR foi mergeado' };
+  if (saiu(r)) return { motivo: `pr: gh não leu o PR #${n}` };
+  let estado;
+  try { estado = JSON.parse(r.stdout)?.state; } catch { return { motivo: `pr: resposta do gh ilegível para #${n}` }; }
+  return estado === 'MERGED' ? { ref: n } : { motivo: `pr: #${n} não está MERGED (${typeof estado === 'string' ? estado : 'estado desconhecido'})` };
+}
+
+/** `ledger:<arquivo>:<linha>`: arquivo versionado dentro da raiz (arquivo comum, sem symlink) e a linha existe. */
+function conferirLedger(raiz, resto, rodar) {
+  const i = resto.lastIndexOf(':');
+  const arquivo = i < 0 ? '' : resto.slice(0, i);
+  const linhaTxt = i < 0 ? '' : resto.slice(i + 1);
+  if (!/^[1-9]\d{0,9}$/.test(linhaTxt)) return { motivo: 'ledger: esperado ledger:<arquivo>:<linha ≥ 1>' };
+  const rel = relativoSeguro(arquivo);
+  if (rel === null || rel !== arquivo || arquivo.includes('\n')) return { motivo: 'ledger: arquivo fora da raiz do repositório (caminho relativo, sem ..)' };
+  const v = rodar('git', ['ls-files', '--error-unmatch', '--', arquivo], { cwd: raiz, timeoutMs: 10000 });
+  if (saiu(v)) return { motivo: 'ledger: arquivo não versionado (git ls-files não o conhece)' };
+  const texto = lerTextoSeguro(join(raiz, arquivo));
+  if (texto === null) return { motivo: 'ledger: arquivo ilegível ou grande demais (não é arquivo comum até 1 MB)' };
+  const linhas = texto.split('\n');
+  if (linhas[linhas.length - 1] === '') linhas.pop();
+  return Number(linhaTxt) <= linhas.length ? { ref: `${arquivo}:${linhaTxt}` } : { motivo: `ledger: linha ${linhaTxt} além do fim (o arquivo tem ${linhas.length})` };
+}
+
+/** A origem como texto (`commit:`, `pr:`, `ledger:`) ⇒ `{ tipo, ref }` conferido, ou `{ motivo }`. */
+function conferirOrigem(raiz, origem, rodar) {
+  if (typeof origem !== 'string') return { motivo: 'origem: esperado texto commit:<sha>, pr:<n> ou ledger:<arquivo>:<linha>' };
+  const i = origem.indexOf(':');
+  const tipo = i < 0 ? '' : origem.slice(0, i);
+  const resto = i < 0 ? '' : origem.slice(i + 1);
+  const r = tipo === 'commit' ? conferirCommit(raiz, resto, rodar) : tipo === 'pr' ? conferirPr(raiz, resto, rodar) : tipo === 'ledger' ? conferirLedger(raiz, resto, rodar)
+    : { motivo: 'origem: tipo desconhecido (esperado commit:, pr: ou ledger:)' };
+  return r.motivo === undefined ? { tipo, ref: r.ref } : { motivo: r.motivo };
+}
+
+/** Ids das tasks do `plano.json` da entrega; ausente ⇒ vazio; ilegível ⇒ `Falha` (não se herda sobre plano que não se lê). */
+function tasksDoPlano(dir) {
+  const arq = join(dir, 'plano.json');
+  if (!existsSync(arq)) return new Set();
+  try {
+    const p = JSON.parse(readFileSync(arq, 'utf8'));
+    if (!Array.isArray(p?.tasks)) throw new Error('sem lista tasks');
+    return new Set(p.tasks.map((t) => t?.id).filter((id) => typeof id === 'string'));
+  } catch (e) {
+    throw new Falha('plano_invalido', `plano.json da entrega ilegível (${String(e.message).split('\n')[0]}); nada foi gravado`);
+  }
+}
+
+/** A lista do `--arquivo`: array de `{task, origem, titulo?}`, sem chave a mais. Tudo fora disso é `argumento_invalido`. */
+function lerLista(arquivo) {
+  if (typeof arquivo !== 'string' || arquivo === '') throw new Falha('argumento_invalido', 'herdar --tasks precisa de --arquivo <lista.json>');
+  let itens;
+  try { itens = JSON.parse(readFileSync(arquivo, 'utf8')); } catch (e) { throw new Falha('argumento_invalido', `--arquivo ilegível (${String(e.message).split('\n')[0]})`); }
+  if (!Array.isArray(itens) || itens.length === 0 || itens.length > LISTA_MAX) throw new Falha('argumento_invalido', `--arquivo: esperada lista de 1 a ${LISTA_MAX} itens {task, origem}`);
+  for (const [n, it] of itens.entries()) {
+    if (!ehObjeto(it) || Object.keys(it).some((k) => !['task', 'origem', 'titulo'].includes(k)) || typeof it.task !== 'string' || (it.titulo !== undefined && typeof it.titulo !== 'string')) {
+      throw new Falha('argumento_invalido', `--arquivo: item ${n + 1} fora da forma {task, origem, titulo?}`);
+    }
+  }
+  return itens;
+}
+
+/**
+ * `herdarTasks(raiz, { rodar, entrega, arquivo, gravar, dryRun, agora })` ⇒ `{ ok, tasks:[{task, origem, estado, motivo?}], gravado, gravadas, recusadas, dryRun? }`.
+ * `estado`: `ok` (origem conferida), `ja_herdada` (já há `task.herdada` dela no diário da entrega: pulada, sem reconferir), `recusada` (com `motivo`).
+ * `ok:false` só quando há recusada E `gravar` (nada é gravado); sem `gravar` a leitura mostra tudo e `ok` segue true.
+ */
+export function herdarTasks(raiz, { rodar, entrega, arquivo, gravar = false, dryRun = false, agora = () => new Date() } = {}) {
+  if (typeof entrega !== 'string' || !ENTREGA_RE.test(entrega)) throw new Falha('argumento_invalido', 'herdar --tasks precisa de --entrega <ID> (ex. PBI-7)');
+  const itens = lerLista(arquivo);
+  const dir = dirEntrega(raiz, entrega);
+  const noPlano = tasksDoPlano(dir);
+  let jaHerdadas = new Set();
+  if (existsSync(dir)) {
+    const l = lerEstrito(dir);
+    if (!l.ok) throw new Falha('diario_invalido', `diário da entrega ilegível (${l.motivo}); nada foi gravado`);
+    jaHerdadas = new Set(l.eventos.filter((e) => e.tipo === 'task.herdada' && typeof e.dados?.task === 'string').map((e) => e.dados.task));
+  }
+  const vistas = new Set();
+  const tasks = itens.map((it) => {
+    const base = { task: it.task, origem: it.origem };
+    if (!TASK_ID_RE.test(it.task)) return { ...base, estado: 'recusada', motivo: 'task: id fora da forma (ex. T3)' };
+    if (vistas.has(it.task)) return { ...base, estado: 'recusada', motivo: 'task: repetida na lista' };
+    vistas.add(it.task);
+    if (noPlano.has(it.task)) return { ...base, estado: 'recusada', motivo: 'task: está no plano.json da entrega (o loop mede, não se herda)' };
+    if (jaHerdadas.has(it.task)) return { ...base, estado: 'ja_herdada' };
+    const o = conferirOrigem(raiz, it.origem, rodar);
+    if (o.motivo !== undefined) return { ...base, estado: 'recusada', motivo: o.motivo };
+    const _dados = { task: it.task, origem: { tipo: o.tipo, ref: o.ref }, ...(it.titulo === undefined ? {} : { titulo: it.titulo }) };
+    const forma = formaInvalida('task.herdada', _dados);
+    return forma === null ? { ...base, estado: 'ok', _dados } : { ...base, estado: 'recusada', motivo: `titulo: fora da forma do diário (${forma})` };
+  });
+  const recusadas = tasks.filter((t) => t.estado === 'recusada').length;
+  const novas = tasks.filter((t) => t.estado === 'ok');
+  let gravadas = 0;
+  if (gravar && !dryRun && recusadas === 0) {
+    let autor = 'desconhecido';
+    try { const r = rodar('git', ['config', 'user.email'], { cwd: raiz, timeoutMs: 10000 }); if (!saiu(r) && r.stdout.trim() !== '') autor = r.stdout.trim(); } catch { /* o diário aceita "desconhecido" */ }
+    for (const t of novas) {
+      const r = anexarAoDiario(dir, 'herdar', { ts: agora().toISOString(), autor, sessao: 'herdar', agente: 'orquestrador', tipo: 'task.herdada', dados: t._dados });
+      if (!r.ok || r.gravado !== 'evento') throw new Falha('evento_nao_gravado', `task ${t.task} não gravada (${r.ok ? 'recusada pelo diário' : r.erro}); ${gravadas} já gravada(s) antes dela`);
+      gravadas += 1;
+    }
+  }
+  return {
+    ok: !(gravar && recusadas > 0), tasks: tasks.map(({ _dados, ...resto }) => resto), gravado: gravadas > 0, gravadas, recusadas, ...(dryRun ? { dryRun: true } : {}),
+  };
 }

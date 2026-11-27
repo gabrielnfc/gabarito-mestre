@@ -141,8 +141,9 @@ test('fumaca-sete-fases: da primeira ideia ao PR aceito, cada passo diz a fase, 
   // (8) pedido de revisão aberto: item (2) do REQ-DEP-1, sem botão; o progresso diz o número
   const pa = P.prAberto;
   assert.equal(pa.estado.trilha.progresso, 'pedido de revisão #7 aberto');
-  assert.deepEqual(pa.estado.depende.map((d) => [d.motivo, d.acoes]), [['revisar e aceitar o pedido de revisão #7', []]]);
-  assert.equal(topo(pa)[1], '◆ DEPENDE DE VOCÊ  1 item'); assert.match(topo(pa)[2], /^  revisar e aceitar o pedido de revisão #7$/);
+  // GM-21 T8 (REQ-DEP-1, emenda 14): com `entrega.autonomia: true` (a da caminhada) o merge é do orquestrador: o item "revisar e aceitar" não existe
+  assert.deepEqual(pa.estado.depende.map((d) => d.motivo), ['nada depende de você']);
+  assert.equal(topo(pa)[1], 'nada depende de você');
   assert.deepEqual([pa.estado.trilha.fase, pa.estado.trilha.marcas], [6, ['✓', '✓', '✓', '✓', '✓', '●', '○']], 'REQ-TRI-1: o pedido aberto é a fase atual (●), ainda não ✓');
   assert.match(pa.texto, /^PLANO {3}▰{21} {2}100% {2}2\/2 tasks +todas integradas$/m);
   assert.match(pa.texto, /^\d\d:\d\d ✓ integrou T2 \(automático\)$/m);

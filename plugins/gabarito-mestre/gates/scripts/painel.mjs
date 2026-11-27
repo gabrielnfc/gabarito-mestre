@@ -42,7 +42,7 @@ import { fusoValido } from '../dist/painel-hora.js';
 import { paraTexto } from '../dist/painel-texto.js';
 import { lerX } from '../dist/pouso.js';
 import { sessoesDeRetomada } from '../dist/pouso-pendente.js';
-import { encerramentoDe, idDaBranch, trilhaDe } from '../dist/trilha.js';
+import { avisoDePlanoAberto, encerramentoDe, idDaBranch, trilhaDe } from '../dist/trilha.js';
 import { proximaEntrega } from '../dist/depende.js';
 import { cardDe, padraoLegadoValido, planoLegadoDe, planoMdDoCard, projetarProjeto, terminaisValidos, worktreesDe } from '../dist/projeto.js';
 import { temOnboarding } from './cartao-sessao.mjs';
@@ -450,6 +450,28 @@ function carregarPacote(nome, raiz, avisos) {
 
 // ─────────────────────────────────────────────────────────────── estado
 
+/**
+ * GM-21 REQ-TIT-1 (DT13): título do card do PBI (`# ` depois do frontmatter) em `fluxo.mapeamento.FL1`, frontmatter `id` igual à entrega.
+ * Sem pasta, sem card ou card sem `# ` ⇒ `null` (vale o título de hoje); 2 cards com o mesmo `id` ⇒ `null` e aviso.
+ */
+function tituloDoCard(raiz, cfg, id, idPadrao, avisos) {
+  const fl1 = relativoSeguro(cfg?.fluxo?.mapeamento?.FL1);
+  if (fl1 === null || raiz === null || id === null) return null;
+  let idRe;
+  try { idRe = new RegExp(idPadrao); } catch { idRe = /^[A-Z]+-\d+$/; }
+  let nomes = [];
+  try { nomes = readdirSync(join(raiz, fl1)).filter((n) => n.endsWith('.md')).sort(); } catch { return null; }
+  const achados = [];
+  for (const n of nomes) {
+    const texto = lerTextoSeguro(join(raiz, fl1, n));
+    const card = texto === null ? null : cardDe(n, texto, idRe);
+    if (card !== null && card.id === id) achados.push(card);
+  }
+  if (achados.length > 1) { avisos.push(`card ambíguo: ${achados.length} cards com id ${id} em ${fl1}; título da spec`); return null; }
+  const t = achados[0]?.titulo;
+  return typeof t === 'string' && t !== '' ? t : null;
+}
+
 const tituloDe = (bytes) => {
   for (const linha of bytes.toString('utf8').split('\n')) {
     const m = /^# (.+)$/.exec(linha.replace(/\r$/, ''));
@@ -766,7 +788,13 @@ export function estadoDoPainel(cwd, opts = {}) {
     // nada de PRONTO "N de N integradas" de uma entrega não identificada; a trilha segue vendo o plano em `fatos`)
     // T47: o plano descartado segue sendo o que casa os eventos de task do diário e os vivos (FIEL-3 a): sem ele, T1 não está no plano e o diário vira
     // `diario_invalido`. Ele só não aparece em PRONTO/modo/id/fase (a regra de "publicada" é a de `trilhaDe`, a única).
+    // GM-21 DT1: com task aberta no plano, a fase PR de `trilhaDe` não é cumprida pelo PR mergeado: a entrega segue identificada e o plano NÃO é descartado aqui.
     const planoDoDiario = plano;
+    // GM-21 DT1 (r1 MAJOR-1): o aviso de PR mergeado que não publica por causa do plano aberto sai AQUI (onde o dono lê), sem estado: a cada leitura enquanto vale
+    if (plano !== null && id !== null && eventos !== null) {
+      const av = avisoDePlanoAberto(eventos, id, idPadrao, { tasks: plano.tasks.map((t) => t.id) });
+      if (av !== null) avisos.push(`PR #${av.pr} mergeado não encerra a ${id}: tasks abertas ${av.abertas.join(', ')}; se a entrega acabou, /gabarito-mestre:encerrar ${id} ${av.pr}`.slice(0, 300));
+    }
     const descartado = plano !== null && opts.entrega === undefined && eventos !== null && trilhaDe(fatos, eventos).identificada !== true;
     if (descartado) plano = null;
 
@@ -780,6 +808,9 @@ export function estadoDoPainel(cwd, opts = {}) {
       const daEntrega = specs.filter((s) => s.pbi === id);
       if (daEntrega.length === 1 && daEntrega[0].titulo !== '') titulo = daEntrega[0].titulo;
     }
+
+    // GM-21 DT13: o título do card do PBI vale antes do da spec
+    titulo = tituloDoCard(sessaoRaiz, origin.cfg, id, idPadrao, avisos) ?? titulo;
 
     // origem: política (GM-15 T36: o teto de consultas à Sombra saiu; `sombra.teto` é ignorado)
     const config = lerConfigEntrega(origin.cfg);

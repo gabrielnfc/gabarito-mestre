@@ -20,6 +20,7 @@
  *   node onboarding.mjs gravar --respostas <arquivo.json> [--root <d>] [--hoje AAAA-MM-DD] [--fuso <IANA>] [--dry-run]
  *     → { ok, diff, naoDetectado, removidas, efetiva? } ou { ok:false, erro, motivo } com exit 1 e NADA escrito:
  *     respostas_ausentes | respostas_invalidas | config_invalida | deteccao_mudou | resposta_fora_das_opcoes | falha.
+ *   node onboarding.mjs herdar --tasks --entrega <ID> --arquivo <lista.json> [--root <d>] [--gravar [--dry-run]]    (GM-21 T6 REQ-HER-2: `task.herdada` com origem conferida, tudo ou nada)
  *   node onboarding.mjs herdar --root <d> [--gravar --planos-legados <p> --terminais <A,B> [--dry-run]]    (GM-20 REQ-ADO-1/2: passo de adoção; `onboarding-herdar.mjs`)
  *   node onboarding.mjs foco --root <d> [--sim]         (GM-14 REQ-ONB-2 foco; `onboarding-foco.mjs`, T9)
  *   node onboarding.mjs painel --root <d> [--local lateral|acima]   (GM-14 REQ-ONB-2 local do painel; `onboarding-painel.mjs`, T21)
@@ -37,8 +38,8 @@ import { hojeISO, diasEntre } from '../lib/datas.mjs';
 import * as capacidade from './capacidade.mjs';
 import { lerConfigEntrega, politicaEfetiva } from '../dist/entrega.js';
 import { PERFIS_MODELO, resolverModelo } from '../lib/config.mjs';
-import { aplicarConfig, ArquivoInvalido } from './onboarding-config.mjs';
-import { herdar } from './onboarding-herdar.mjs';
+import { aplicarConfig, ArquivoInvalido, mergeDeep, diffChaves, escreverAtomico } from './onboarding-config.mjs';
+import { herdar, herdarTasks } from './onboarding-herdar.mjs';
 import { gravarFoco, ofertaFoco } from './onboarding-foco.mjs';
 import { gravarLocal, ofertaLocal } from './onboarding-painel.mjs';
 import { explicarPrimeira, previaSimples } from '../lib/glossario.mjs';
@@ -392,6 +393,29 @@ function detectarTipoRepo(f) {
   if (f.packageJson) return det('tipo_repo', 'app', `package.json:${linhaDeChave(f.textos?.packageJson, ['name']) ?? 1} (sem marcador de monorepo)`);
   return amb('tipo_repo', ['app', 'repo-sem-app'], 'sem package.json legível', f.motivos.packageJson ?? 'sem package.json');
 }
+
+// GM-21 T2 (REQ-MIG-2, DT5): `gates.suites` detectada de `package.json:scripts.test`. Não é item do onboarding (não vira
+// pergunta nem entra em ORDEM_ITENS): só a prévia mostra e o `gravar` escreve. Config que já tem `gates.suites` (mesmo lista
+// vazia) ou `gates` que não é objeto fica como está: o onboarding nunca sobrescreve o que o dono declarou.
+const PLACEHOLDER_NPM_TEST = /no test specified/i; // qualquer script que contenha o texto do `npm init`, em qualquer forma de escrever
+/** `{ suites: [{nome, cmd}], fonte }` ou `null`. Pura. */
+export function detectarSuites(f) {
+  if (configErro(f) !== null) return null; // ilegível ≠ ausente: nada é gravado por cima
+  const cfg = configObj(f);
+  if (cfg.gates !== undefined && (!ehObjeto(cfg.gates) || cfg.gates.suites !== undefined)) return null;
+  const s = f.packageJson?.scripts;
+  const t = ehObjeto(s) ? s.test : undefined;
+  if (typeof t !== 'string' || t.trim() === '' || PLACEHOLDER_NPM_TEST.test(t.trim())) return null;
+  return { suites: [{ nome: 'unit', cmd: 'npm test' }], fonte: `package.json:${linhaDeChave(f.textos?.packageJson, ['scripts', 'test']) ?? '?'} (scripts.test)` };
+}
+
+/** Item `suites` da prévia (NÃO é item do onboarding): só existe quando detectado; faz o `deteccao_mudou` do `gravar` cobrir a detecção de suítes (DT5). `null` = nada detectado. */
+export function itemSuites(f) {
+  const s = detectarSuites(f);
+  return s === null ? null : { item: 'suites', estado: 'detectado', valor: s.suites, fonte: s.fonte, candidatos: [] };
+}
+/** `itens` como o dono os vê e o `_previa` os devolve: os 5 do onboarding + `suites` quando detectada. */
+export const itensDaPrevia = (f) => [...detectar(f), ...[itemSuites(f)].filter((i) => i !== null)];
 
 const PREFIXO_ENV = /^(PROD|PRODUCTION|STAGING|STG|HOMOLOG|HML)_/;
 const CLASSE_DO_PREFIXO = { PROD: 'producao', PRODUCTION: 'producao', STAGING: 'staging', STG: 'staging', HOMOLOG: 'homolog', HML: 'homolog' };
@@ -753,7 +777,7 @@ function efetivaDe(politica, autonomia, fuso) {
  * Prévia em texto: `detectei:` com 1 fato por linha (estado e fonte), as 3 decisões com default, a política efetiva quando
  * difere da escolhida, a janela padrão e a linha `trocar <item>`. `fuso` entra na janela padrão (CLI: o do `Intl`).
  */
-export function previa(itens, perguntasDoOnboarding, { fuso = fusoLocal(), calibracao = [], existente } = {}) {
+export function previa(itens, perguntasDoOnboarding, { fuso = fusoLocal(), calibracao = [], existente, suites = null } = {}) {
   const ps = Object.fromEntries(perguntasDoOnboarding.map((p) => [p.id, p]));
   const linhas = ['detectei:'];
   for (const i of itens) {
@@ -761,6 +785,7 @@ export function previa(itens, perguntasDoOnboarding, { fuso = fusoLocal(), calib
     const extra = i.item === 'ambientes' ? '; ambientes: informativo; a guarda usa guarda.ambientes' : '';
     linhas.push(`- ${i.item}: ${i.estado}${v ? ` ${v}` : ''} (fonte: ${i.fonte})${i.motivo ? `; motivo: ${i.motivo}` : ''}${extra}`);
   }
+  if (suites !== null) linhas.push(`- suítes de teste: ${suites.suites.map((x) => x.cmd).join(', ')} (fonte: ${suites.fonte})`);
   linhas.push('', 'decido com você (default entre colchetes):');
   const fixas = [['politica', 'política de entrega'], ['autonomia', 'autonomia para publicar'], ['perfil', 'perfil de modelos']];
   for (const [id, nome] of fixas) {
@@ -781,10 +806,10 @@ export function previa(itens, perguntasDoOnboarding, { fuso = fusoLocal(), calib
   const aliasAntigo = ehObjeto(orqAtual.modelo) ? orqAtual.modelo.alias : undefined;
   const perfilEscolhido = ps.perfil?.default;
   if (typeof aliasAntigo === 'string' && aliasAntigo !== '' && typeof perfilEscolhido === 'string') {
-    const novo = resolverModelo({ ...orqAtual, perfil: perfilEscolhido }, 'revisor_final').modelo;
+    const novo = resolverModelo({ ...orqAtual, perfil: perfilEscolhido }, 'orquestrador').modelo;
     // FX4 r2 MINOR-1: só cita um perfil que de fato resolve para o alias antigo (o `economia` não é `opus` para quem tinha `sonnet`).
-    const mantem = ['padrao', 'economia', 'qualidade'].filter((pf) => resolverModelo({ ...orqAtual, perfil: pf }, 'revisor_final').modelo === aliasAntigo);
-    const como = mantem.length > 0 ? `perfil ${mantem.join(' ou ')} ou modelos.revisor_final` : 'modelos.revisor_final';
+    const mantem = ['padrao', 'economia', 'qualidade'].filter((pf) => resolverModelo({ ...orqAtual, perfil: pf }, 'orquestrador').modelo === aliasAntigo);
+    const como = mantem.length > 0 ? `perfil ${mantem.join(' ou ')} ou modelos.orquestrador` : 'modelos.orquestrador';
     if (novo !== aliasAntigo) linhas.push(`- modelo do orquestrador: ${aliasAntigo} ⇒ ${novo} (vem do perfil ${perfilEscolhido}; para manter ${aliasAntigo}: ${como})`);
   }
   const j = janelaPadrao(fuso);
@@ -862,7 +887,7 @@ export function configDasRespostas(itens, respostas, existente, hoje, { fuso = '
     ...paralelismoCalibrado(orq.paralelismo, hoje, recalibrar),
     perfil,
     modelo: {
-      alias: resolverModelo({ ...orq, perfil }, 'revisor_final').modelo,
+      alias: resolverModelo({ ...orq, perfil }, 'orquestrador').modelo,
       politica: modeloAtual.politica ?? 'mais-potente',
       validadeDias: modeloAtual.validadeDias ?? 90,
       resolvidoEm: hoje,
@@ -919,11 +944,14 @@ export function gravar(raiz, caminhoRespostas, { rodar = rodarReal, hoje = hojeI
   }
   const itens = detectar(fatos);
   // Fato que mudou desde a prévia (estado ou valor), abaixo OU acima do teto de perguntas: falha fechado (P1 T6b, MAJOR-1 da r1).
+  // Inclui `suites` (GM-21 T2, DT5): o que o `gravar` escreve é o que a prévia mostrou.
   const visto = new Map(previaVista.map((i) => [i.item, i]));
-  const mudou = itens.filter((i) => {
+  const atuais = itensDaPrevia(fatos);
+  const mudou = atuais.filter((i) => {
     const v = visto.get(i.item);
     return !v || v.estado !== i.estado || JSON.stringify(v.valor ?? null) !== JSON.stringify(i.valor ?? null);
   }).map((i) => i.item);
+  if (visto.has('suites') && !atuais.some((i) => i.item === 'suites')) mudou.push('suites'); // a prévia mostrou a suíte e ela sumiu
   if (mudou.length > 0) return falha('deteccao_mudou', `fato mudou desde a prévia: ${mudou.join(', ')}; rode detectar de novo`);
   const ps = perguntas(itens, fatos.configExistente);
   const ids = new Set(ps.map((p) => p.id));
@@ -941,9 +969,17 @@ export function gravar(raiz, caminhoRespostas, { rodar = rodarReal, hoje = hojeI
     }
   }
   const { patches, perfil, naoDetectado } = configDasRespostas(itens, respostas, fatos.configExistente, hoje, { fuso, recalibrar: recalibrarPedido === true });
+  const suites = detectarSuites(fatos);
   let r;
   try {
-    r = aplicarConfig(raiz, { secoes: patches, perfil }, { dryRun });
+    r = aplicarConfig(raiz, { secoes: patches, perfil }, { dryRun: dryRun || suites !== null });
+    if (suites !== null) {
+      // `gates` não é seção do `aplicarConfig`: junta ao resultado dele e faz a MESMA escrita única (tmp + rename).
+      const depois = mergeDeep(r.depois, { gates: { suites: suites.suites } });
+      r = { ...r, depois, diff: diffChaves(r.antes, depois) };
+      const arquivo = join(raiz, 'harness.config.json');
+      if (!dryRun && (r.diff.length > 0 || !existsSync(arquivo))) escreverAtomico(arquivo, depois);
+    }
   } catch (e) {
     if (e instanceof ArquivoInvalido) return falha('config_invalida', e.message);
     return falha('falha', String(e.message ?? e).split('\n')[0]);
@@ -958,7 +994,7 @@ export function gravar(raiz, caminhoRespostas, { rodar = rodarReal, hoje = hojeI
 function main(argv) {
   const sub = argv[0];
   if (!['detectar', 'gravar', 'herdar', 'foco', 'painel'].includes(sub)) {
-    process.stderr.write('uso: onboarding.mjs detectar [--root <d>] [--hoje AAAA-MM-DD] [--fuso <IANA>] [--recalibrar] | gravar --respostas <arquivo.json> [--root <d>] [--hoje AAAA-MM-DD] [--fuso <IANA>] [--dry-run] | herdar --root <d> [--gravar --planos-legados <p> --terminais <A,B> [--dry-run]] | foco --root <d> [--sim] | painel --root <d> [--local lateral|acima]\n');
+    process.stderr.write('uso: onboarding.mjs detectar [--root <d>] [--hoje AAAA-MM-DD] [--fuso <IANA>] [--recalibrar] | gravar --respostas <arquivo.json> [--root <d>] [--hoje AAAA-MM-DD] [--fuso <IANA>] [--dry-run] | herdar --root <d> [--gravar --planos-legados <p> --terminais <A,B> [--dry-run]] | herdar --tasks --entrega <ID> --arquivo <lista.json> [--root <d>] [--gravar [--dry-run]] | foco --root <d> [--sim] | painel --root <d> [--local lateral|acima]\n');
     return 2;
   }
   const raiz = arg(argv, 'root', null) ?? raizDoRepo(process.cwd());
@@ -966,13 +1002,15 @@ function main(argv) {
   if (sub === 'herdar' || sub === 'foco' || sub === 'painel') {
     // GM-14 T1: só o despacho (T8 herdar, T9 foco). Falha com código vira `{ok:false, erro, motivo}`, exit 1.
     try {
-      const r = sub === 'herdar'
+      const r = sub === 'herdar' && argv.includes('--tasks')
+        ? herdarTasks(raiz, { rodar: rodarReal, entrega: arg(argv, 'entrega', undefined), arquivo: arg(argv, 'arquivo', undefined), gravar: argv.includes('--gravar'), dryRun: argv.includes('--dry-run') })
+        : sub === 'herdar'
         ? herdar(raiz, { rodar: rodarReal, gravar: argv.includes('--gravar'), planosLegados: arg(argv, 'planos-legados', undefined), terminais: arg(argv, 'terminais', undefined), dryRun: argv.includes('--dry-run') })
         : sub === 'painel'
           ? (argv.includes('--local') ? gravarLocal(raiz, arg(argv, 'local', null)) : ofertaLocal(raiz))
           : argv.includes('--sim') ? gravarFoco(raiz, { rodar: rodarReal }) : ofertaFoco(raiz);
       saida({ ok: true, ...r });
-      return 0;
+      return r.ok === false ? 1 : 0;
     } catch (e) {
       saida({ ok: false, erro: typeof e?.erro === 'string' ? e.erro : 'falha', motivo: String(e?.message ?? e).split('\n')[0] });
       return 1;
@@ -998,7 +1036,8 @@ function main(argv) {
     const recal = argv.includes('--recalibrar') ? previaRecalibracao(par, hoje) : null;
     const nova = recal === null && semCalibracao(par) ? calibracaoDaMaquina(hoje) : null;
     const calibracao = recal !== null ? [recal.texto] : nova !== null ? [`o paralelismo será calibrado para esta máquina (${nova.cores} núcleos): ${textoParalelismo(nova.paralelismo)}`] : [];
-    saida({ ok: true, itens, perguntas: ps, previaSimples: previaSimples(itens, ps), previa: previa(itens, ps, { fuso, calibracao, existente: fatos.configExistente }), ...(recal !== null ? { recalibrar: { antes: recal.antes, depois: recal.depois, cores: recal.cores } } : {}) });
+    const suitesDet = detectarSuites(fatos);
+    saida({ ok: true, itens: itensDaPrevia(fatos), suites: suitesDet === null ? null : suitesDet.suites, perguntas: ps, previaSimples: previaSimples(itens, ps), previa: previa(itens, ps, { fuso, calibracao, existente: fatos.configExistente, suites: suitesDet }), ...(recal !== null ? { recalibrar: { antes: recal.antes, depois: recal.depois, cores: recal.cores } } : {}) });
     return 0;
   } catch (e) {
     saida({ ok: false, erro: 'falha', motivo: String(e.message).split('\n')[0] });

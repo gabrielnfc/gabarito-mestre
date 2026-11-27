@@ -26,14 +26,25 @@ import { isatty } from 'node:tty';
 import { join } from 'node:path';
 import { append, dirEntrega, lerEstrito, padraoDeRecusa } from '../dist/diario.js';
 import { encerramentoDe, idDaBranch, podeEncerrar } from '../dist/trilha.js';
+import { validarPlano } from '../dist/plano.js';
 import { ehViradaDePreVersao, preVersoesDe, temOnboarding, versaoAlvo } from '../dist/guarda.js';
 import { idPadraoDe, lerBaseDaEntrega } from '../lib/config.mjs';
 import { lerConfigEntrega, resolverBaseEntrega } from '../dist/entrega.js';
 import { contexto } from './loop.mjs';
 
 const ID_FORA_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
-const CAMPOS_PR = 'number,state,baseRefName,headRefName,title,mergedAt,mergeCommit';
+const CAMPOS_PR = 'number,state,baseRefName,headRefName,title,mergedAt,mergeCommit,isDraft';
 const SHA_GIT_RE = /^[0-9a-f]{40,64}$/;
+
+/** GM-21 DT1: as tasks do `plano.json` VÁLIDO de `dir` (`{tasks: [id…]}`); ausente, ilegível ou inválido ⇒ `null` (a regra de hoje). Nunca lança. */
+function planoDaEntrega(dir) {
+  try {
+    const v = validarPlano(JSON.parse(readFileSync(join(dir, 'plano.json'), 'utf8')));
+    return v.ok ? { tasks: v.plano.tasks.map((t) => t.id) } : null;
+  } catch {
+    return null;
+  }
+}
 
 /** Item da lista do `gh` ⇒ PR normalizado ou `null` (forma inválida). `base`/`mergeado_em` só existem quando o `gh` os devolve. */
 function prDoGh(p, baseEntrega) {
@@ -42,7 +53,7 @@ function prDoGh(p, baseEntrega) {
   const estado = ESTADOS_GH.get(p.state.toUpperCase());
   const mergeadoEm = typeof p.mergedAt === 'string' && !Number.isNaN(Date.parse(p.mergedAt)) ? p.mergedAt : null;
   if (p.state.toUpperCase() === 'MERGED' && p.baseRefName === baseEntrega && mergeadoEm === null) return null; // sem `mergedAt` não há `mergeado_em` a gravar
-  return { numero: p.number, estado, base: textoLinha(p.baseRefName) ? p.baseRefName : null, head: textoLinha(p.headRefName) ? p.headRefName : null, titulo: typeof p.title === 'string' ? p.title : '', mergeado_em: mergeadoEm, sha: typeof p.mergeCommit?.oid === 'string' && SHA_GIT_RE.test(p.mergeCommit.oid) ? p.mergeCommit.oid : null }; // `sha`: o commit de merge (GM-20 D-G47); ilegível ⇒ null, não falha
+  return { numero: p.number, estado, base: textoLinha(p.baseRefName) ? p.baseRefName : null, head: textoLinha(p.headRefName) ? p.headRefName : null, titulo: typeof p.title === 'string' ? p.title : '', mergeado_em: mergeadoEm, sha: typeof p.mergeCommit?.oid === 'string' && SHA_GIT_RE.test(p.mergeCommit.oid) ? p.mergeCommit.oid : null, rascunho: p.isDraft === true }; // `sha`: o commit de merge (GM-20 D-G47); ilegível ⇒ null, não falha
 }
 
 /** `gh pr list|view` ⇒ `{falha}` ou `{lista}` (normalizada). */
@@ -343,7 +354,7 @@ export function medir(cwd, opcoes = {}) {
       const guarda = (p, via) => {
         if (achados.has(p.numero)) return;
         const comBase = p.base !== null;
-        achados.set(p.numero, { numero: p.numero, estado: p.estado, branch: p.head ?? alvo.branch ?? 'desconhecida', base: p.base, via: comBase ? via : null, mergeado_em: p.mergeado_em, titulo: p.titulo, sha: p.sha });
+        achados.set(p.numero, { numero: p.numero, estado: p.estado, branch: p.head ?? alvo.branch ?? 'desconhecida', base: p.base, via: comBase ? via : null, mergeado_em: p.mergeado_em, titulo: p.titulo, sha: p.sha, rascunho: p.rascunho });
       };
       if (alvo.branch !== null) {
         const r = ghPrs(rodar, cwd, timeoutMs, ['pr', 'list', `--head=${alvo.branch}`, '--state', 'all', '--limit', '30', '--json', CAMPOS_PR], 'pr list', false, baseEntrega);
@@ -388,10 +399,13 @@ export function medir(cwd, opcoes = {}) {
         if (p.base !== null) valor.base = p.base;
         if (p.via !== null) valor.via = p.via;
         if (p.contem !== undefined) valor.contem = p.contem;
+        if (p.rascunho === true) valor.rascunho = true; // GM-21 T8: só o rascunho vira campo (sem ele = não rascunho); sair do rascunho muda o valor e grava o fato novo
         const pv = preVersoesDe(p.titulo, p.branch)[0];
         if (pv !== undefined && pv.length <= 64) valor.pre_versao = pv; // a guarda lê daqui (a MESMA ehViradaDePreVersao)
         deGh.push({ chave: 'pr', fonte: 'gh', valor, alvo });
-        if (p.base === baseEntrega && p.mergeado_em !== null && !ehViradaDePreVersao(p, versaoAlvo(raiz, alvo.dir))) encerrar.push({ alvo, pr: p });
+        if (p.base === baseEntrega && p.mergeado_em !== null && !ehViradaDePreVersao(p, versaoAlvo(raiz, alvo.dir))) {
+          encerrar.push({ alvo, pr: p });
+        }
       }
     }
     if (falhaGh === null) {
@@ -451,7 +465,10 @@ export function medir(cwd, opcoes = {}) {
         if (!alvo.dir.endsWith(alvo.id)) continue;
         const lido = lerEstrito(alvo.dir);
         if (!lido.ok) { falhas.push(`diario_corrompido: ${lido.motivo}`); break; }
-        if (!podeEncerrar(lido.eventos, alvo.id, pr, baseEntrega)) continue; // a regra única, com a base da entrega (REQ-CRD-2)
+        // GM-21 DT1: a regra única também olha o plano da entrega (`plano.json` válido de `alvo.dir`; ausente ou inválido ⇒ sem plano, a regra de hoje)
+        const plano = planoDaEntrega(alvo.dir);
+        // (o aviso de plano aberto não sai aqui: o mod descarta a saída do `medir`; ele sai no `painel.mjs estado`, `avisoDePlanoAberto`)
+        if (!podeEncerrar(lido.eventos, alvo.id, pr, baseEntrega, plano)) continue; // a regra única, com a base da entrega (REQ-CRD-2)
         const dados = { entrega: alvo.id, pr: pr.numero, via: pr.via, mergeado_em: pr.mergeado_em, ...(pr.sha ? { sha: pr.sha } : {}) };
         gravar(alvo.dir, lido.eventos, [{ tipo: 'entrega.encerrada', dados, valor: dados }]);
       }

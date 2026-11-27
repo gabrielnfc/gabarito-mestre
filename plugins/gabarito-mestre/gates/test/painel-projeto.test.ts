@@ -27,7 +27,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -43,7 +43,7 @@ import type { AgenteVivo, EntradaPainel, EstadoPainel, Evento, OpcoesRender, Pla
 import type { FatosTrilha } from '../src/trilha.ts';
 import { arvore as arvoreAdotado, montarNoDisco } from './painel-fixtures/adotado.mjs';
 // @ts-expect-error: script .mjs sem tipos
-import { estadoDoPainel, main } from '../scripts/painel.mjs';
+import { estadoDoPainel, main, projetoDoRepo } from '../scripts/painel.mjs';
 
 const AQUI = dirname(fileURLToPath(import.meta.url));
 const FIX = join(AQUI, 'fixtures', 'projeto');
@@ -77,9 +77,19 @@ function lerArvore(nome: string): ArvoreLida {
   return { caminho: `/FIX/${nome}`, cards, entregas };
 }
 const PORCELANA = readFileSync(join(FIX, 'worktrees.txt'), 'utf8');
+/**
+ * GM-21 DT11: a fixture tem 3 tasks integradas e a previsão do projeto pede 5. A borda do teste soma 2 integradas de tasks FORA de qualquer plano (X1, X2) ao diário
+ * do PBI-4, esticando o fim para o ritmo seguir 3200 s ((6600 + 3000 + 6400) ÷ 5); nenhuma linha muda (só as tasks do plano contam nelas).
+ */
+const comAmostra = (a: ArvoreLida): ArvoreLida => {
+  const e = a.entregas.find((x) => x.id === 'PBI-4' && x.eventos !== null);
+  if (e === undefined || e.eventos === null) return a;
+  const ev = (seq: number, hms: string): Evento => ({ seq, ts: `2026-11-10T${hms}.000Z`, autor: 'a', sessao: 'amostra', agente: 'orquestrador', tipo: 'task.integrada', dados: { task: `X${seq - 9000}` }, hash_anterior: null }) as Evento;
+  return { ...a, entregas: a.entregas.map((x) => (x === e ? { ...x, eventos: [...(x.eventos ?? []), ev(9001, '13:36:39'), ev(9002, '13:36:40')] } : x)) };
+};
 function projetoDaFixture(): EstadoProjeto {
   const wt = worktreesDe({ ok: true, saida: PORCELANA }, '/FIX/principal');
-  return projetarProjeto(wt.caminhos.map((c) => lerArvore(c.replace('/FIX/', ''))), OPC);
+  return projetarProjeto(wt.caminhos.map((c) => comAmostra(lerArvore(c.replace('/FIX/', '')))), OPC);
 }
 
 // ───────────────────────────── o estado do painel (projetarPainel real) com o projeto colado
@@ -1156,4 +1166,78 @@ test('render-projeto-propriedade-larguras-desatualizado: de 44 a 120 colunas, a 
     if (l !== undefined) { if (l.includes(SUFIXO_DESAT)) comSufixo = true; else semSufixo = true; }
   }
   assert.ok(comSufixo && semSufixo, 'as duas formas aparecem entre 72 e 120');
+});
+
+// ── GM-21 T7 (REQ-HER-3 DT10, REQ-PRV-1 DT11): o painel DESENHADO separa herdado de medido e pede amostra ─────────────────────────────────────────────────
+// Mutações (as da projeto.test.ts, vistas na saída desenhada): render sem `herdadas` na linha/topo ⇒ painel-desenha-herdadas · render que ignora o motivo da amostra ⇒
+// painel-desenha-previsao-sem-amostra · P9: o diário gravado pelo `herdar --tasks --gravar` real chega à linha do painel ⇒ herdar-gravado-chega-ao-painel.
+const evP = (seq: number, min: number, tipo: string, dados: Record<string, unknown>): Evento =>
+  ({ seq, ts: new Date(Date.parse('2026-11-10T10:00:00.000Z') + min * 60_000).toISOString(), autor: 'a', sessao: 's', agente: 'orquestrador', tipo, dados, hash_anterior: null }) as Evento;
+const cicloP = (seq: number, m: number, task: string): Evento[] => [
+  evP(seq, m, 'task.iniciada', { task, papel: 'implementador' }), evP(seq + 1, m + 1, 'task.concluida', { task }), evP(seq + 2, m + 2, 'task.iniciada', { task, papel: 'revisor' }),
+  evP(seq + 3, m + 5, 'review.veredito', { task, veredito: 'APROVADO', rodada: 1, major: 0, blocker: 0 }), evP(seq + 4, m + 6, 'task.integrada', { task }),
+];
+const planoP = (id: string, ...ids: string[]) => ({ ok: true as const, bruto: { entrega: id, tasks: ids.map((t) => ({ id: t, titulo: t, deps: [], arquivos: [`${t}.ts`] })) } });
+const herdadasP = (ids: string[], seq0: number): Evento[] => ids.map((id, i) => evP(seq0 + i, 30 + i, 'task.herdada', { task: id, origem: { tipo: 'pr', ref: '10' } }));
+/** PBI-7 do exemplo da spec (T12 integrada, T13 aberta, T1 a T11 herdadas) + PBI-8 de 2 tasks (1 integrada), ambas em curso. */
+function doisPbis(): EstadoProjeto {
+  const t1a11 = Array.from({ length: 11 }, (_, i) => `T${i + 1}`);
+  return projetarProjeto([{ caminho: '/r', cards: [], entregas: [
+    { id: 'PBI-7', plano: planoP('PBI-7', 'T12', 'T13'), eventos: [...cicloP(1, 0, 'T12'), ...herdadasP(t1a11, 6)] },
+    { id: 'PBI-8', plano: planoP('PBI-8', 'T1', 'T2'), eventos: cicloP(1, 10, 'T1') },
+  ] }], OPC);
+}
+
+test('painel-desenha-herdadas: a linha e o topo desenham as herdadas separadas das medidas; a linha sem herdada é a de sempre', () => {
+  const pr = doisPbis();
+  const ls = linhas(comProjeto(estadoComPlano([ini(0, 'T1')]), pr));
+  const tot = ls.find((l) => /^PROJETO/.test(l)) as string;
+  assert.ok(tot, ls.join('\n'));
+  // 13 + 2 tasks; 13 feitas (12 + 1 do PBI-8: 11 herdadas e 2 medidas); restantes 2
+  assert.equal(pr.totais.tasks, 15);
+  assert.equal(pr.totais.herdadas, 11);
+  assert.match(tot, /^PROJETO {2}0 de 2 PBIs feitos · 87% das tasks \(2 de 15, \+11 herdadas\) · 2 restantes/);
+  assert.ok(ls.some((l) => /^ {2}● PBI-7 {2}92 % \(12 feitas: 11 herdadas, 1 medida\)$/.test(l)), ls.join('\n'));
+  assert.ok(ls.some((l) => /^ {2}● PBI-8 {2}50 % \(1 de 2\)$/.test(l)), ls.join('\n'));
+  // a herdada é a 1ª a sair quando o topo não cabe, com o rótulo; o número nunca é cortado por caractere
+  const estreito = linhas(comProjeto(estadoComPlano([ini(0, 'T1')]), pr), { largura: 72 });
+  const t72 = estreito.find((l) => /^PROJETO/.test(l)) as string;
+  assert.ok(colunas(t72) <= 72 && !/herdad?$|\+\d+ herd?$/.test(t72), t72);
+  assert.match(t72, /87% das tasks \(2 de 15/);
+});
+
+test('painel-desenha-previsao-sem-amostra: com ritmo mas abaixo da amostra, o painel diz "sem ritmo: N de 5 tasks medidas" em vez de horário', () => {
+  const pr = doisPbis(); // 2 tasks integradas no projeto
+  assert.equal(pr.totais.previsao.motivo, 'sem ritmo: 2 de 5 tasks medidas');
+  const ls = linhas(comProjeto(estadoComPlano([ini(0, 'T1')]), pr));
+  assert.ok(ls.includes('  previsão ? (sem ritmo: 2 de 5 tasks medidas)'), ls.join('\n'));
+  assert.ok(!ls.some((l) => /^ {2}previsão \d|\(medida\)/.test(l)), ls.join('\n'));
+  // abaixo de 100 colunas o motivo some e fica só o "?" (regra única do projeto, g.9)
+  assert.ok(linhas(comProjeto(estadoComPlano([ini(0, 'T1')]), pr), { largura: 80 }).includes('  previsão ?'));
+});
+
+test('herdar-gravado-chega-ao-painel: o diário que o `herdar --tasks --gravar` real escreveu vira herdadas na linha do PBI-5 pelo projetoDoRepo (P9)', async () => {
+  const dir = mkdtempSync(join(realpathSync(tmpdir()), 'painel-herdar-'));
+  try {
+    await montarNoDisco(dir);
+    const sha = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: dir, encoding: 'utf8' }).trim();
+    const lista = join(`${dir}-origin.git`, 'lista.json');
+    writeFileSync(lista, JSON.stringify(['T5', 'T6', 'T7'].map((task) => ({ task, origem: `commit:${sha}` }))));
+    const r = spawnSync(process.execPath, [join(AQUI, '..', 'scripts', 'onboarding.mjs'), 'herdar', '--tasks', '--entrega', 'PBI-5', '--arquivo', lista, '--root', dir, '--gravar'],
+      { encoding: 'utf8', input: '', env: { PATH: `/usr/bin:/bin:${dirname(process.execPath)}`, HOME: dir } });
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    assert.equal(existsSync(join(dir, '.harness', 'entregas', 'PBI-5', 'events.herdar.jsonl')), true);
+    const cfg = JSON.parse(readFileSync(join(dir, 'harness.config.json'), 'utf8'));
+    const pr = projetoDoRepo({ atual: dir, cfg, idPadrao: '^PBI-\\d+$', agoraMs: Date.parse('2026-11-20T12:00:00Z'), fuso: 'UTC', deps: { worktreeList: () => ({ ok: false, motivo: 'teste' }) } });
+    const l = pr.linhas.find((x: { id: string }) => x.id === 'PBI-5');
+    assert.deepEqual(l.tasks, { total: 7, integradas: 2, herdadas: 3, estimadas: 0, restantes: 2, fora: 0 });
+    assert.equal(l.texto, '71 % (5 feitas: 3 herdadas, 2 medidas)');
+    assert.equal(l.pct, 71);
+    // as outras linhas não ganham herdada (a chave nem aparece)
+    assert.ok(pr.linhas.filter((x: { id: string }) => x.id !== 'PBI-5').every((x: { tasks: { herdadas?: number } | null }) => x.tasks === null || !('herdadas' in x.tasks)));
+    assert.equal(pr.totais.herdadas, 3);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+    rmSync(`${dir}-origin.git`, { recursive: true, force: true });
+  }
 });

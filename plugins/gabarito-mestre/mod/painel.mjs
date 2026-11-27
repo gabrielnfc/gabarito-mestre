@@ -245,9 +245,24 @@ export function faixaCortada(faixa, bodyColumns) {
 const seg = (texto, cor, tema) => (tema === 'mono' || cor === undefined ? { texto } : { texto, cor });
 const comSufixo = (base, sufixo, larg) => (sufixo === '' ? cortar(limpar(base), larg) : cortar(limpar(base), Math.max(1, larg - colunas(sufixo))) + sufixo);
 
+/** Quebra `texto` por palavra em linhas de até `larg` colunas (palavra maior que a linha é cortada); passou de `max` linhas, a última leva o resto e `comSufixo`/`cortar` a limita. */
+function quebrarPalavras(texto, larg, max) {
+  const linhas = [];
+  let atual = '';
+  for (const w of texto.split(/\s+/).filter(Boolean)) {
+    const cand = atual === '' ? w : `${atual} ${w}`;
+    if (colunas(cand) <= larg || atual === '') { atual = cand; continue; }
+    linhas.push(atual);
+    atual = `  ${w}`;
+  }
+  if (atual !== '') linhas.push(atual);
+  if (linhas.length > max) return [...linhas.slice(0, max - 1), linhas.slice(max - 1).join(' ')];
+  return linhas;
+}
+
 /**
  * Linhas da Pane: `renderPainel` do `dist/` na largura pedida (`max(1, bodyColumns)`), cada segmento por `limpar`. `extra`: `altura` (`scroll.bodyRows` da Pane; ausente ⇒ sem corte por altura), `falha` (linha de erro em `warning`
- * no topo e o resto em `inactive`, menos os `error` do PAROU), `avisos` (1 linha `warning`, `(+N)`), `semLoop`. `render` que lança ⇒ 1 linha `warning`.
+ * no topo e o resto em `inactive`, menos os `error` do PAROU), `avisos` (o 1º, quebrado por palavra em até 5 linhas `warning`, `(+N)` na última), `semLoop`. `render` que lança ⇒ 1 linha `warning`.
  */
 export function linhasDaPane(estado, prefs, largura, extra = {}) {
   const larg = larguraDe(largura);
@@ -263,7 +278,15 @@ export function linhasDaPane(estado, prefs, largura, extra = {}) {
   if (falha !== null && semLerS !== null && semLerS > LIMITE_DESATUALIZADO_S) {
     linhas.push([seg(cortar(`ATENÇÃO · painel sem ler o diário há ${Math.ceil(semLerS / 60)} min`, larg), 'warning', tema)]);
   }
-  if (avisos.length > 0) linhas.push([seg(comSufixo(`painel: aviso: ${avisos[0]}`, avisos.length > 1 ? ` (+${avisos.length - 1})` : '', larg), 'warning', tema)]);
+  if (avisos.length > 0) {
+    // r1 MINOR-3: o aviso longo quebra por palavra (até 5 linhas) em vez de cortar: o comando que o dono digita não pode sumir
+    const partes = quebrarPalavras(limpar(`painel: aviso: ${avisos[0]}`), larg, 5);
+    const sufixo = avisos.length > 1 ? ` (+${avisos.length - 1})` : '';
+    // o `(+N)` vai na última linha se cabe; se não, em linha própria (nunca corta o comando)
+    const cabe = sufixo === '' || colunas(partes[partes.length - 1]) + colunas(sufixo) <= larg;
+    partes.forEach((t, i) => linhas.push([seg(i === partes.length - 1 && cabe ? comSufixo(t, sufixo, larg) : cortar(t, larg), 'warning', tema)]));
+    if (!cabe) linhas.push([seg(cortar(sufixo.trim(), larg), 'warning', tema)]);
+  }
   if (!ehObj(estado)) {
     if (extra.semLoop === true) linhas.push([seg('sem loop nesta branch', 'inactive', tema)]);
     else if (falha === null) linhas.push([seg('painel: lendo…', 'inactive', tema)]);
