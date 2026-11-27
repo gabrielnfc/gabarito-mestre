@@ -259,6 +259,25 @@ describe('T14 doctor — modelos-por-papel (REQ-MOD-1): só aviso', () => {
     assert.equal(avisosDe(comPerfil({ perfil: 'qualidade', modelos: { basico: 'haiku', revisor_final: 'opus' } })).join('|'), 'modelos-por-papel: basico: declarado haiku < recomendado sonnet; revisor_final: declarado opus < recomendado fable');
   });
 
+  test('doctor-orquestrador-abaixo: modelos.orquestrador abaixo do recomendado (opus) avisa; opus não', () => {
+    assert.equal(avisosDe(comModelos({ orquestrador: 'haiku' })).join('|'), 'modelos-por-papel: orquestrador: declarado haiku < recomendado opus');
+    assert.equal(avisosDe(comPerfil({ perfil: 'economia', modelos: { orquestrador: 'sonnet' } })).join('|'), 'modelos-por-papel: orquestrador: declarado sonnet < recomendado opus');
+    assert.deepEqual(avisosDe(comModelos({ orquestrador: 'opus' })), []);
+  });
+
+  test('doctor-alias-divergente: alias gravado ≠ papel orquestrador avisa (vem à Janela pelos avisos); igual ou sem alias não', () => {
+    const hoje = new Date().toISOString().slice(0, 10);
+    const comAlias = (alias, extra = {}) => repoComGit({ 'AGENTS.md': agents(1), 'harness.config.json': JSON.stringify({ orquestracao: { modelo: { alias, resolvidoEm: hoje, validadeDias: 90 }, ...extra } }) });
+    const avisosAlias = (dir) => doctor.run(dir).avisos.filter((a) => a.startsWith('modelo-resolvido'));
+    const a = avisosAlias(comAlias('fable'));
+    assert.equal(a.length, 1, a.join('|'));
+    assert.match(a[0], /modelo do orquestrador gravado fable ≠ opus do papel orquestrador: rode o onboarding de novo/);
+    assert.deepEqual(avisosAlias(comAlias('opus')), []);
+    assert.deepEqual(avisosAlias(comAlias('sonnet', { modelos: { orquestrador: 'sonnet' } })), [], 'o explícito vale como o papel');
+    assert.match(avisosAlias(comAlias('opus', { modelos: { orquestrador: 'sonnet' } }))[0], /gravado opus ≠ sonnet do papel orquestrador/);
+    assert.deepEqual(avisosAlias(comAlias('')), [], 'sem alias gravado não há divergência a avisar');
+  });
+
   test('doctor-economia-linha-informar: economia ⇒ 1 linha informativa na evidência (found, sem aviso); outros perfis não a trazem', () => {
     const LINHA = 'perfil economia: review de task e spike em sonnet, review final em opus';
     for (const orq of [{ perfil: 'economia' }, { perfil: 'economia', modelos: {} }]) {

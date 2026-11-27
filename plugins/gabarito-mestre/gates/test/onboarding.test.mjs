@@ -23,6 +23,7 @@ import { coletar as coletarCartao } from '../scripts/cartao-sessao.mjs';
 import { lerConfigEntrega, politicaEfetiva } from '../dist/entrega.js';
 import { PERFIS_MODELO } from '../lib/config.mjs';
 import { acharProibidos } from '../lib/glossario.mjs';
+import { conferirExecutavel } from '../scripts/plano-executavel.mjs';
 import * as capacidade from '../scripts/capacidade.mjs';
 
 const require = createRequire(import.meta.url);
@@ -1206,7 +1207,7 @@ describe('gravar', () => {
     const cfg = cfgDe(raiz);
     const datas = [cfg.fluxo.resolvidoEm, cfg.versionamento.resolvidoEm, cfg.orquestracao.modelo.resolvidoEm, cfg.onboarding.resolvidoEm];
     assert.deepEqual(datas, Array(4).fill('2025-06-30'));
-    assert.equal(cfg.orquestracao.modelo.alias, 'opus', 'revisor_final do perfil economia');
+    assert.equal(cfg.orquestracao.modelo.alias, 'opus', 'papel orquestrador do perfil economia');
     assert.equal(cfg.orquestracao.modelo.politica, 'mais-potente');
     assert.equal(cfg.orquestracao.modelo.validadeDias, 90);
     assert.equal(cfg.orquestracao.perfil, 'economia');
@@ -1215,7 +1216,7 @@ describe('gravar', () => {
     assert.equal(r2.ok, true);
     const c2 = cfgDe(raiz);
     assert.deepEqual([c2.fluxo.resolvidoEm, c2.versionamento.resolvidoEm, c2.orquestracao.modelo.resolvidoEm, c2.onboarding.resolvidoEm], Array(4).fill('2025-07-01'));
-    assert.equal(c2.orquestracao.modelo.alias, 'fable');
+    assert.equal(c2.orquestracao.modelo.alias, 'opus', 'qualidade: opus no orquestrador (DT3), Fable só no review final');
   });
 
   test('gravar-alias-explicito-e-modelo-existente-ficam', () => {
@@ -1227,6 +1228,32 @@ describe('gravar', () => {
     assert.equal(m.modelo.politica, 'fixo');
     assert.equal(m.modelo.validadeDias, 30);
     assert.deepEqual(m.modelos, { revisor_final: 'claude-opus-9' });
+  });
+
+  test('alias-orquestrador-por-papel: alias = papel orquestrador (opus nos 3 perfis); explícito do orquestrador vence; revisor_final não manda', () => {
+    for (const perfil of ['economia', 'padrao', 'qualidade']) {
+      const raiz = fixtureComGit('completa', 'trunk');
+      assert.equal(gravarCom(raiz, { ...FIXAS, perfil }).ok, true, perfil);
+      assert.equal(cfgDe(raiz).orquestracao.modelo.alias, 'opus', perfil);
+    }
+    const so = comConfig(fixtureComGit('completa', 'trunk'), { orquestracao: { modelos: { orquestrador: 'sonnet' } } });
+    assert.equal(gravarCom(so, { ...FIXAS, perfil: 'padrao' }).ok, true);
+    assert.equal(cfgDe(so).orquestracao.modelo.alias, 'sonnet', 'modelos.orquestrador explícito');
+    const rf = comConfig(fixtureComGit('completa', 'trunk'), { orquestracao: { modelos: { revisor_final: 'sonnet' } } });
+    assert.equal(gravarCom(rf, { ...FIXAS, perfil: 'qualidade' }).ok, true);
+    assert.equal(cfgDe(rf).orquestracao.modelo.alias, 'opus', 'modelos.revisor_final não muda o alias do orquestrador');
+  });
+
+  test('previa-troca-de-alias-cita-modelos-orquestrador: a dica de manter o alias aponta modelos.orquestrador', () => {
+    const itens = [{ item: 'tipo_repo', estado: 'detectado', valor: 'app', fonte: 'x', candidatos: [] }];
+    const perg = (perfil) => [{ id: 'politica', opcoes: [], default: 'sob_demanda' }, { id: 'autonomia', opcoes: [], default: false }, { id: 'perfil', opcoes: [], default: perfil }];
+    const t = previa(itens, perg('padrao'), { fuso: 'UTC', existente: { orquestracao: { modelo: { alias: 'sonnet' } } } });
+    assert.match(t, /modelo do orquestrador: sonnet ⇒ opus \(vem do perfil padrao; para manter sonnet: modelos\.orquestrador\)/);
+    assert.doesNotMatch(t, /modelos\.revisor_final/);
+    const fable = previa(itens, perg('padrao'), { fuso: 'UTC', existente: { orquestracao: { modelo: { alias: 'fable' } } } });
+    assert.match(fable, /modelo do orquestrador: fable ⇒ opus/);
+    const igual = previa(itens, perg('padrao'), { fuso: 'UTC', existente: { orquestracao: { modelo: { alias: 'opus' } } } });
+    assert.doesNotMatch(igual, /modelo do orquestrador/);
   });
 
   test('gravar-cartao-sai-do-sem-onboarding', () => {
@@ -2141,6 +2168,24 @@ describe('suites (gates.suites)', () => {
     assert.match(r2.motivo, /suites/);
     // sem divergência: grava
     assert.equal(gravarCom(comPackage(pkgTeste('vitest run')), FIXAS).ok, true);
+  });
+
+  test('onboarding-suites-passa-no-conferir: o que o onboarding GRAVA em gates.suites passa no conferirExecutavel (P9); lista vazia derruba', () => {
+    const raiz = comPackage(pkgTeste('vitest run'));
+    assert.equal(gravarCom(raiz, FIXAS).ok, true);
+    const cfg = cfgDe(raiz);
+    const plano = { entrega: 'GM-1', tasks: [{ id: 'T1', deps: [], arquivos: ['src/a.txt'] }] };
+    const conf = (c) => conferirExecutavel({ raiz, plano, eventos: [], cfg: c });
+    const r = conf(cfg);
+    assert.deepEqual(r.problemas, []);
+    assert.equal(r.ok, true);
+    // o gravado é exatamente o que o doctor conta como declarado e o gate normaliza
+    assert.deepEqual(cfg.gates.suites, [{ nome: 'unit', cmd: 'npm test' }]);
+    // controle: a mesma config sem a suíte gravada é recusada pelo conferir
+    for (const suites of [[], undefined, [{ nome: 'x' }]]) {
+      const sem = conf({ ...cfg, gates: { ...cfg.gates, suites } });
+      assert.equal(sem.ok, false, JSON.stringify(suites));
+    }
   });
 
   test('onboarding-suites-config-corrompida: config ilegível não vira gates.suites (a falha segue a de hoje)', () => {

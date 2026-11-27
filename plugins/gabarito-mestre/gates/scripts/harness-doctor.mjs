@@ -37,7 +37,7 @@ import { readFileSync, existsSync, readdirSync, mkdirSync, writeFileSync, rename
 import { join, relative, sep, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ehEntrypoint } from '../lib/cli.mjs';
-import { lerGuarda, lerConfigOrigin, lerBaseDaEntrega, idPadraoDe, DENY_GUARDA, CHAVES_MORTAS, ORDEM_MODELO, PERFIS_MODELO, resolverPerfil } from '../lib/config.mjs';
+import { lerGuarda, lerConfigOrigin, lerBaseDaEntrega, idPadraoDe, DENY_GUARDA, CHAVES_MORTAS, ORDEM_MODELO, PERFIS_MODELO, resolverPerfil, resolverModelo } from '../lib/config.mjs';
 import { diasEntre } from '../lib/datas.mjs';
 import { execFileSync } from 'node:child_process';
 import { checar, validarBranch, DEFAULTS as VERSIONAMENTO_DEFAULTS } from './versionamento-check.mjs';
@@ -868,9 +868,12 @@ export const CHECKS = [
       const d = diasDesde(m.resolvidoEm);
       const v = Number(m.validadeDias ?? 90);
       if (d === null) return { found: false, evidence: `resolvidoEm inválido (${m.resolvidoEm})` };
-      return d <= v
-        ? { found: true, evidence: `${m.alias || '?'} resolvido em ${m.resolvidoEm} (${Math.round(v - d)} d restantes)` }
-        : { found: false, evidence: `VENCIDO há ${Math.round(d - v)} d (${m.alias || '?'}, resolvido em ${m.resolvidoEm}) — revalide` };
+      // GM-21 REQ-ORQ-1: o alias só muda quando o onboarding regrava; gravado antes do papel `orquestrador` pode divergir dele.
+      const orq = cfg.orquestracao;
+      const papel = typeof m.alias === 'string' && m.alias !== '' && orq !== null && typeof orq === 'object' && !Array.isArray(orq) ? resolverModelo(orq, 'orquestrador').modelo : undefined;
+      const diverge = papel !== undefined && papel !== m.alias ? `modelo do orquestrador gravado ${m.alias} ≠ ${papel} do papel orquestrador: rode o onboarding de novo` : undefined;
+      if (d > v) return { found: false, evidence: `VENCIDO há ${Math.round(d - v)} d (${m.alias || '?'}, resolvido em ${m.resolvidoEm}) — revalide${diverge ? `; ${diverge}` : ''}` };
+      return diverge ? { found: false, evidence: diverge } : { found: true, evidence: `${m.alias || '?'} resolvido em ${m.resolvidoEm} (${Math.round(v - d)} d restantes)` };
     },
   },
   {

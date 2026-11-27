@@ -519,7 +519,7 @@ describe('lib/config lerConfigOrigin (GM-11 T1)', () => {
   test('modelos-padrao-e-ordem: perfil por papel e ordem haiku < sonnet < opus < fable', () => {
     assert.deepEqual(MODELOS_PADRAO, {
       implementador: { modelo: 'sonnet', esforco: 'high' }, revisor: { modelo: 'opus' }, sombra: { modelo: 'opus' },
-      revisor_final: { modelo: 'fable' }, spike: { modelo: 'opus' }, basico: { modelo: 'haiku' },
+      revisor_final: { modelo: 'fable' }, spike: { modelo: 'opus' }, basico: { modelo: 'haiku' }, orquestrador: { modelo: 'opus' },
     });
     assert.deepEqual(ORDEM_MODELO, { haiku: 0, sonnet: 1, opus: 2, fable: 3 });
     assert.equal(Object.isFrozen(MODELOS_PADRAO) && Object.isFrozen(ORDEM_MODELO), true);
@@ -528,17 +528,17 @@ describe('lib/config lerConfigOrigin (GM-11 T1)', () => {
 });
 
 describe('T4b perfis de modelo (E5a, Sombra r3): PERFIS_MODELO e resolverModelo', () => {
-  const PAPEIS = ['implementador', 'revisor', 'sombra', 'revisor_final', 'spike', 'basico'];
+  const PAPEIS = ['implementador', 'revisor', 'sombra', 'revisor_final', 'spike', 'basico', 'orquestrador'];
 
   test('perfis-tabelas: economia, padrao (= MODELOS_PADRAO) e qualidade, congeladas, com os valores da Sombra r3', () => {
     assert.deepEqual(PERFIS_MODELO.economia, {
       implementador: { modelo: 'sonnet', esforco: 'medium' }, revisor: { modelo: 'sonnet' }, sombra: { modelo: 'opus' },
-      revisor_final: { modelo: 'opus' }, spike: { modelo: 'sonnet' }, basico: { modelo: 'haiku' },
+      revisor_final: { modelo: 'opus' }, spike: { modelo: 'sonnet' }, basico: { modelo: 'haiku' }, orquestrador: { modelo: 'opus' },
     });
     assert.equal(PERFIS_MODELO.padrao, MODELOS_PADRAO);
     assert.deepEqual(PERFIS_MODELO.qualidade, {
       implementador: { modelo: 'opus', esforco: 'high' }, revisor: { modelo: 'opus' }, sombra: { modelo: 'opus' },
-      revisor_final: { modelo: 'fable' }, spike: { modelo: 'opus' }, basico: { modelo: 'sonnet' },
+      revisor_final: { modelo: 'fable' }, spike: { modelo: 'opus' }, basico: { modelo: 'sonnet' }, orquestrador: { modelo: 'opus' },
     });
     assert.deepEqual(Object.keys(PERFIS_MODELO), ['economia', 'padrao', 'qualidade']);
     for (const t of Object.values(PERFIS_MODELO)) {
@@ -560,6 +560,17 @@ describe('T4b perfis de modelo (E5a, Sombra r3): PERFIS_MODELO e resolverModelo'
         assert.equal(fable, papel === 'revisor_final' && perfil !== 'economia', `${perfil}/${papel}`);
       }
     }
+  });
+
+  test('orquestrador-opus-nos-3-perfis: papel orquestrador (opus), o explícito vence; revisor-final-inalterado (fable em padrao)', () => {
+    for (const perfil of ['economia', 'padrao', 'qualidade']) {
+      assert.equal(resolverModelo({ perfil }, 'orquestrador').modelo, 'opus', perfil);
+      assert.equal(resolverModelo({ perfil, modelos: { orquestrador: 'sonnet' } }, 'orquestrador').modelo, 'sonnet', perfil);
+      assert.equal(resolverModelo({ perfil, modelos: { revisor_final: 'sonnet' } }, 'orquestrador').modelo, 'opus', `${perfil}: o revisor_final não vaza no orquestrador`);
+    }
+    assert.equal(resolverModelo({ perfil: 'padrao' }, 'revisor_final').modelo, 'fable');
+    assert.equal(resolverModelo({ perfil: 'economia' }, 'revisor_final').modelo, 'opus');
+    assert.equal(resolverModelo({ perfil: 'qualidade' }, 'revisor_final').modelo, 'fable');
   });
 
   test('qualidade-basico-sonnet: qualidade resolve cada papel pela tabela', () => {

@@ -805,10 +805,10 @@ export function previa(itens, perguntasDoOnboarding, { fuso = fusoLocal(), calib
   const aliasAntigo = ehObjeto(orqAtual.modelo) ? orqAtual.modelo.alias : undefined;
   const perfilEscolhido = ps.perfil?.default;
   if (typeof aliasAntigo === 'string' && aliasAntigo !== '' && typeof perfilEscolhido === 'string') {
-    const novo = resolverModelo({ ...orqAtual, perfil: perfilEscolhido }, 'revisor_final').modelo;
+    const novo = resolverModelo({ ...orqAtual, perfil: perfilEscolhido }, 'orquestrador').modelo;
     // FX4 r2 MINOR-1: só cita um perfil que de fato resolve para o alias antigo (o `economia` não é `opus` para quem tinha `sonnet`).
-    const mantem = ['padrao', 'economia', 'qualidade'].filter((pf) => resolverModelo({ ...orqAtual, perfil: pf }, 'revisor_final').modelo === aliasAntigo);
-    const como = mantem.length > 0 ? `perfil ${mantem.join(' ou ')} ou modelos.revisor_final` : 'modelos.revisor_final';
+    const mantem = ['padrao', 'economia', 'qualidade'].filter((pf) => resolverModelo({ ...orqAtual, perfil: pf }, 'orquestrador').modelo === aliasAntigo);
+    const como = mantem.length > 0 ? `perfil ${mantem.join(' ou ')} ou modelos.orquestrador` : 'modelos.orquestrador';
     if (novo !== aliasAntigo) linhas.push(`- modelo do orquestrador: ${aliasAntigo} ⇒ ${novo} (vem do perfil ${perfilEscolhido}; para manter ${aliasAntigo}: ${como})`);
   }
   const j = janelaPadrao(fuso);
@@ -886,7 +886,7 @@ export function configDasRespostas(itens, respostas, existente, hoje, { fuso = '
     ...paralelismoCalibrado(orq.paralelismo, hoje, recalibrar),
     perfil,
     modelo: {
-      alias: resolverModelo({ ...orq, perfil }, 'revisor_final').modelo,
+      alias: resolverModelo({ ...orq, perfil }, 'orquestrador').modelo,
       politica: modeloAtual.politica ?? 'mais-potente',
       validadeDias: modeloAtual.validadeDias ?? 90,
       resolvidoEm: hoje,

@@ -183,7 +183,7 @@ export type PerfilModelo = 'economia' | 'padrao' | 'qualidade';
 /** Proposta de emenda aberta: `seq` na sessão fixa `emendas` e o REQ que ela congela. */
 export type PropostaAberta = { seq: number; req: string };
 /** Papel de custo/modelo (REQ-MOD-1); distinto de `Papel`, que é o papel de uma task do loop. */
-export type PapelModelo = 'implementador' | 'revisor' | 'sombra' | 'revisor_final' | 'spike' | 'basico';
+export type PapelModelo = 'implementador' | 'revisor' | 'sombra' | 'revisor_final' | 'spike' | 'basico' | 'orquestrador';
 export type AcaoLoop =
   | { tipo: 'despachar'; itens: { task: string; papel: Papel }[] }
   | { tipo: 'integrar'; tasks: string[] }
