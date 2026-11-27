@@ -1357,11 +1357,12 @@ describe('T18: painel.mjs estado em toda fase, fora do loop', { timeout: 120_000
 
   // T47 (emenda 43; ledger T25 item 2): a entrega publicada (PR mergeado, branch sozinha) descarta o plano da PROJEÇÃO (spec:53), mas o diário dela
   // tem eventos de task: o descarte não pode produzir PAROU `diario_invalido` nem zerar o casamento FIEL-3 a do vivo "T1 implementador"
+  // GM-21 DT1 (emenda 5): "publicada" exige plano sem task aberta, então a entrega publicada do fixture tem T1 integrada e T2 cortada (`task.fora`); o vivo "T1 implementador" é o
+  // de uma entrega com o plano fechado. A com PR aberto (identificada) tem o MESMO diário (só o estado do PR muda).
   const publicada = (extra = [], prEstado = 'mergeado') => {
     const m = repoT18({ specs: [SPEC12], planos: { 'GM-12': ['T1', 'T2'] } });
-    evEm(m, 'GM-12', 'task.iniciada', { task: 'T1', papel: 'implementador' });
-    // GM-21 DT1: "publicada" exige plano sem task aberta; o plano do fixture é fechado trocando o `plano.json` por um sem tasks (o diário de T1 segue; evento fora do plano é ignorado)
-    writeFileSync(join(m.repo, '.harness', 'entregas', 'GM-12', 'plano.json'), JSON.stringify({ entrega: 'GM-12', tasks: 'fechado' }));
+    integrarEm(m, 'GM-12', 'T1');
+    evEm(m, 'GM-12', 'task.fora', { task: 'T2', como: 'cortada', motivo: 'fora do corte', origem: 'dono' });
     for (const [tipo, dados, agente] of extra) evEm(m, 'GM-12', tipo, dados, { agente });
     evEm(m, 'GM-12', 'fato.medido', { chave: 'pr', fonte: 'gh', valor: { numero: 7, estado: prEstado, branch: 'feat/GM-12-painel' } });
     return m;
@@ -1382,11 +1383,11 @@ describe('T18: painel.mjs estado em toda fase, fora do loop', { timeout: 120_000
     const m = publicada();
     const e = estado(m, { agentes: VIVO }).estado;
     assert.equal(e.trilha.identificada, false);
-    const a = e.agora.agentes;
-    assert.equal(a.length, 1, JSON.stringify(a));
-    assert.deepEqual([a[0].task, a[0].quem.papel], ['T1', 'implementador']);
+    // GM-21 (emenda 5): numa entrega com o plano fechado T1 está integrada, não em voo: o vivo não casa nenhuma task (AGORA vazio) e fica só na FASE, com o texto cru
+    assert.deepEqual(e.agora.agentes, []);
+    assert.deepEqual(e.fase.sufixo, ['1 agente trabalhando: T1 implementador']);
     assert.equal(e.pronto, null);
-    assert.equal(e.umaLinha, null, 'com vivo trabalhando há o que mostrar: sem a uma linha de projeto');
+    assert.deepEqual(e.umaLinha, { ultima: { id: 'GM-12', estado: 'tasks todas integradas' } }, 'vivo sem task em voo não apaga a linha da última entrega');
     assert.equal(e.parar, null);
     assert.doesNotMatch(cli(m, ['texto', '--agentes'], { input: JSON.stringify(VIVO) }).stdout, /^PLANO/m);
     // o defeito por outro canal: o "depende de você" também vem do cálculo com o plano (sem a "diário fora da tabela" do plano ausente)
@@ -1394,8 +1395,7 @@ describe('T18: painel.mjs estado em toda fase, fora do loop', { timeout: 120_000
     assert.doesNotMatch(cli(m, ['texto', '--agentes'], { input: JSON.stringify(VIVO) }).stdout, /diário fora da tabela/);
   });
   test('publicada-campos-do-plano (T47): atenção, recente e AGORA da publicada são os da MESMA entrega com o PR aberto (identificada); PRONTO e plano saem', () => {
-    const ate = [...INTEGRAR('T1').slice(1), ['task.iniciada', { task: 'T2', papel: 'implementador' }]];
-    for (const [nome, extra] of [['T1 iniciada', []], ['T1 integrada e T2 iniciada', ate]]) {
+    for (const [nome, extra] of [['T1 integrada e T2 cortada', []]]) {
       const p = estado(publicada(extra), { agentes: VIVO }).estado;
       const i = estado(publicada(extra, 'aberto'), { agentes: VIVO }).estado;
       assert.deepEqual([p.trilha.identificada, i.trilha.identificada], [false, true], `${nome}: preparo`);
@@ -1403,12 +1403,12 @@ describe('T18: painel.mjs estado em toda fase, fora do loop', { timeout: 120_000
       assert.deepEqual(p.agora.agentes, i.agora.agentes, `${nome}: AGORA`);
       assert.doesNotMatch(JSON.stringify(p.depende), /diário fora da tabela/, nome);
       // o plano some da apresentação: a identificada o mostra, a publicada não (T47: o plano descartado só sai de PRONTO/modo/id/fase/plano)
-      assert.equal(i.plano.total, 2, `${nome}: a identificada tem o plano`);
+      assert.equal(i.plano.total, 1, `${nome}: a identificada tem o plano (T2 cortada fora do total)`);
       assert.deepEqual([p.plano.total, p.plano.feitas, p.plano.tasks], [0, 0, []], `${nome}: plano vazio na publicada`);
     }
-    const r = estado(publicada([...INTEGRAR('T1').slice(1), ['task.iniciada', { task: 'T2', papel: 'implementador' }]]), { agentes: VIVO }).estado;
+    const r = estado(publicada(), { agentes: VIVO }).estado;
     assert.ok(r.recente.some((x) => /integrou T1/.test(x.texto)), JSON.stringify(r.recente));
-    assert.deepEqual(r.atencao, ['T2 sem agente trabalhando'], 'o ATENÇÃO do cálculo com o plano (comportamento a decidir pela spec: vivo não casado)');
+    assert.deepEqual(r.atencao, [], 'plano fechado: nenhuma task sem agente');
     // a task citada no RECENTE só se nomeia quando está no plano: o plano descartado segue sendo o que a casa
     const teto = estado(publicada([['loop.parar', { motivo: 'teto_rodadas', task: 'T1' }]])).estado;
     assert.match(teto.recente[0].texto, /teto de rodadas de review em T1/, JSON.stringify(teto.recente));
@@ -1416,13 +1416,13 @@ describe('T18: painel.mjs estado em toda fase, fora do loop', { timeout: 120_000
   });
   test('publicada-fase-coerente-com-agora (T47): o sufixo da FASE diz o mesmo que a linha do AGORA (a ação casada, não a descrição crua do vivo)', () => {
     const e = estado(publicada(), { agentes: VIVO }).estado;
-    const acao = e.agora.agentes[0].acao.replace(/ \(registrado\)$/, '');
-    assert.equal(e.fase.sufixo[0], `1 agente trabalhando: ${acao}`);
-    assert.doesNotMatch(e.fase.sufixo.join('|'), /T1 implementador/);
+    // GM-21 (emenda 5): sem task em voo o AGORA é vazio; o sufixo da FASE segue com o texto do vivo
+    assert.deepEqual(e.agora.agentes, []);
+    assert.deepEqual(e.fase.sufixo, ['1 agente trabalhando: T1 implementador']);
   });
   test('publicada-uma-linha (T47): só sem nada pedindo o dono ou trabalhando a uma linha traz a última entrega conhecida, com o estado dela; cada pendência a apaga', () => {
     const sem = estado(publicada()).estado;
-    assert.deepEqual(sem.umaLinha, { ultima: { id: 'GM-12', estado: '0 de 2 tasks integradas' } });
+    assert.deepEqual(sem.umaLinha, { ultima: { id: 'GM-12', estado: 'tasks todas integradas' } });
     assert.equal(sem.modo, 'projeto');
     const comPergunta = publicada();
     evEm(comPergunta, 'GM-12', 'fato.medido', { chave: 'branch', fonte: 'git', valor: { nome: 'feat/GM-12-painel' } }, { sessao: 's1' });
@@ -1431,17 +1431,17 @@ describe('T18: painel.mjs estado em toda fase, fora do loop', { timeout: 120_000
       pergunta: [estado(comPergunta, { agentes: { session_id: 's1', sessao: {}, agentes: [] } }).estado, (e) => e.pergunta !== null],
       // GM-15 T35 (r.13): pendência de autoria do orquestrador é lembrete dele (fora do DEPENDE); a de outro autor apaga a linha
       depende: [estado(publicada([['nota', { tipo: 'pendencia', texto: 'a' }, 'dono']])).estado, (e) => e.depende.some((d) => d.motivo !== 'nada depende de você')],
-      vivo: [estado(publicada(), { agentes: VIVO }).estado, (e) => e.agora.agentes.length > 0],
+      // GM-21 (emenda 5): o caso `vivo` saiu: com o plano fechado não há task em voo para o vivo casar, então ele não apaga a linha (coberto em publicada-vivo-com-task)
     };
     for (const [nome, [e, pede]] of Object.entries(casos)) {
       assert.ok(pede(e), `${nome}: preparo (a projeção tem o que pede o dono)`);
       assert.equal(e.modo, 'projeto', nome);
       assert.equal(e.umaLinha, null, nome);
     }
-    const todas = publicada([...INTEGRAR('T1').slice(1), ...INTEGRAR('T2')]);
+    const todas = publicada();
     assert.deepEqual(estado(todas).estado.umaLinha, { ultima: { id: 'GM-12', estado: 'tasks todas integradas' } });
     // r.13: o lembrete do orquestrador não apaga a linha
-    assert.deepEqual(estado(publicada([['nota', { tipo: 'pendencia', texto: 'a' }]])).estado.umaLinha, { ultima: { id: 'GM-12', estado: '0 de 2 tasks integradas' } });
+    assert.deepEqual(estado(publicada([['nota', { tipo: 'pendencia', texto: 'a' }]])).estado.umaLinha, { ultima: { id: 'GM-12', estado: 'tasks todas integradas' } });
   });
   test('publicada-vizinhos (T47): a mesma entrega com o PR aberto (identificada) segue igual; publicada com plano todo integrado segue sem PRONTO e sem PAROU', () => {
     const a = repoT18({ specs: [SPEC12], planos: { 'GM-12': ['T1', 'T2'] } });
@@ -1450,7 +1450,7 @@ describe('T18: painel.mjs estado em toda fase, fora do loop', { timeout: 120_000
     const ea = estado(a, { agentes: VIVO }).estado;
     assert.deepEqual([ea.trilha.identificada, ea.modo, ea.id, ea.parar, ea.agora.agentes[0].task], [true, 'entrega', 'GM-12', null, 'T1']);
     assert.deepEqual([ea.pronto.integradas, ea.pronto.total], [0, 2]);
-    const t = publicada([...INTEGRAR('T1').slice(1), ...INTEGRAR('T2')]);
+    const t = publicada();
     const et = estado(t).estado;
     assert.deepEqual([et.trilha.identificada, et.pronto, et.parar, et.modo === 'entrega'], [false, null, null, false]);
     assert.deepEqual([et.modo, et.umaLinha?.ultima?.id, et.fase?.numero], ['projeto', 'GM-12', 1], 'sem pendência: a última entrega conhecida segue na uma linha');

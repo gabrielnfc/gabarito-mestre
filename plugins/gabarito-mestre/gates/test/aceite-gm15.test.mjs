@@ -269,7 +269,8 @@ test('aceite-replay-gm14-limite-painel-da-gm14: `--entrega GM-14` com os PRs rea
   assert.equal(r.status, 0, r.stdout + r.stderr);
   const e = JSON.parse(r.stdout).estado;
   assert.deepEqual(e.depende, [{ nivel: 'dono', motivo: 'decidir a T8: chegou ao limite de revisões', acoes: [{ rotulo: 'liberar mais uma rodada', comando: '/gabarito-mestre:liberar T8' }] }], 'limite: o T8 no teto no DEPENDE da GM-14');
-  assert.match(e.pergunta?.texto ?? '', /conversa mudou de assunto/, 'limite: a pergunta antiga aberta');
+  // GM-21 (emenda 5): a pergunta antiga ("conversa mudou de assunto") saiu: com a T8 aberta o plano está aberto, a GM-14 não é mais "publicada" pelos PRs reais e fica identificada (pergunta medida: null)
+  assert.deepEqual([e.trilha.identificada, e.trilha.entrega, e.pergunta], [true, 'GM-14', null], 'limite: a GM-14 identificada, não publicada');
   assert.equal(e.entregue ?? null, null, 'limite: a GM-14 não está entregue');
 });
 
