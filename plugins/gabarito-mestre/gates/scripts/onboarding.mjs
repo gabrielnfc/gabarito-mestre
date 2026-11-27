@@ -20,6 +20,7 @@
  *   node onboarding.mjs gravar --respostas <arquivo.json> [--root <d>] [--hoje AAAA-MM-DD] [--fuso <IANA>] [--dry-run]
  *     → { ok, diff, naoDetectado, removidas, efetiva? } ou { ok:false, erro, motivo } com exit 1 e NADA escrito:
  *     respostas_ausentes | respostas_invalidas | config_invalida | deteccao_mudou | resposta_fora_das_opcoes | falha.
+ *   node onboarding.mjs herdar --tasks --entrega <ID> --arquivo <lista.json> [--root <d>] [--gravar [--dry-run]]    (GM-21 T6 REQ-HER-2: `task.herdada` com origem conferida, tudo ou nada)
  *   node onboarding.mjs herdar --root <d> [--gravar --planos-legados <p> --terminais <A,B> [--dry-run]]    (GM-20 REQ-ADO-1/2: passo de adoção; `onboarding-herdar.mjs`)
  *   node onboarding.mjs foco --root <d> [--sim]         (GM-14 REQ-ONB-2 foco; `onboarding-foco.mjs`, T9)
  *   node onboarding.mjs painel --root <d> [--local lateral|acima]   (GM-14 REQ-ONB-2 local do painel; `onboarding-painel.mjs`, T21)
@@ -38,7 +39,7 @@ import * as capacidade from './capacidade.mjs';
 import { lerConfigEntrega, politicaEfetiva } from '../dist/entrega.js';
 import { PERFIS_MODELO, resolverModelo } from '../lib/config.mjs';
 import { aplicarConfig, ArquivoInvalido, mergeDeep, diffChaves, escreverAtomico } from './onboarding-config.mjs';
-import { herdar } from './onboarding-herdar.mjs';
+import { herdar, herdarTasks } from './onboarding-herdar.mjs';
 import { gravarFoco, ofertaFoco } from './onboarding-foco.mjs';
 import { gravarLocal, ofertaLocal } from './onboarding-painel.mjs';
 import { explicarPrimeira, previaSimples } from '../lib/glossario.mjs';
@@ -993,7 +994,7 @@ export function gravar(raiz, caminhoRespostas, { rodar = rodarReal, hoje = hojeI
 function main(argv) {
   const sub = argv[0];
   if (!['detectar', 'gravar', 'herdar', 'foco', 'painel'].includes(sub)) {
-    process.stderr.write('uso: onboarding.mjs detectar [--root <d>] [--hoje AAAA-MM-DD] [--fuso <IANA>] [--recalibrar] | gravar --respostas <arquivo.json> [--root <d>] [--hoje AAAA-MM-DD] [--fuso <IANA>] [--dry-run] | herdar --root <d> [--gravar --planos-legados <p> --terminais <A,B> [--dry-run]] | foco --root <d> [--sim] | painel --root <d> [--local lateral|acima]\n');
+    process.stderr.write('uso: onboarding.mjs detectar [--root <d>] [--hoje AAAA-MM-DD] [--fuso <IANA>] [--recalibrar] | gravar --respostas <arquivo.json> [--root <d>] [--hoje AAAA-MM-DD] [--fuso <IANA>] [--dry-run] | herdar --root <d> [--gravar --planos-legados <p> --terminais <A,B> [--dry-run]] | herdar --tasks --entrega <ID> --arquivo <lista.json> [--root <d>] [--gravar [--dry-run]] | foco --root <d> [--sim] | painel --root <d> [--local lateral|acima]\n');
     return 2;
   }
   const raiz = arg(argv, 'root', null) ?? raizDoRepo(process.cwd());
@@ -1001,13 +1002,15 @@ function main(argv) {
   if (sub === 'herdar' || sub === 'foco' || sub === 'painel') {
     // GM-14 T1: só o despacho (T8 herdar, T9 foco). Falha com código vira `{ok:false, erro, motivo}`, exit 1.
     try {
-      const r = sub === 'herdar'
+      const r = sub === 'herdar' && argv.includes('--tasks')
+        ? herdarTasks(raiz, { rodar: rodarReal, entrega: arg(argv, 'entrega', undefined), arquivo: arg(argv, 'arquivo', undefined), gravar: argv.includes('--gravar'), dryRun: argv.includes('--dry-run') })
+        : sub === 'herdar'
         ? herdar(raiz, { rodar: rodarReal, gravar: argv.includes('--gravar'), planosLegados: arg(argv, 'planos-legados', undefined), terminais: arg(argv, 'terminais', undefined), dryRun: argv.includes('--dry-run') })
         : sub === 'painel'
           ? (argv.includes('--local') ? gravarLocal(raiz, arg(argv, 'local', null)) : ofertaLocal(raiz))
           : argv.includes('--sim') ? gravarFoco(raiz, { rodar: rodarReal }) : ofertaFoco(raiz);
       saida({ ok: true, ...r });
-      return 0;
+      return r.ok === false ? 1 : 0;
     } catch (e) {
       saida({ ok: false, erro: typeof e?.erro === 'string' ? e.erro : 'falha', motivo: String(e?.message ?? e).split('\n')[0] });
       return 1;

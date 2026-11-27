@@ -62,7 +62,9 @@ export type TipoEvento =
   | 'task.fora'
   | 'entrega.encerrada'
   | 'entrega.reaberta'
-  | 'guarda.autonomia_usada';
+  | 'guarda.autonomia_usada'
+  // GM-21 (T6, DT8): task herdada de antes do gabarito, com a origem, fora de TIPOS_DE_TASK (o loop nunca a lê como ciclo nem como progresso)
+  | 'task.herdada';
 export type Fonte = 'origin' | 'local';
 export type AmbienteDecl = {
   hosts?: string[];
