@@ -22,6 +22,8 @@ import { validarPlano } from './plano.js';
 
 export const ROTULO_FASE_NAO_MEDIDA = 'fase não medida';
 export const ROTULO_FORA_DO_LOOP = 'agente fora do loop';
+/** GM-21 DT11 (REQ-PRV-1): amostra mínima de tasks integradas para a previsão do PROJETO; o número é do redator (P5, sem fonte do dono): trocar aqui + os testes. */
+export const AMOSTRA_MINIMA_PROJETO = 5;
 const ID_PADRAO = /^[A-Z]+-\d+$/;
 
 /** O que a borda leu de UMA árvore (worktree). `planoMd` = texto do plano .md que o card aponta, lido na mesma árvore (`null` = sem arquivo). */
@@ -37,7 +39,8 @@ const ID_PADRAO = /^[A-Z]+-\d+$/;
 
                                                                                                                                                                                                                                          
 /** `integradas` = medidas no diário; `estimadas` = de PBI concluído sem registro no diário (emenda 18 p.2): nunca somam às medidas e nunca somam na previsão; no % exibido somam (D-G42). */
-                                                                                                                   
+/** `herdadas` (GM-21 DT10): tasks de antes do gabarito (`task.herdada`) FORA do plano; só existe com herdada (sem ela a forma é a de antes). Entram no `total` e no %, nunca nas medidas, na estimada nem no ritmo. */
+                                                                                                                                      
                             
              
                         
@@ -83,7 +86,7 @@ const ID_PADRAO = /^[A-Z]+-\d+$/;
                          
                                                                                                                                      
                       
-                                                                                                                                                                                                                                                                                                                                                  
+                                                                                                                                                                                                                                                                                                                                                                                                         
                    
   
 
@@ -374,42 +377,55 @@ export function projetarProjeto(arvores              , opcoes                   
         if (r.estado === 'integrada') integradas++;
         else if (r.estado === 'adiada' || r.estado === 'cortada') fora++;
       }
-      const total = taskIds.length - fora;
-      // p.2: PBI concluído sem registro das tasks no diário ⇒ o que falta registrar é ESTIMADO como feito, sinalizado, nunca medido
-      const estimadas = feito ? total - integradas : 0;
-      tasks = { total, integradas, estimadas, restantes: total - integradas - estimadas, fora };
+      // GM-21 DT10: `task.herdada` de task FORA do plano é feita (de antes do gabarito); a de task do plano é do loop (conta 1 vez, como medida); id repetido conta 1
+      const doPlano = new Set(taskIds);
+      const herdadasIds = new Set        ();
+      for (const ev of eventos) {
+        if (ev.tipo !== 'task.herdada') continue;
+        const n = norm((ev.dados ?? {}).task);
+        if (n !== null && !doPlano.has(n)) herdadasIds.add(n);
+      }
+      const herdadas = herdadasIds.size;
+      const total = taskIds.length - fora + herdadas;
+      // p.2: PBI concluído sem registro das tasks no diário ⇒ o que falta registrar é ESTIMADO como feito, sinalizado, nunca medido (herdada não é estimada)
+      const estimadas = feito ? total - integradas - herdadas : 0;
+      tasks = { total, integradas, ...(herdadas > 0 ? { herdadas } : {}), estimadas, restantes: total - integradas - herdadas - estimadas, fora };
     }
     const formatoAnterior = tasks === null && plano === 'md' && motivo === null;
     const semPlano = tasks === null && !formatoAnterior;
     const pctDe = (n        )                => (tasks === null || tasks.total <= 0 ? null : Math.round((n / tasks.total) * 100));
-    const pct = tasks === null ? null : pctDe(tasks.integradas);
-    const pctComEstimadas = tasks === null ? null : pctDe(tasks.integradas + tasks.estimadas);
+    const herdadasL = tasks?.herdadas ?? 0;
+    const pct = tasks === null ? null : pctDe(tasks.integradas + herdadasL);
+    const pctComEstimadas = tasks === null ? null : pctDe(tasks.integradas + herdadasL + tasks.estimadas);
     const texto = motivo !== null ? '? plano inválido'
       : tasks === null ? (formatoAnterior ? (feito ? 'feito, plano (formato anterior)' : 'plano (formato anterior)') : feito ? 'feito, sem plano' : 'sem plano')
         : feito ? (tasks.estimadas > 0 ? `feito (${tasks.estimadas} tasks estimadas)` : 'feito')
-          : pct === null ? '? sem task no plano' : `${pct} % (${tasks.integradas} de ${tasks.total})`;
+          : pct === null ? '? sem task no plano'
+            : herdadasL > 0 ? `${pct} % (${tasks.integradas + herdadasL} feitas: ${herdadasL} ${herdadasL === 1 ? 'herdada' : 'herdadas'}, ${tasks.integradas} ${tasks.integradas === 1 ? 'medida' : 'medidas'})`
+              : `${pct} % (${tasks.integradas} de ${tasks.total})`;
     linhas.push({
       id, titulo: card?.titulo ?? null, status: card?.status ?? null, feito, cardDesatualizado: desatualizado, epic: card?.epic ?? null, plano, semPlano, tasks, pct, pctComEstimadas, texto, motivo,
       fase: plano === 'json' ? null : ROTULO_FASE_NAO_MEDIDA, origem,
     });
   }
   // totais: medidas e estimadas separadas (p.2); o sem plano fica fora da conta; GM-20 D-G42/DT1: concluído sem `plano.json` (o .md inclusive) sai das duas pontas
-  let tasks = 0, integradas = 0, estimadas = 0;
+  let tasks = 0, integradas = 0, estimadas = 0, herdadas = 0;
   for (const l of linhas) {
     if (l.tasks === null || (l.feito && l.plano !== 'json')) continue;
     tasks += l.tasks.total;
     integradas += l.tasks.integradas;
+    herdadas += l.tasks.herdadas ?? 0;
     estimadas += l.tasks.estimadas;
   }
-  const restantes = tasks - integradas - estimadas;
+  const restantes = tasks - integradas - herdadas - estimadas;
   const foraDaConta = linhas.filter((l) => l.semPlano && !l.feito).length;
   return {
     linhas,
     grupos: gruposDe(linhas, opcoes.titulosEpic),
     totais: {
-      pbis: linhas.length, opcoes: nOpcoes, terminais: nTerminais, feitos: linhas.filter((l) => l.feito).length, foraDaConta, tasks, integradas, estimadas, restantes,
-      pct: tasks > 0 ? Math.round((integradas / tasks) * 100) : null,
-      pctComEstimadas: tasks > 0 ? Math.round(((integradas + estimadas) / tasks) * 100) : null,
+      pbis: linhas.length, opcoes: nOpcoes, terminais: nTerminais, feitos: linhas.filter((l) => l.feito).length, foraDaConta, tasks, integradas, ...(herdadas > 0 ? { herdadas } : {}), estimadas, restantes,
+      pct: tasks > 0 ? Math.round(((integradas + herdadas) / tasks) * 100) : null,
+      pctComEstimadas: tasks > 0 ? Math.round(((integradas + herdadas + estimadas) / tasks) * 100) : null,
       previsao: previsaoDoProjeto(linhas, diarios, restantes, opcoes.agoraMs, opcoes.fuso),
     },
     avisos,
@@ -429,6 +445,9 @@ function gruposDe(linhas                , titulos                               
 function previsaoDoProjeto(linhas                , diarios                                          , restantes        , agoraMs        , fuso        )                  {
   const ritmo = ritmoDasAnteriores(diarios, null);
   if (ritmo === null || !Number.isFinite(ritmo) || ritmo <= 0) return { ritmoS: null, medida: null, estimada: null, motivo: 'sem ritmo medido: nenhuma task integrada no projeto' };
+  // GM-21 DT11: amostra mínima (só aqui; o fallback da entrega segue como está); a herdada não tem duração e nunca entra na contagem
+  const medidas = tasksMedidas(diarios);
+  if (medidas < AMOSTRA_MINIMA_PROJETO) return { ritmoS: ritmo, medida: null, estimada: null, motivo: `sem ritmo: ${medidas} de ${AMOSTRA_MINIMA_PROJETO} tasks medidas` };
   const hora = (s        )         => horaLocal(agoraMs + s * 1000, agoraMs, fuso);
   const medidaS = ritmo * restantes;
   const medida = { restanteS: medidaS, hora: hora(medidaS) };
@@ -440,6 +459,17 @@ function previsaoDoProjeto(linhas                , diarios                      
   const h = hora(estS);
   const texto = `~${Math.round(tasks)} tasks estimadas em ${est.abertos} PBIs sem plano, até ~${h}`;
   return { ritmoS: ritmo, medida, estimada: { restanteS: estS, hora: h, pbisSemPlano: est.abertos, tasksPorPbi: est.tasksPorPbi, tasks, texto }, motivo: null };
+}
+
+/** Tasks integradas no projeto (cada uma 1 vez por entrega): a amostra do ritmo. */
+function tasksMedidas(diarios                                          )         {
+  let n = 0;
+  for (const d of diarios) {
+    const ints = new Set        ();
+    for (const ev of d.eventos) if (ev.tipo === 'task.integrada' && typeof (ev.dados ?? {}).task === 'string') ints.add((ev.dados                    ).task);
+    n += ints.size;
+  }
+  return n;
 }
 
 /**

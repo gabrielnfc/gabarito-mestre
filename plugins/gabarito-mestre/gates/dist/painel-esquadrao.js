@@ -413,7 +413,9 @@ function linhasDoProjeto(p               , w        , mot                       
   }
   // linha 1: contagens (o número nunca é cortado: o que não cabe em `w` sai por variantes mais curtas, a mais longa primeiro)
   const estimadas = inteiroNaoNeg(tt.estimadas) ?? 0;
-  const tasks = `${pct} das tasks (${ouInterroga(tt.integradas)} de ${ouInterroga(tt.tasks)}${estimadas > 0 ? `, +${estimadas} estimadas` : ''})`;
+  // GM-21 DT10: a herdada (de antes do gabarito) aparece separada da medida, com o rótulo; some inteira com ele (nunca cortada por caractere)
+  const herdadas = inteiroNaoNeg(tt.herdadas) ?? 0;
+  const tasks = `${pct} das tasks (${ouInterroga(tt.integradas)} de ${ouInterroga(tt.tasks)}${herdadas > 0 ? `, +${herdadas} ${herdadas === 1 ? 'herdada' : 'herdadas'}` : ''}${estimadas > 0 ? `, +${estimadas} estimadas` : ''})`;
   const base = `PROJETO  ${feitos} de ${total} PBIs feitos · ${tasks}`;
   const opc = opcoes > 0 ? ` · ${textoOpcoes(opcoes)}` : '';
   const variantes = [
@@ -430,7 +432,10 @@ function linhasDoProjeto(p               , w        , mot                       
   const l1 = variantes.find((v) => colunas(v) <= w) ?? variantes[variantes.length - 1];
   // linha 2 (GM-20 DT13): UMA linha de previsão. Medida + estimada: as duas horas, e o que não cabe sai por variantes
   // (primeiro o parêntese com os números, depois a 2ª parte); a hora nunca é cortada. Sem estimada, o texto de sempre.
-  const prevMedida = med !== null ? `  previsão ${t(med.hora)} (medida)` : `  previsão ?${mot(tt.previsao?.ritmoS === null || tt.previsao?.ritmoS === undefined ? 'sem ritmo medido' : 'sem fonte')}`;
+  // GM-21 DT11: com ritmo mas sem amostra, o motivo do núcleo ("sem ritmo: N de 5 tasks medidas") é o texto; sem ritmo, o de sempre
+  const motivoPrev = tt.previsao?.ritmoS === null || tt.previsao?.ritmoS === undefined ? 'sem ritmo medido'
+    : typeof tt.previsao?.motivo === 'string' && /^sem ritmo: \d+ de \d+ tasks medidas$/.test(tt.previsao.motivo) ? tt.previsao.motivo : 'sem fonte';
+  const prevMedida = med !== null ? `  previsão ${t(med.hora)} (medida)` : `  previsão ?${mot(motivoPrev)}`;
   let prevLinha = prevMedida;
   if (med !== null && est !== null) {
     const nTasks = inteiroNaoNeg(Math.round(Number(est.tasks)));
