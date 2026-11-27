@@ -41,7 +41,7 @@ Resto do relato de um repo consumidor que veio da 2.1.0-alpha.1 (GM-21, D-G49, D
 - Teste de vitest ou jest que imprime no formato do node (`ℹ tests N`, `# pass N`) faz o gate descartar o resumo real: o jest com rc 0 vira falso vermelho e o vitest detalhado conta a fixture. Não vira falso verde.
 - A DT2 (só encerra PR mergeado depois da última integração) não vale na regra antiga de publicada antes de o PR final abrir: com o plano fechado e só o PR antigo mergeado, a entrega segue publicada pelo PR antigo (o loop recusa `pousar` e `parar` e o Stop silencia). Já era assim e não piora; a regra só muda se o dono pedir.
 - `herdar --tasks` com erro de E/S no meio da gravação deixa gravadas as entradas anteriores (o erro `evento_nao_gravado` diz quantas), e não há trava entre ler as já herdadas e gravar.
-- Não medido: o plugin 2.3.1 lendo um diário que a 2.4.0 gravou com `pr.rascunho: true` pode rejeitar o evento (a forma recusa campo extra, como já era com `contem` e `pre_versao`); a janela de compatibilidade entre versões não foi medida.
+- Medido (plugin 2.3.1 do cache instalado, lendo diário gravado pela 2.4.0): lê `pr.rascunho: true` e `task.herdada` sem rejeitar; `proxima` e `painel estado` respondem normais (com `task.herdada`, o lote pede para atualizar o plugin). Não medido: a 2.3.1 gravando (`append`) no mesmo arquivo de sessão que a 2.4.0.
 - Falsos negativos da guarda e o resto do backlog da GM-22 ficam fora (D-G57); o sufixo `autonomia (2.3.1)` do `ask` é a versão da regra e não muda.
 
 ## [2.3.1] — 2026-11-26
