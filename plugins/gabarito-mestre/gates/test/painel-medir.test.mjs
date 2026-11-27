@@ -1377,3 +1377,70 @@ const r = require('node:child_process').spawnSync(process.env.GH_REAL, a, { stdi
     assert.deepEqual(lote(d), []);
   });
 });
+
+// ── GM-21 T8 (REQ-DEP-1, DT12): gh ⇒ fato `pr` com `rascunho` ⇒ DEPENDE do painel real (P9) ──────────────────────────────────────────────────
+// MUTAÇÕES: MD1-d `prDoGh` não copia `isDraft` ⇒ cai painel-rascunho-ponta-a-ponta · MD1-b o `painel.ts` não passa `autonomiaEntrega` ao `dependeDe` ⇒ cai painel-autonomia-ponta-a-ponta.
+describe('GM-21 T8: DEPENDE sem PR de rascunho nem de merge do orquestrador (gh ⇒ fato ⇒ DEPENDE)', () => {
+  const GH_ENC = join(AQUI, 'fixtures', 'gh-encerramento');
+  const PAINEL = join(AQUI, '..', 'scripts', 'painel.mjs');
+  const BR = 'enabler/GM-14-clareza';
+  /** o PR #12 aberto da entrega, como o `gh pr list --json` o devolve (`isDraft` booleano real; sem a chave o fixture devolve null) */
+  const pr12 = (extra = {}) => ({ number: 12, state: 'OPEN', baseRefName: 'next', headRefName: BR, title: 'enabler(GM-14): x', ...extra });
+  const rodar = (extra) => (cmd, args, { cwd, timeoutMs }) => spawnSync(cmd, args, { cwd, encoding: 'utf8', timeout: timeoutMs, stdio: ['ignore', 'pipe', 'pipe'],
+    env: { ...process.env, GH_PRS_EXTRA: JSON.stringify(extra), ...(cmd === 'gh' ? { PATH: `${GH_ENC}:${process.env.PATH}` } : {}) } });
+  /** `harness.config.json` publicado em origin/HEAD (a leitura da autonomia de entrega); volta à branch da entrega. */
+  const comOrigin = (d, cfg) => {
+    git(d, 'checkout', '-q', 'main');
+    writeFileSync(join(d, 'harness.config.json'), `${JSON.stringify(cfg)}\n`);
+    git(d, 'add', 'harness.config.json'); git(d, 'commit', '-q', '-m', 'cfg');
+    const bare = join(mkdtempSync(join(tmpdir(), 'origin ')), 'o.git');
+    mkdirSync(bare);
+    git(bare, 'init', '-q', '--bare', '-b', 'main');
+    git(d, 'remote', 'add', 'origin', bare); git(d, 'push', '-q', 'origin', 'main'); git(d, 'remote', 'set-head', 'origin', 'main');
+    git(d, 'checkout', '-q', BR);
+  };
+  const prsDe = (d) => fatos(d, 'GM-14', 'pr').map((e) => e.dados.valor).filter((v) => v.numero === 12);
+  /** `painel.mjs estado` (CLI real) sobre o diário que o medir gravou. */
+  const dependeCli = (d) => {
+    const r = spawnSync(process.execPath, [PAINEL, 'estado'], { cwd: d, encoding: 'utf8', timeout: 60_000, env: process.env });
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    return JSON.parse(r.stdout.trim().split('\n').at(-1)).estado.depende.map((i) => i.motivo);
+  };
+  const medirPr = (d, extra) => { const r = medir(d, { rodar: rodar([pr12(extra)]), agentes: entrada([]), timeoutMs: 5000, agora: () => Date.parse('2026-11-11T20:00:00Z') }); assert.equal(r.ok, true, JSON.stringify(r)); };
+  /** repo na branch da entrega com o 2º fato (spec `PBI: GM-14`): a trilha identifica a entrega e o DEPENDE tem de onde tirar o item */
+  const entregaGm14 = () => { const d = repo(); spec(d, 'a.md', 'PBI: GM-14', '## S1\n'); return d; };
+  const REVISAR = /pedido de revisão #12/;
+
+  test('painel-rascunho-ponta-a-ponta: gh com #12 `isDraft: true` ⇒ fato `pr` com `rascunho: true` ⇒ o DEPENDE do painel não tem "revisar e aceitar #12"', () => {
+    const d = entregaGm14();
+    medirPr(d, { isDraft: true });
+    assert.deepEqual(prsDe(d).map((v) => [v.estado, v.rascunho]), [['aberto', true]]);
+    assert.deepEqual(dependeCli(d).filter((m) => REVISAR.test(m)), []);
+  });
+
+  test('painel-rascunho-ponta-a-ponta (contraprova): `isDraft: false` e `isDraft` ausente ⇒ sem `rascunho: true` no fato e o DEPENDE tem "revisar e aceitar #12"', () => {
+    for (const extra of [{ isDraft: false }, {}]) {
+      const d = entregaGm14();
+      medirPr(d, extra);
+      assert.deepEqual(prsDe(d).map((v) => v.rascunho === true), [false], JSON.stringify(extra));
+      assert.deepEqual(dependeCli(d).filter((m) => REVISAR.test(m)), ['revisar e aceitar o pedido de revisão #12'], JSON.stringify(extra));
+    }
+  });
+
+  test('o PR que sai do rascunho entra no DEPENDE: a medição seguinte grava o valor novo (sem `rascunho: true`)', () => {
+    const d = entregaGm14();
+    medirPr(d, { isDraft: true });
+    medirPr(d, { isDraft: false });
+    assert.deepEqual(prsDe(d).map((v) => v.rascunho === true), [true, false]);
+    assert.deepEqual(dependeCli(d).filter((m) => REVISAR.test(m)), ['revisar e aceitar o pedido de revisão #12']);
+  });
+
+  test('painel-autonomia-ponta-a-ponta: PR aberto não rascunho com `entrega.autonomia: true` em origin ⇒ sem o item; `false` ou ausente ⇒ com o item', () => {
+    for (const [cfg, esperado] of [[{ entrega: { base: 'next', autonomia: true } }, []], [{ entrega: { base: 'next', autonomia: false } }, ['revisar e aceitar o pedido de revisão #12']], [{ entrega: { base: 'next' } }, ['revisar e aceitar o pedido de revisão #12']]]) {
+      const d = entregaGm14();
+      comOrigin(d, cfg);
+      medirPr(d, { isDraft: false });
+      assert.deepEqual(dependeCli(d).filter((m) => REVISAR.test(m)), esperado, JSON.stringify(cfg));
+    }
+  });
+});

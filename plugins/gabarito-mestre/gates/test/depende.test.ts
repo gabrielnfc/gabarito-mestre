@@ -735,3 +735,34 @@ test('lembrete-da-virada-fica-ate-o-pr-em-main: base next, encerrada com sha ⇒
   assert.deepEqual(loteDoDono(PLANO_LOTE, expandir([encComSha]), { ...CFG_DESLIGADA, base: 'main' }), [], 'base main: sem item, como hoje');
   assert.deepEqual(loteDoDono(PLANO_LOTE, expandir([encComSha]), CFG_LIGADA), [], 'autonomia: sem item, como hoje');
 });
+
+// ── GM-21 T8 (REQ-DEP-1, DT12): o DEPENDE não pede "revisar e aceitar" PR em rascunho nem, com autonomia, o merge do orquestrador ──────────────────
+// Mutações: MD1-a `prAberto` ignora `rascunho` ⇒ depende-sem-rascunho · MD1-b ignora a autonomia ⇒ depende-sem-pr-com-autonomia · MD1-c esconde sempre ⇒ depende-pr-sem-autonomia-igual
+const prR = (numero: number, estado: string, rascunho?: unknown): C => ({ t: 'fato.medido', d: { chave: 'pr', fonte: 'gh', valor: { numero, estado, branch: BRANCH, ...(rascunho === undefined ? {} : { rascunho }) } } });
+const revisar8 = (n: number) => `revisar e aceitar o pedido de revisão #${n}`;
+const dep8 = (t: Trilha, evs: C[], autonomia?: boolean) => motivos(dependeDe(t, expandir(evs), [], OK, false, GIT, undefined, autonomia));
+
+test('depende-sem-rascunho: PR aberto em rascunho não vira "revisar e aceitar"; rascunho false ou ausente (diário 2.3.1) vira, e o último fato do número decide', () => {
+  assert.deepEqual(dep8(APROVADA, [prR(12, 'aberto', true)]), ['nada depende de você']);
+  assert.deepEqual(dep8(APROVADA, [prR(12, 'aberto', false)]), [revisar8(12)]);
+  assert.deepEqual(dep8(APROVADA, [prR(12, 'aberto')]), [revisar8(12)], 'fato sem `rascunho` = não rascunho');
+  assert.deepEqual(dep8(APROVADA, [prR(12, 'aberto', true), prR(12, 'aberto', false)]), [revisar8(12)], 'saiu do rascunho: aparece');
+  assert.deepEqual(dep8(APROVADA, [prR(12, 'aberto', false), prR(12, 'aberto', true)]), ['nada depende de você'], 'voltou ao rascunho: some');
+  assert.deepEqual(dep8(APROVADA, [prR(7, 'aberto'), prR(9, 'aberto', true)]), [revisar8(7)], 'o maior número aberto NÃO rascunho vence');
+  assert.deepEqual(dep8(APROVADA, [prR(12, 'aberto', true), prR(12, 'mergeado', true)]), ['nada depende de você']);
+});
+
+test('depende-sem-pr-com-autonomia: autonomia true (merge do orquestrador) tira o item; false ou ausente mantém; só esse item some', () => {
+  assert.deepEqual(dep8(APROVADA, [prR(12, 'aberto', false)], true), ['nada depende de você']);
+  assert.deepEqual(dep8(APROVADA, [prR(12, 'aberto')], true), ['nada depende de você']);
+  assert.deepEqual(dep8(APROVADA, [prR(12, 'aberto')], false), [revisar8(12)]);
+  assert.deepEqual(dep8(APROVADA, [prR(12, 'aberto')], undefined), [revisar8(12)]);
+  // limite: outros itens do DEPENDE seguem com autonomia
+  assert.deepEqual(dep8(SEM_APROVACAO, [prR(12, 'aberto'), nota('pendencia', 'renovar o certificado')], true), ['aprovar a spec da GM-14', 'renovar o certificado']);
+});
+
+test('depende-pr-sem-autonomia-igual: sem a autonomia o DEPENDE é o de hoje (troca de valor true/false/ausente)', () => {
+  for (const a of [false, undefined]) {
+    assert.deepEqual(dep8(SEM_APROVACAO, [nota('ideia', 'x'), nota('pendencia', 'p'), prR(7, 'aberto')], a), ['aprovar a spec da GM-14', revisar8(7), 'p', 'decidir se a ideia vira a próxima entrega']);
+  }
+});

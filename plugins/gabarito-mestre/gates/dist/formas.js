@@ -388,6 +388,8 @@ const FORMAS_FATO                                                               
     pre_versao: (o, n) => (campo(o, n) === undefined ? null : textoLinha(o, n, 64)),
     // GM-20 D-G47: o sha de merge da encerrada que este PR (em `main`) contém: o fato que tira da lista "levar <base> para main"
     contem: shaGitOpcional,
+    // GM-21 T8 (REQ-DEP-1): o PR aberto está em rascunho (`isDraft` do gh); fato sem ele (diário 2.3.1) = não rascunho
+    rascunho: (o, n) => (campo(o, n) === undefined ? null : exigirBooleano(o, n)),
   }],
   ['release', { tag: (o, n) => textoLinha(o, n) }],
   ['agente', { id: (o, n) => textoLinha(o, n), papel: (o, n) => textoLinha(o, n), estado: (o, n) => textoLinha(o, n) }],

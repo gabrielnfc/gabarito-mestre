@@ -944,3 +944,10 @@ test('forma-task-herdada: commit (40 hex), pr (inteiro ≥ 1) e ledger (arquivo:
   ruim('task.herdada', 'x', /corrompido/);
   assert.ok(TIPOS_EVENTO.includes('task.herdada' as never));
 });
+
+test('fato-pr-rascunho-opcional (GM-21 T8, REQ-DEP-1): `rascunho` do fato `pr` é booleano e opcional; o fato de 2.3.1, sem ele, segue válido', () => {
+  ok('fato.medido', fato('pr', {}));
+  ok('fato.medido', fato('pr', { rascunho: true }));
+  ok('fato.medido', fato('pr', { rascunho: false }));
+  for (const x of ['true', 1, 0, null, '']) ruim('fato.medido', fato('pr', { rascunho: x }), /`rascunho`/);
+});
