@@ -96,19 +96,34 @@ function decidirComTeto(entrada: EntradaHook, config: ConfigGuarda | null, conte
 }
 
 /**
- * Autonomia do orquestrador (dono, 2026-11-12; GM-15 T15: `autonomia` só chega `true` quando a config de origin/HEAD E o interruptor
- * pedem, ver `principal` em guarda.ts): com a autonomia ligada, o `ask` de integridade ou produção do orquestrador vira
- * passagem silenciosa e grava `guarda.autonomia_usada` com os mesmos `dados` (nunca o comando). Continuam `ask`: o anel `segredo`; o
- * comando acima do teto (Q17) ou com `cd` perdido, onde a guarda não leu tudo e não vê se há segredo; e a exceção da guarda (Q21). Ligada, o
- * orquestrador passa também na escrita no interruptor e na marca do nome dele: ele já tem esse poder, e mexer no interruptor não o aumenta
- * (decisão do dono, 2026-11-12). Desligada, essa escrita segue `ask`: é o que impede o agente de ligar a autonomia sozinho. O subagent
- * não muda (`deny`).
+ * Nível da autonomia (GM-22 DT2, DT8): `publica` = config de origin/HEAD com `guarda.autonomia: orquestrador` E `entrega.autonomia: true`,
+ * mais o interruptor da máquina; `trabalha` = a mesma guarda e o interruptor, sem `entrega.autonomia`; `nenhuma` = o resto.
  */
-export function decidir(entrada: EntradaHook, config: ConfigGuarda | null, contexto: Contexto, autonomia = false): Decisao {
+export type NivelAutonomia = 'nenhuma' | 'trabalha' | 'publica';
+
+/** Texto fixo que o `ask` ao orquestrador ganha com nível ≠ `nenhuma` (DT7, REQ-PUB-3): diz o que a autonomia cala desde a 2.3.1. */
+const SUFIXO_AUTONOMIA =
+  ' · autonomia (2.3.1): cala só publicar (push e merge na branch de produção, deploy), e só com a resposta "publica"; produção de terceiro, delete em massa, harness e push sem hooks sempre perguntam';
+
+/**
+ * Autonomia do orquestrador (D-G52, DT2, DT6; dono, GM-22): a autonomia passa a valer só para entrega/deploy. Só o nível `publica` cala, e só
+ * um `ask` de PUBLICAR (`classificacao.publicar`: forma fechada de push, merge ou deploy na branch de produção, 1 segmento, não destrutivo,
+ * sem anel): vira passagem silenciosa e grava `guarda.autonomia_usada` com os mesmos `dados` (só {acao, alvo, ambiente}, nunca o comando).
+ * Continuam `ask` em todo nível: segredo, integridade (inclui a escrita no interruptor, que revoga a emenda de 2026-11-12), push sem hooks,
+ * produção de terceiro, delete em massa e destrutivo, comando misto, o comando acima do teto (Q17) ou com `cd` perdido, onde a guarda não
+ * leu tudo, e a exceção da guarda (Q21). `trabalha` não cala nada (o rótulo dela é "espere o meu pode para publicar"). O subagent não muda
+ * (`deny`, igual nos 3 níveis). Com nível ≠ `nenhuma`, todo `ask` ao orquestrador ganha o sufixo fixo (DT7); `nenhuma` devolve o motivo de hoje.
+ */
+export function decidir(entrada: EntradaHook, config: ConfigGuarda | null, contexto: Contexto, nivel: NivelAutonomia = 'nenhuma'): Decisao {
   const d = decidirComTeto(entrada, config, contexto);
-  if (!autonomia || d.faixa !== 'ask' || d.classificacao.anel === 'segredo') return d;
+  if (d.faixa !== 'ask') return d;
+  if (nivel === 'nenhuma') return d;
+  const c = d.classificacao;
   const comando = entrada?.tool_name === 'Bash' && typeof entrada?.tool_input === 'object' && entrada.tool_input !== null ? entrada.tool_input.command : undefined;
-  if (typeof comando === 'string' && (comando.length > TETO_COMANDO || d.classificacao.cdPerdido === true)) return d;
-  const dados = d.evento?.dados ?? dadosDe(d.classificacao);
-  return { classificacao: d.classificacao, faixa: 'silencio', evento: { tipo: 'guarda.autonomia_usada', dados }, systemMessage: null, motivo: null };
+  const naoLeuTudo = typeof comando === 'string' && (comando.length > TETO_COMANDO || c.cdPerdido === true);
+  if (nivel === 'publica' && c.publicar && !c.destrutivo && c.anel === null && !naoLeuTudo) {
+    const dados = d.evento?.dados ?? dadosDe(c);
+    return { classificacao: c, faixa: 'silencio', evento: { tipo: 'guarda.autonomia_usada', dados }, systemMessage: null, motivo: null };
+  }
+  return { ...d, motivo: `${d.motivo ?? ''}${SUFIXO_AUTONOMIA}` };
 }

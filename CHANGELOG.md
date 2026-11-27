@@ -3,6 +3,31 @@
 Formato: [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/). Versionamento: [SemVer](https://semver.org/lang/pt-BR/).
 Usuários do plugin só recebem atualização quando `version` muda.
 
+## [2.3.1] — 2026-11-26
+
+Hotfix de segurança da guarda (GM-22, D-G51, D-G52).
+
+### Corrigido
+
+- **A autonomia cala só publicar.** Com a resposta "publica" (e o interruptor da máquina), passa calado só o pedido de publicar, e só se for comando de 1 segmento, com os caracteres `[A-Za-z0-9 ._/@:,=-]`, sem preparo de ambiente, numa destas formas fechadas (medidas no código integrado): `git push` sem refspec, na branch de produção, ou com 1 refspec não nulo para ela (por exemplo `git push origin main`, `git push -u origin main`), com remoto `origin` ou omitido e só as flags `-u`, `--set-upstream`, `-q`, `--quiet`, `-v`, `--verbose`, `--follow-tags`, `--atomic`, `--porcelain`, `-n`, `--dry-run` (2 refspecs, outro remoto, `--force`, `--no-verify` e `-o` perguntam); `gh pr merge` com ou sem número (no máximo 1), na branch de produção, e só as flags `--merge`, `-m`, `--squash`, `-s`, `--rebase`, `-r`, `--auto`, `--delete-branch`, `-d` (`--admin`, URL e 2 números perguntam); `vercel` ou `vc` com `--prod` ou `--production` (`vercel --prod`, `vercel deploy --prod`, `vc --prod`), `promote` ou `rollback` com ou sem id e `redeploy --prod` com ou sem id (nas duas grafias, `vercel` e `vc`), só com as flags `--prod`, `--production`, `--yes`, `-y` e id de deploy só com letras, dígitos, `_` e `-` (`dpl_abc`, `abc123`; URL, caminho com `/` ou `.`, `:`, `--scope`, `--cwd` e `--token` perguntam). `npm test && git push origin main` pergunta. Origem de 4 ou mais zeros no refspec (`0000:main`) é destrutiva e pergunta; com menos zeros (`0:main`, `000:main`) o git não lê como id de objeto e o comando passa como publicar. Produção de terceiro, `push --force` para produção, arquivos do harness, hooks do git e push sem hooks perguntam ao orquestrador e são negados ao subagente só quando o comando começa pelo programa que a guarda reconhece (por exemplo `rm`, `mv`, `cp`, `tee`, `sed -i`, redireção `>`, `git push`, `git config`, `psql`, `curl`, `ssh`); outro caminho para as mesmas pastas e destinos não é visto (ver Limites declarados). `rm -rf` em pasta comum (`rm -rf src`) não é alvo desta guarda e segue como antes (registrado, sem pergunta). Com "trabalha", a autonomia não cala nada: o que pergunta com "publica" pergunta também com "trabalha".
+- **Hooks do git no anel de integridade.** Comando que começa por `rm`, `mv`, `cp`, `tee`, `sed -i` ou redireção `>` com alvo em `.githooks/` ou `.husky/` na raiz do projeto pede ao orquestrador e é negado ao subagente; outras vias para essas pastas não são vistas (ver Limites declarados).
+- **Push sem hooks**: `git push` com `--no-verify`, com `GIT_CONFIG_COUNT`/`GIT_CONFIG_PARAMETERS` ou com `git -c core.hooksPath=…` pede ao orquestrador e é negado ao subagente, em qualquer branch.
+
+### Mudado
+
+- A pergunta de autonomia do onboarding passa a dizer o que cada resposta cala, e a prévia diz "autonomia para publicar". O que continua perguntando é o que está descrito acima; este changelog não promete mais do que a guarda vê.
+- A escrita no interruptor da máquina (`~/.claude/gabarito-autonomia.json`), por Write, Edit ou comando que começa por `cp`, `mv`, `rm`, `tee`, `sed -i` ou redireção `>`, pede mesmo com a autonomia ligada.
+- Config da 2.2.2 com `guarda.autonomia: "orquestrador"` segue válida e só cala menos; o `ask` avisa o que a autonomia cala.
+- O evento `guarda.autonomia_usada` de publicar não traz `anel`; o campo `anel` é opcional.
+
+### Limites declarados
+
+- `promote`, `rollback` ou `redeploy` com id de deploy de outro projeto não é detectado (exigiria I/O).
+- `cd ../outro && …` não é publicar: pergunta.
+- O diretório de hooks é fixo (`.githooks`, `.husky`, `.git/hooks`); outro `core.hooksPath` não é protegido.
+- A guarda lê o comando pelo programa que o abre; qualquer outra via (wrapper como `nice`/`timeout`/`xargs`/`exec`/`eval`, subcomando do git como `git rm`/`mv`/`checkout`/`restore`, interpretador como `python3 -c`/`node -e`/`perl -i`, `rsync`, `find -delete`, variáveis como `GIT_CONFIG_GLOBAL`/`HUSKY=0`) não é vista e passa calada nos 2 papéis, com qualquer resposta de autonomia; FN anteriores à 2.3.1, no backlog.
+- `export GIT_CONFIG_…` em comando anterior e `git commit --no-verify` também não são vistos.
+
 ## [2.3.0] — 2026-11-26
 
 Projeto que adotou o gabarito com entregas antigas (GM-20, D-G41 a D-G46).

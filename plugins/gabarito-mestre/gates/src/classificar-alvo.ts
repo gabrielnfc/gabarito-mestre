@@ -30,15 +30,51 @@ import type { Segmento } from './aneis.ts';
 type Declarado = 'prod' | 'homolog' | 'teste';
 const ORDEM: Declarado[] = ['prod', 'homolog', 'teste'];
 
-type Parcial = { ambiente: Ambiente; acao: Classificacao['acao']; alvo: string; destrutivo: boolean; prodEscrita: boolean; cru: string };
+type Parcial = { ambiente: Ambiente; acao: Classificacao['acao']; alvo: string; destrutivo: boolean; prodEscrita: boolean; cru: string; publicar: boolean };
 
-const NEUTRO: Classificacao = { ambiente: 'desconhecido', acao: 'leitura', alvo: '', destrutivo: false, anel: null, segmentosProd: [] };
+const NEUTRO: Classificacao = { ambiente: 'desconhecido', acao: 'leitura', alvo: '', destrutivo: false, anel: null, segmentosProd: [], publicar: false };
 
 const REDE = new Set(['curl', 'wget', 'http', 'https', 'xh', 'ssh', 'scp', 'rsync', 'nc', 'telnet']);
 const BANCO = new Set(['psql', 'pg_dump', 'pg_dumpall', 'pg_restore', 'mysql', 'mysqldump', 'mariadb', 'mariadb-dump', 'mongosh', 'mongo', 'redis-cli']);
 // Clientes cujo SQL vem em `-e/--execute` (e não em `-c/--command`).
 const SQL_POR_EXECUTE = new Set(['mysql', 'mariadb']);
 const SUSPEITO = /(^|[.-])(prod|production|prd)([.-]|$)/i;
+// DT1: só estas flags mantêm o `git push` na forma de publicar; qualquer outra (--force, --delete, --all, -o …) é terceiro.
+// OID nulo (só zeros, 4+ dígitos: fail-closed para sha1 e sha256) como origem do refspec: o git trata como deleção da ref remota.
+const origemNula = (r: string): boolean => /^0{4,}$/.test(r.includes(':') ? r.slice(0, r.indexOf(':')) : '');
+const FLAGS_PUBLICAR = new Set(['-u', '--set-upstream', '-q', '--quiet', '-v', '--verbose', '--follow-tags', '--atomic', '--porcelain', '-n', '--dry-run']);
+// DT1(b): flags do `gh pr merge` sem efeito de alvo nem de política (sem valor). Fora: --admin (fura proteção), -b/-t/-F/--match-head-commit (valor livre), -R/--repo, URL.
+const FLAGS_GH_MERGE = new Set(['--merge', '-m', '--squash', '-s', '--rebase', '-r', '--auto', '--delete-branch', '-d']);
+const SUB_VERCEL_PUBLICAR = new Set(['', 'deploy', 'redeploy', 'promote', 'rollback']);
+// Forma fechada do vercel (DT1(c)): só estas flags (`--yes`/`-y` só confirmam, não escolhem projeto); `--cwd`, `--scope`, `--token`, `-A`, `-Q`, `-t`, `-S` e `--x=v` ficam fora.
+const FLAGS_VERCEL_PUBLICAR = new Set(['--prod', '--production', '--yes', '-y']);
+const SUB_VERCEL_COM_ID = new Set(['redeploy', 'promote', 'rollback']);
+// Id de deploy sem `/`, `.` ou `:`: URL (outro time) ou caminho (outro projeto) não passam.
+const ID_DEPLOY = /^[A-Za-z0-9_-]+$/;
+
+// c4: portão positivo de `publicar`, um ponto só, antes das 3 formas (a lista de negação por construção de shell não convergiu).
+// (1) o comando inteiro é 1 segmento; (2) o texto cru só tem caracteres da lista fechada (sem `$`, crase, aspas, `\`, `()`, `{}`, `<>`, `|`, `*?~!+;&`, tab, não-ASCII);
+// (3) o segmento não começa por builtin de ambiente/definição nem tem `VAR=`; (3b) a 1ª palavra é o próprio comando (sem caminho, nice, timeout…). Excesso só custa um `false`.
+const CARACTERES_PUBLICAR = /^[A-Za-z0-9 ._/@:,=-]*$/;
+const BUILTIN_DE_AMBIENTE = new Set(['export', 'declare', 'typeset', 'local', 'readonly', 'set', 'unset', 'alias', 'function', 'source', '.', 'eval', 'exec', 'env', 'command', 'builtin', 'sudo', 'nohup', 'time']);
+function portaoPublicar(comando: string, segmentos: Segmento[]): boolean {
+  if (segmentos.length !== 1) return false;
+  if (!CARACTERES_PUBLICAR.test(comando)) return false;
+  const s = segmentos[0];
+  const primeiro = comando.trim().split(/\s+/)[0] ?? '';
+  if (BUILTIN_DE_AMBIENTE.has(primeiro) || s.atribs.length > 0) return false;
+  return primeiro === s.cmd;
+}
+
+function formaFechadaVercel(s: Segmento): boolean {
+  if (!s.args.every((a) => (!a.startsWith('-') || FLAGS_VERCEL_PUBLICAR.has(a)))) return false;
+  const pos = s.args.filter((a) => !a.startsWith('-'));
+  const sub = pos[0] ?? '';
+  if (!SUB_VERCEL_PUBLICAR.has(sub)) return false;
+  const resto = pos.slice(1);
+  if (resto.length === 0) return true;
+  return SUB_VERCEL_COM_ID.has(sub) && resto.length === 1 && ID_DEPLOY.test(resto[0]);
+}
 const LOOPBACK = new Set(['localhost', '127.0.0.1', '::1', '0.0.0.0']);
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -242,7 +278,7 @@ function rank(p: Parcial): number {
 }
 
 function nada(cru: string): Parcial {
-  return { ambiente: 'desconhecido', acao: 'execucao', alvo: '', destrutivo: false, prodEscrita: false, cru };
+  return { ambiente: 'desconhecido', acao: 'execucao', alvo: '', destrutivo: false, prodEscrita: false, cru, publicar: false };
 }
 
 function gravidade(a: Ambiente): number {
@@ -288,6 +324,7 @@ function classificarSegmento(s: Segmento, cfg: ConfigGuarda | null, ctx: Context
   }
 
   let escritaD3 = false;
+  let publicar = false;
   const branchesProd = cfg.ambientes.prod?.branches ?? [];
 
   if (s.cmd === 'vercel' || s.cmd === 'vc') {
@@ -300,6 +337,7 @@ function classificarSegmento(s: Segmento, cfg: ConfigGuarda | null, ctx: Context
     if (alvoProd) {
       candidatos.push({ ambiente: 'prod', alvo: 'vercel' });
       if (!VERCEL_LEITURA.has(sub)) escritaD3 = true;
+      if (formaFechadaVercel(s)) publicar = true;
     }
   } else if (s.cmd === 'supabase') {
     const sub = subSemFlags(s.args, SUPABASE_COM_VALOR).slice(0, 2).join(' ');
@@ -321,11 +359,22 @@ function classificarSegmento(s: Segmento, cfg: ConfigGuarda | null, ctx: Context
       p.acao = 'escrita';
       const atual = ctx.branchAtual;
       const refspecs = posicionaisDePush(g.resto).slice(1);
+      const posPush = posicionaisDePush(g.resto);
+      // DT1(a): flags só da lista, remoto `origin` ou omitido, nenhum refspec com `+` ou `:` inicial.
+      // Globais do git antes do push (`-C`, `--git-dir`, `--work-tree`, `-c`…) podem mudar o repositório alvo: fora da forma.
+      const semGlobais = s.args[0] === 'push';
+      const formaPublicar =
+        semGlobais &&
+        g.resto.every((a) => !a.startsWith('-') || FLAGS_PUBLICAR.has(a)) &&
+        (posPush[0] === undefined || posPush[0] === 'origin') &&
+        refspecs.every((r) => !r.startsWith('+') && !r.startsWith(':') && !origemNula(r)) &&
+        refspecs.length <= 1;
       const todasAsBranches = g.resto.includes('--mirror') || g.resto.includes('--all');
       const implicito = (): void => {
         if (atual !== null && branchesProd.includes(atual)) {
           candidatos.push({ ambiente: 'prod', alvo: atual });
           escritaD3 = true;
+          publicar = formaPublicar;
         } else candidatos.push({ ambiente: 'desconhecido', alvo: atual ?? 'HEAD' });
       };
       if (todasAsBranches && branchesProd.length > 0) {
@@ -334,6 +383,8 @@ function classificarSegmento(s: Segmento, cfg: ConfigGuarda | null, ctx: Context
       } else if (refspecs.length === 0) implicito();
       else {
         for (const r of refspecs) {
+          // Origem de OID nulo (só zeros) é DELEÇÃO da ref remota no git: destrutivo, nunca publicar (DT3).
+          if (origemNula(r)) p.destrutivo = true;
           const destino = destinoDeRefspec(r);
           if (destino === '' || /[$\u0001\u0000]/.test(destino) || destino.includes('`')) {
             // Destino que o shell resolve em tempo de execução: não dá para verificar.
@@ -345,6 +396,7 @@ function classificarSegmento(s: Segmento, cfg: ConfigGuarda | null, ctx: Context
           else if (branchesProd.includes(nome)) {
             candidatos.push({ ambiente: 'prod', alvo: nome });
             escritaD3 = true;
+            if (formaPublicar) publicar = true;
           }
         }
       }
@@ -356,6 +408,12 @@ function classificarSegmento(s: Segmento, cfg: ConfigGuarda | null, ctx: Context
     if (ctx.branchAtual !== null && branchesProd.includes(ctx.branchAtual)) {
       candidatos.push({ ambiente: 'prod', alvo });
       escritaD3 = true;
+      // `-R`/`--repo` aponta outro repositório: produção de terceiro, fora da forma `gh pr merge <n>` (DT1(b)).
+      // Forma fechada: `gh pr merge [<número>] [flags da lista]`; o prefixo de ambiente é barrado pelo portão (`portaoPublicar`); URL, owner/repo#n, branch, -R/--repo ficam fora.
+      const resto = s.args.slice(2);
+      publicar =
+        resto.every((a) => /^\d+$/.test(a) || FLAGS_GH_MERGE.has(a)) &&
+        resto.filter((a) => /^\d+$/.test(a)).length <= 1;
     } else candidatos.push({ ambiente: 'desconhecido', alvo });
   }
 
@@ -377,6 +435,8 @@ function classificarSegmento(s: Segmento, cfg: ConfigGuarda | null, ctx: Context
     } else p.acao = 'execucao';
   }
   p.prodEscrita = escolhido.ambiente === 'prod' && escritaD3;
+  // `publicar` vale só se o segmento é prod pela própria forma (DT3: destrutivo já fica fora pela lista de flags); o alvo prod único é garantido pelo portão (sem `$`, o destino é literal).
+  p.publicar = publicar && escolhido.ambiente === 'prod';
   return p;
 }
 
@@ -419,6 +479,8 @@ function classificarBash(entrada: EntradaHook, cfg: ConfigGuarda | null, ctx: Co
     destrutivo: topo.destrutivo,
     anel: null,
     segmentosProd: parciais.filter((x) => x.ambiente === 'prod').map((x) => x.cru),
+    // O portão garante 1 segmento: `publicar` é o do único segmento (já exige ambiente prod).
+    publicar: portaoPublicar(comando, segmentos) && parciais[0]?.publicar === true,
   };
 
   // O anel vem antes do ambiente.
@@ -428,7 +490,7 @@ function classificarBash(entrada: EntradaHook, cfg: ConfigGuarda | null, ctx: Co
   // Kill switch (REQ-POU-2): só o anel de caminho protege `.harness/PAUSAR`; citar o caminho num texto não é alvo.
   const anel = anelDeBash(segmentos, ctx, cwd, subagent, estado);
   const comEstado = estado.cdPerdido ? { ...base, cdPerdido: true } : base;
-  if (anel) return { ...comEstado, ambiente: 'desconhecido', acao: anel.escrita ? 'escrita' : 'leitura', alvo: reduzirAlvo(anel.alvo), anel: anel.anel };
+  if (anel) return { ...comEstado, ambiente: 'desconhecido', acao: anel.escrita ? 'escrita' : 'leitura', alvo: reduzirAlvo(anel.alvo), anel: anel.anel, publicar: false };
   return comEstado;
 }
 
@@ -452,6 +514,7 @@ function classificarMcp(entrada: EntradaHook, cfg: ConfigGuarda | null): Classif
     destrutivo: sql !== null && sqlDestrutivo(sql),
     anel: null,
     segmentosProd: ambiente === 'prod' ? [nome] : [],
+    publicar: false,
   };
 }
 

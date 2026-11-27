@@ -378,6 +378,7 @@ function montar(b: Bruto, profundidade: number): Segmento[] {
   const pularFlags = (comValor: Set<string>) => {
     while (p < w.length && (w[p].startsWith('-') || atrib(w[p]))) {
       const f = w[p++];
+      if (atrib(f)) atribs.push(f); // atribuição depois de `env`/`sudo` vale para o comando (GM-22 r1, DT4)
       if (f === '--') break;
       if (comValor.has(f) && p < w.length) p++;
     }
@@ -487,7 +488,10 @@ function raizesDePausa(contexto: Contexto): string[] {
   return Array.isArray(r) ? r.map((x) => x.replace(/\/+$/, '').toLowerCase()) : [];
 }
 
-const AREAS_DIR = ['.harness', 'tools/gabarito-gates', '.github/workflows', '.git/refs/remotes'];
+// `.githooks` e `.husky` (GM-22, DT5): onde o instalador grava `commit-msg` e `pre-push`; escrever ali desliga o gate local.
+const AREAS_DIR = ['.harness', 'tools/gabarito-gates', '.github/workflows', '.git/refs/remotes', '.githooks', '.husky'];
+/** Variáveis que injetam config do git (`core.hooksPath`) sem passar por `-c` (GM-22, DT4). */
+const ATRIB_CONFIG_GIT = /^(GIT_CONFIG_PARAMETERS|GIT_CONFIG_COUNT|GIT_CONFIG_KEY_\d+|GIT_CONFIG_VALUE_\d+)=/;
 const ANCESTRAIS = ['tools', '.github', '.claude', '.git', '.git/refs'];
 
 export function anelDeCaminho(caminho: string, contexto: Contexto, cwd?: string | null): Anel | null {
@@ -802,6 +806,8 @@ export function anelDeBash(segmentos: Segmento[], contexto: Contexto, cwd?: stri
 
     if (s.cmd === 'git') {
       const g = lerGit(s.args);
+      // GM-22 (DT4): push sem hooks (`--no-verify` e abreviações: prefixo `--no-veri`) e variáveis que injetam `core.hooksPath`, para os 2 papéis.
+      if (s.atribs.some((a) => ATRIB_CONFIG_GIT.test(a)) || (g.sub === 'push' && g.resto.some((a) => a.startsWith('--no-veri')))) integridade ??= { anel: 'integridade', alvo: '.git/hooks', escrita: true };
       const gitResto = candidatos(semTextoLivre('git', g.resto)).filter(ehCaminhoPlausivel);
       if (g.configs.some((c) => /^(remote\.|url\.|core\.hookspath)/i.test(c))) integridade ??= { anel: 'integridade', alvo: '.git/config', escrita: true };
       if (!subagent && gitResto.some((p) => dentroDeDotGit(p, contexto, atual))) integridade ??= { anel: 'integridade', alvo: '.git', escrita: true };

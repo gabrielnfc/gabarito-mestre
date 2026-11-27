@@ -18,10 +18,11 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { ORDEM_ITENS, coletarFatos, detectar, rodarReal, lerWorkflow, TIMEOUT_MCP_MS, perguntas, previa, configDasRespostas, gravar, MOTIVO_BRANCHPADRAO, MAX_PERGUNTAS } from '../scripts/onboarding.mjs';
+import { CHAVES_AUTONOMIA, ORDEM_ITENS, coletarFatos, detectar, rodarReal, lerWorkflow, TIMEOUT_MCP_MS, perguntas, previa, configDasRespostas, gravar, MOTIVO_BRANCHPADRAO, MAX_PERGUNTAS } from '../scripts/onboarding.mjs';
 import { coletar as coletarCartao } from '../scripts/cartao-sessao.mjs';
 import { lerConfigEntrega, politicaEfetiva } from '../dist/entrega.js';
 import { PERFIS_MODELO } from '../lib/config.mjs';
+import { acharProibidos } from '../lib/glossario.mjs';
 import * as capacidade from '../scripts/capacidade.mjs';
 
 const require = createRequire(import.meta.url);
@@ -938,6 +939,22 @@ describe('perguntas', () => {
     assert.equal(aut({ entrega: { politica: 'continua', autonomia: false } }).default, 'espera');
   });
 
+  test('onboarding-pergunta-autonomia-diz-o-que-cala', () => {
+    const FRASE = 'Sempre pergunto antes de tocar dados no ar, apagar em massa, mexer ou pular travas.';
+    const raiz = fixtureComGit('completa', 'trunk');
+    const normal = perguntas(itensLista(raiz), null).find((q) => q.id === 'autonomia');
+    assert.equal(normal.texto, `Posso trabalhar e publicar (colocar no ar para as pessoas usarem) sozinha? ${FRASE}`);
+    const mistaRaiz = comConfig(fixtureComGit('completa', 'trunk'), { entrega: { autonomia: true } });
+    const mista = perguntas(itensLista(mistaRaiz), existenteDe(mistaRaiz)).find((q) => q.id === 'autonomia');
+    assert.equal(mista.mista, true);
+    assert.equal(mista.texto, `A autonomia está mista: como devo trabalhar? Nada muda sem a sua escolha. ${FRASE}`);
+    for (const q of [normal, mista]) {
+      assert.ok([...q.texto].length <= 160, `${q.texto.length} > 160`);
+      assert.deepEqual(acharProibidos(q.texto), []);
+      assert.ok(q.texto.endsWith(FRASE));
+    }
+  });
+
   test('rotulo-nao-com-continua', () => {
     const it = itensLista(repoVazio());
     const nao = (entrega) => perguntas(it, { entrega })[1].opcoes.find((o) => o.valor === 'espera').rotulo;
@@ -1067,6 +1084,38 @@ describe('perguntas', () => {
     assert.deepEqual(p.opcoes.map((o) => o.valor), ['linear', null]);
     assert.equal(p.default, 'linear');
   });
+
+  // GM-22 T4 (REQ-TXT-1): a pergunta diz o que a autonomia cala; texto inteiro, nas duas variantes
+  const PUBLICA_CFG_222 = { entrega: { politica: 'sob_demanda', autonomia: true }, guarda: { autonomia: 'orquestrador' }, sombra: { julga_emendas: true, libera_teto: true } };
+  const TRABALHA_CFG_222 = { entrega: { politica: 'sob_demanda', autonomia: false }, guarda: { autonomia: 'orquestrador' }, sombra: { julga_emendas: true, libera_teto: true } };
+  const ESPERA_CFG_222 = { entrega: { politica: 'sob_demanda', autonomia: false }, guarda: { autonomia: 'nenhuma' }, sombra: { julga_emendas: false, libera_teto: false } };
+
+  test('rotulos-autonomia-iguais: os 3 valor e rotulo, byte a byte os da 2.3.0 (cláusula negativa)', () => {
+    const raiz = fixtureComGit('completa', 'trunk');
+    const p = perguntas(itensLista(raiz), null).find((q) => q.id === 'autonomia');
+    assert.deepEqual(p.opcoes, [
+      { valor: 'espera', rotulo: 'Espere o meu "pode" para tudo, inclusive antes de publicar' },
+      { valor: 'trabalha', rotulo: 'Trabalhe sozinha, mas espere o meu "pode" para publicar' },
+      { valor: 'publica', rotulo: 'Pode publicar sozinha, dentro da regra escolhida' },
+    ]);
+    const frouxa = comConfig(fixtureComGit('completa', 'trunk'), { entrega: { politica: 'continua' } });
+    const pf = perguntas(itensLista(frouxa), existenteDe(frouxa)).find((q) => q.id === 'autonomia');
+    assert.equal(pf.opcoes[0].rotulo, 'Espere o meu "pode": só abra o pedido de revisão');
+  });
+
+  test('config-222-segue-valida: as 3 configs de CHAVES_AUTONOMIA dão a mesma resposta, sem mista', () => {
+    assert.deepEqual(CHAVES_AUTONOMIA, {
+      espera: { entrega: false, guarda: 'nenhuma', julga_emendas: false, libera_teto: false },
+      trabalha: { entrega: false, guarda: 'orquestrador', julga_emendas: true, libera_teto: true },
+      publica: { entrega: true, guarda: 'orquestrador', julga_emendas: true, libera_teto: true },
+    });
+    for (const [cfg, esperado] of [[ESPERA_CFG_222, 'espera'], [TRABALHA_CFG_222, 'trabalha'], [PUBLICA_CFG_222, 'publica']]) {
+      const raiz = comConfig(fixtureComGit('completa', 'trunk'), cfg);
+      const p = perguntas(itensLista(raiz), existenteDe(raiz)).find((q) => q.id === 'autonomia');
+      assert.equal(p.default, esperado, JSON.stringify(cfg));
+      assert.equal('mista' in p, false, JSON.stringify(cfg));
+    }
+  });
 });
 
 describe('previa', () => {
@@ -1107,14 +1156,14 @@ describe('previa', () => {
     assert.ok(!nada.includes('política efetiva'));
     // as 3 decisões com default, e a janela padrão com o fuso recebido
     assert.match(nada, /política de entrega: sob_demanda/);
-    assert.match(nada, /autonomia em produção: não\n/, 'a resposta 1 mantém o texto da prévia da 2.0.0');
+    assert.match(nada, /autonomia para publicar: não\n/, 'a resposta 1 mantém o texto da prévia da 2.0.0');
     const cfgA = (a, g, j, l) => ({ entrega: { politica: 'sob_demanda', autonomia: a }, guarda: { autonomia: g }, sombra: { julga_emendas: j, libera_teto: l } });
     const pub = previa(it, perguntas(it, cfgA(true, 'orquestrador', true, true)), { fuso: FUSO });
-    assert.match(pub, /autonomia em produção: sim\n/);
+    assert.match(pub, /autonomia para publicar: sim\n/);
     const trab = previa(it, perguntas(it, cfgA(false, 'orquestrador', true, true)), { fuso: FUSO });
-    assert.match(trab, /autonomia em produção: trabalha sozinha, espera o seu ok para publicar\n/);
+    assert.match(trab, /autonomia para publicar: trabalha sozinha, espera o seu ok para publicar\n/);
     const mista = previa(it, perguntas(it, cfgA(false, 'nenhuma', true, false)), { fuso: FUSO });
-    assert.match(mista, /autonomia em produção: autonomia mista: preciso da sua escolha\n/);
+    assert.match(mista, /autonomia para publicar: autonomia mista: preciso da sua escolha\n/);
     assert.match(nada, /perfil de modelos: padrao/);
     assert.ok(nada.includes(FUSO) && nada.includes('09:00') && nada.includes('17:00'));
   });
@@ -1798,7 +1847,7 @@ describe('gravar', () => {
       assert.equal(p.default, null, JSON.stringify(cfg));
       assert.equal(p.mista, true);
       // a prévia fala em "autonomia mista" e não escolhe por ele
-      assert.match(previa(it, perguntas(it, existenteDe(raiz)), { fuso: FUSO }), /autonomia em produção: autonomia mista/);
+      assert.match(previa(it, perguntas(it, existenteDe(raiz)), { fuso: FUSO }), /autonomia para publicar: autonomia mista/);
       // pura, sem resposta: as 4 chaves não entram no patch
       const pura = configDasRespostas(it, { politica: 'sob_demanda', perfil: 'padrao' }, existenteDe(raiz), HOJE, { fuso: FUSO });
       assert.equal('guarda' in pura.patches, false, 'não rebaixa/promove a guarda');
