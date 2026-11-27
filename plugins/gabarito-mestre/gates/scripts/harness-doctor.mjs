@@ -912,6 +912,21 @@ export const CHECKS = [
     },
   },
   {
+    id: 'suites-declaradas',
+    rule: 'REQ-MIG-2',
+    level: 'warn',
+    kind: 'scan',
+    label: 'suítes de teste declaradas em gates.suites (o abrir do loop recusa sem elas)',
+    fix: 'declare gates.suites em harness.config.json (ex.: [{"nome":"unit","cmd":"npm test"}]) ou rode o onboarding — é aviso: não muda o nível nem quebra o CI',
+    detect: (ix, cfg) => {
+      if (cfg.configInvalido) return { found: false, evidence: 'harness.config.json inválido: não li gates.suites' };
+      const lista = cfg.gates !== null && typeof cfg.gates === 'object' ? cfg.gates.suites : undefined;
+      // Mesma régua do gate (`normalizarSuites`): texto não vazio, ou objeto com `cmd` texto não vazio.
+      const validas = Array.isArray(lista) ? lista.filter((s) => (typeof s === 'string' ? s.trim() !== '' : s !== null && typeof s === 'object' && typeof s.cmd === 'string' && s.cmd.trim() !== '')) : [];
+      return validas.length > 0 ? { found: true, evidence: `${validas.length} suíte(s)` } : { found: false, evidence: 'o abrir recusa sem suíte: declare gates.suites' };
+    },
+  },
+  {
     id: 'fluxo-status-fl1',
     rule: 'REQ-DCT-1',
     level: 'warn',

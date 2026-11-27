@@ -813,3 +813,56 @@ describe('FX3 doctor — nenhum comando para colar depois do onboarding', () => 
     assert.doesNotMatch('modelo-resolvido: rode node x.mjs', EXCECAO_APRENDIZADO);
   });
 });
+
+describe('GM-21 T2 doctor — suites-declaradas (REQ-MIG-2)', () => {
+  const FIX_CMD = 'o abrir recusa sem suíte: declare gates.suites';
+  const comCfg = (cfg) => repoComGit({ 'AGENTS.md': agents(1), ...(cfg === undefined ? {} : { 'harness.config.json': typeof cfg === 'string' ? cfg : JSON.stringify(cfg) }) });
+  const achado = (out) => out.resultados.find((r) => r.id === 'suites-declaradas');
+
+  test('doctor-suites-declaradas: sem gates.suites ⇒ FALTA com o conserto; com, found e o número de suítes', () => {
+    const sem = doctor.run(comCfg());
+    assert.equal(achado(sem).found, false);
+    assert.equal(achado(sem).evidence, FIX_CMD);
+    assert.equal(achado(sem).level, 'warn', 'aviso: não muda o nível');
+    assert.equal(achado(sem).rule, 'REQ-MIG-2');
+    assert.ok(sem.avisos.includes(`suites-declaradas: ${FIX_CMD}`), JSON.stringify(sem.avisos));
+    const dois = doctor.run(comCfg({ gates: { suites: [{ nome: 'unit', cmd: 'npm test' }, 'node --test'] } }));
+    assert.equal(achado(dois).found, true);
+    assert.equal(achado(dois).evidence, '2 suíte(s)');
+    assert.equal(dois.avisos.some((a) => a.startsWith('suites-declaradas')), false);
+    assert.equal(achado(doctor.run(comCfg({ gates: { suites: ['npm test'] } }))).evidence, '1 suíte(s)');
+    // o doctor lê o mesmo gates.suites que o onboarding grava (costura onboarding ⇒ doctor)
+    assert.match(doctor.CHECKS.find((c) => c.id === 'suites-declaradas').fix, /gates\.suites/);
+  });
+
+  test('doctor-suites-declaradas-nao-valem: lista vazia, entrada sem cmd, tipo errado, gates torto e config inválida ⇒ FALTA (falha nunca vira ok)', () => {
+    const casos = {
+      'lista vazia': { gates: { suites: [] } },
+      'só entrada sem cmd': { gates: { suites: [{ nome: 'x' }, { nome: 'y', cmd: '  ' }, 5, null] } },
+      'não é lista': { gates: { suites: 'npm test' } },
+      'gates não objeto': { gates: 'x' },
+      'gates null': { gates: null },
+      'gates sem suites': { gates: { proibidos: [] } },
+    };
+    for (const [nome, cfg] of Object.entries(casos)) {
+      const r = achado(doctor.run(comCfg(cfg)));
+      assert.equal(r.found, false, nome);
+      assert.equal(r.evidence, FIX_CMD, nome);
+    }
+    const invalida = achado(doctor.run(comCfg('{"gates": ')));
+    assert.equal(invalida.found, false);
+    assert.match(invalida.evidence, /harness\.config\.json inválido/);
+    // uma entrada válida entre inválidas conta só a válida
+    assert.equal(achado(doctor.run(comCfg({ gates: { suites: [{ nome: 'x' }, { cmd: 'npm test' }] } }))).evidence, '1 suíte(s)');
+  });
+
+  test('doctor-suites-declaradas-nao-muda-nivel: o aviso não derruba o nível nem o exit code (CLI real)', () => {
+    const sem = doctor.run(comCfg());
+    const com = doctor.run(comCfg({ gates: { suites: ['npm test'] } }));
+    assert.equal(sem.alcancado, com.alcancado);
+    assert.deepEqual(sem.novasFaltando, com.novasFaltando);
+    const rc = (d) => spawnSync(process.execPath, [SCRIPT], { cwd: d, encoding: 'utf8' });
+    assert.equal(rc(comCfg()).status, rc(comCfg({ gates: { suites: ['npm test'] } })).status);
+    assert.match(rc(comCfg()).stdout, new RegExp(FIX_CMD));
+  });
+});

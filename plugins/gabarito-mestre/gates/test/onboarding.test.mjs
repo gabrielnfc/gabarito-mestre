@@ -18,7 +18,7 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { CHAVES_AUTONOMIA, ORDEM_ITENS, coletarFatos, detectar, rodarReal, lerWorkflow, TIMEOUT_MCP_MS, perguntas, previa, configDasRespostas, gravar, MOTIVO_BRANCHPADRAO, MAX_PERGUNTAS } from '../scripts/onboarding.mjs';
+import { CHAVES_AUTONOMIA, ORDEM_ITENS, coletarFatos, detectar, detectarSuites, rodarReal, lerWorkflow, TIMEOUT_MCP_MS, perguntas, previa, configDasRespostas, gravar, MOTIVO_BRANCHPADRAO, MAX_PERGUNTAS } from '../scripts/onboarding.mjs';
 import { coletar as coletarCartao } from '../scripts/cartao-sessao.mjs';
 import { lerConfigEntrega, politicaEfetiva } from '../dist/entrega.js';
 import { PERFIS_MODELO } from '../lib/config.mjs';
@@ -2002,5 +2002,127 @@ describe('s6', () => {
     assert.match(skipS6(d, 'b'.repeat(40)), /golden foi medido em bbbbbbbb/, 'sha diferente: pula com motivo');
     assert.match(skipS6(join(d, 'nao-existe'), head), /sem .*\.git/);
     assert.ok(gabarito.filter((g) => g.repo === 'true_force').every((g) => /^[0-9a-f]{40}$/.test(g.sha)), 'o golden do true_force traz o sha medido');
+  });
+});
+
+// ────────────────────────────────────────────────────────────── GM-21 T2: suítes de teste (REQ-MIG-2, DT5)
+
+describe('suites (gates.suites)', () => {
+  const PLACEHOLDER = 'echo "Error: no test specified" && exit 1';
+  /** Fixture `completa` (tudo detectado) com o package.json trocado ANTES do commit. */
+  const comPackage = (pkg, cfg) => {
+    const d = novoDir();
+    cpSync(join(FIX, 'completa'), d, { recursive: true });
+    writeFileSync(join(d, 'package.json'), typeof pkg === 'string' ? pkg : JSON.stringify(pkg));
+    if (cfg !== undefined) writeFileSync(join(d, 'harness.config.json'), JSON.stringify(cfg, null, 2));
+    return montarRepo(d, 'trunk');
+  };
+  const pkgTeste = (test) => ({ name: 'app-completo', version: '1.0.0', scripts: { test } });
+  const detectarCli = (raiz) => {
+    const bin = novoDir('gm-onb-bin-');
+    writeFileSync(join(bin, 'claude'), '#!/bin/sh\nprintf "No MCP servers configured.\\n"\n');
+    chmodSync(join(bin, 'claude'), 0o755);
+    const r = spawnSync(process.execPath, [CLI, 'detectar', '--root', raiz, '--hoje', HOJE, '--fuso', FUSO], { encoding: 'utf8', env: { ...process.env, PATH: `${bin}:${process.env.PATH}` } });
+    assert.equal(r.status, 0, r.stderr);
+    return JSON.parse(r.stdout);
+  };
+  const base = () => detectarCli(comPackage({ name: 'app-completo', version: '1.0.0' }));
+
+  test('onboarding-detecta-suites: scripts.test ⇒ prévia, config gravada, nenhuma pergunta nova (CLI real)', () => {
+    const raiz = comPackage(pkgTeste('vitest run'));
+    assert.deepEqual(detectarSuites(fatosDe(raiz)).suites, [{ nome: 'unit', cmd: 'npm test' }]);
+    assert.match(detectarSuites(fatosDe(raiz)).fonte, /^package\.json:\d+ \(scripts\.test\)$/);
+    const s = detectarCli(raiz);
+    assert.deepEqual(s.suites, [{ nome: 'unit', cmd: 'npm test' }]);
+    assert.match(s.previa, /^- suítes de teste: npm test \(fonte: package\.json:\d+ \(scripts\.test\)\)$/m);
+    assert.deepEqual(s.perguntas.map((p) => p.id), base().perguntas.map((p) => p.id), 'nenhuma pergunta nova');
+    assert.deepEqual(s.itens.map((i) => i.item), ORDEM_ITENS, 'a detecção dos 5 itens não ganha item');
+    // gravar: UMA escrita com as seções do onboarding e gates.suites juntas
+    const seco = gravarCom(raiz, FIXAS, { dryRun: true });
+    assert.equal(seco.ok, true, JSON.stringify(seco));
+    assert.ok(seco.diff.includes('+ gates = {"suites":[{"nome":"unit","cmd":"npm test"}]}'), seco.diff.join('\n'));
+    assert.equal(temCfg(raiz), false, 'dry-run não escreve');
+    const r = gravarCom(raiz, FIXAS);
+    assert.equal(r.ok, true, JSON.stringify(r));
+    assert.ok(r.diff.includes('+ gates = {"suites":[{"nome":"unit","cmd":"npm test"}]}'));
+    const cfg = cfgDe(raiz);
+    assert.deepEqual(cfg.gates, { suites: [{ nome: 'unit', cmd: 'npm test' }] });
+    assert.equal(cfg.fluxo.resolvidoEm, HOJE, 'as seções do onboarding seguem gravadas');
+    assert.equal(cfg.onboarding.resolvidoEm, HOJE);
+    assert.equal(readdirSync(raiz).filter((f) => f.includes('.tmp-')).length, 0, 'sem resíduo da escrita atômica');
+  });
+
+  test('onboarding-nao-sobrescreve-suites: gates.suites existente (inclusive lista vazia) e as outras chaves de gates ficam', () => {
+    for (const suites of [[{ nome: 'meu', cmd: 'make teste' }], ['make teste'], []]) {
+      const raiz = comPackage(pkgTeste('vitest run'), { gates: { suites, proibidos: ['x'] } });
+      const f = fatosDe(raiz);
+      assert.equal(detectarSuites(f), null, JSON.stringify(suites));
+      assert.doesNotMatch(detectarCli(raiz).previa, /suítes de teste/);
+      const r = gravarCom(raiz, FIXAS);
+      assert.equal(r.ok, true, JSON.stringify(r));
+      assert.equal(r.diff.some((l) => l.includes('gates')), false, 'o diff não toca gates');
+      assert.deepEqual(cfgDe(raiz).gates, { suites, proibidos: ['x'] });
+    }
+    // `gates` que não é objeto: não é do onboarding trocar por um objeto (o dono escreveu outra coisa)
+    for (const gates of ['x', null, 5, ['npm test']]) {
+      const r0 = comPackage(pkgTeste('vitest run'), { gates });
+      assert.equal(detectarSuites(fatosDe(r0)), null, JSON.stringify(gates));
+      assert.equal(gravarCom(r0, FIXAS).ok, true);
+      assert.deepEqual(cfgDe(r0).gates, gates);
+    }
+    // `gates` presente com outra chave e SEM suites: grava só suites e preserva a outra (merge, não troca de seção)
+    const raiz = comPackage(pkgTeste('vitest run'), { gates: { proibidos: ['x'] } });
+    assert.equal(gravarCom(raiz, FIXAS).ok, true);
+    assert.deepEqual(cfgDe(raiz).gates, { proibidos: ['x'], suites: [{ nome: 'unit', cmd: 'npm test' }] });
+  });
+
+  test('onboarding-sem-script-test-nao-pergunta: sem scripts.test (ausente, vazio, não texto) nada é gravado, nada é perguntado', () => {
+    const casos = [
+      { name: 'a' },
+      { name: 'a', scripts: {} },
+      { name: 'a', scripts: { build: 'tsc' } },
+      { name: 'a', scripts: { test: '' } },
+      { name: 'a', scripts: { test: '   ' } },
+      { name: 'a', scripts: { test: 5 } },
+      { name: 'a', scripts: { test: null } },
+      { name: 'a', scripts: 'texto' },
+    ];
+    for (const pkg of casos) {
+      const raiz = comPackage(pkg);
+      assert.equal(detectarSuites(fatosDe(raiz)), null, JSON.stringify(pkg));
+      const s = detectarCli(raiz);
+      assert.equal(s.suites, null);
+      assert.doesNotMatch(s.previa, /suítes de teste/);
+      assert.deepEqual(s.perguntas.map((p) => p.id), base().perguntas.map((p) => p.id), 'nenhuma pergunta nova');
+      assert.equal(gravarCom(raiz, FIXAS).ok, true);
+      assert.equal('gates' in cfgDe(raiz), false, JSON.stringify(pkg));
+    }
+    // package.json ausente ou ilegível: o mesmo (ausente ≠ erro, mas nunca inventa suíte)
+    const sem = repoCom({ 'README.md': 'x' });
+    assert.equal(detectarSuites(fatosDe(sem)), null);
+    const torto = repoCom({ 'package.json': '{"scripts": ' });
+    assert.equal(detectarSuites(fatosDe(torto)), null);
+  });
+
+  test('onboarding-placeholder-nao-grava: o `test` do npm init não vira suíte, em qualquer forma de escrever', () => {
+    const formas = [PLACEHOLDER, "echo 'Error: no test specified' && exit 1", `  ${PLACEHOLDER}  `, 'echo Error: no test specified && exit 1', 'echo "Error: no test specified"&&exit 1'];
+    for (const t of formas) {
+      const raiz = comPackage(pkgTeste(t));
+      assert.equal(detectarSuites(fatosDe(raiz)), null, t);
+      assert.doesNotMatch(detectarCli(raiz).previa, /suítes de teste/, t);
+      assert.equal(gravarCom(raiz, FIXAS).ok, true);
+      assert.equal('gates' in cfgDe(raiz), false, t);
+    }
+    // vizinho: teste de verdade que apenas menciona `echo` não é o placeholder
+    assert.deepEqual(detectarSuites(fatosDe(comPackage(pkgTeste('echo ok && node --test')))).suites, [{ nome: 'unit', cmd: 'npm test' }]);
+  });
+
+  test('onboarding-suites-config-corrompida: config ilegível não vira gates.suites (a falha segue a de hoje)', () => {
+    const raiz = comPackage(pkgTeste('vitest run'));
+    writeFileSync(join(raiz, 'harness.config.json'), '{"gates": ');
+    assert.equal(detectarSuites(fatosDe(raiz)), null);
+    const r = gravarCom(raiz, FIXAS);
+    assert.deepEqual([r.ok, r.erro], [false, 'config_invalida']);
+    assert.equal(textoCfg(raiz), '{"gates": ', 'bytes intactos');
   });
 });

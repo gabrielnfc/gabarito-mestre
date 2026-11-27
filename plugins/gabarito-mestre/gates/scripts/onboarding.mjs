@@ -37,7 +37,7 @@ import { hojeISO, diasEntre } from '../lib/datas.mjs';
 import * as capacidade from './capacidade.mjs';
 import { lerConfigEntrega, politicaEfetiva } from '../dist/entrega.js';
 import { PERFIS_MODELO, resolverModelo } from '../lib/config.mjs';
-import { aplicarConfig, ArquivoInvalido } from './onboarding-config.mjs';
+import { aplicarConfig, ArquivoInvalido, mergeDeep, diffChaves, escreverAtomico } from './onboarding-config.mjs';
 import { herdar } from './onboarding-herdar.mjs';
 import { gravarFoco, ofertaFoco } from './onboarding-foco.mjs';
 import { gravarLocal, ofertaLocal } from './onboarding-painel.mjs';
@@ -391,6 +391,21 @@ function detectarTipoRepo(f) {
   if (marcas.length > 0) return amb('tipo_repo', ['app', 'repo-sem-app'], `monorepo: ${marcas.join('; ')}`, f.motivos.packageJson);
   if (f.packageJson) return det('tipo_repo', 'app', `package.json:${linhaDeChave(f.textos?.packageJson, ['name']) ?? 1} (sem marcador de monorepo)`);
   return amb('tipo_repo', ['app', 'repo-sem-app'], 'sem package.json legível', f.motivos.packageJson ?? 'sem package.json');
+}
+
+// GM-21 T2 (REQ-MIG-2, DT5): `gates.suites` detectada de `package.json:scripts.test`. Não é item do onboarding (não vira
+// pergunta nem entra em ORDEM_ITENS): só a prévia mostra e o `gravar` escreve. Config que já tem `gates.suites` (mesmo lista
+// vazia) ou `gates` que não é objeto fica como está: o onboarding nunca sobrescreve o que o dono declarou.
+const PLACEHOLDER_NPM_TEST = /^echo\s+(["']?)error: no test specified\1\s*&&\s*exit\s+1$/i;
+/** `{ suites: [{nome, cmd}], fonte }` ou `null`. Pura. */
+export function detectarSuites(f) {
+  if (configErro(f) !== null) return null; // ilegível ≠ ausente: nada é gravado por cima
+  const cfg = configObj(f);
+  if (cfg.gates !== undefined && (!ehObjeto(cfg.gates) || cfg.gates.suites !== undefined)) return null;
+  const s = f.packageJson?.scripts;
+  const t = ehObjeto(s) ? s.test : undefined;
+  if (typeof t !== 'string' || t.trim() === '' || PLACEHOLDER_NPM_TEST.test(t.trim())) return null;
+  return { suites: [{ nome: 'unit', cmd: 'npm test' }], fonte: `package.json:${linhaDeChave(f.textos?.packageJson, ['scripts', 'test']) ?? '?'} (scripts.test)` };
 }
 
 const PREFIXO_ENV = /^(PROD|PRODUCTION|STAGING|STG|HOMOLOG|HML)_/;
@@ -753,7 +768,7 @@ function efetivaDe(politica, autonomia, fuso) {
  * Prévia em texto: `detectei:` com 1 fato por linha (estado e fonte), as 3 decisões com default, a política efetiva quando
  * difere da escolhida, a janela padrão e a linha `trocar <item>`. `fuso` entra na janela padrão (CLI: o do `Intl`).
  */
-export function previa(itens, perguntasDoOnboarding, { fuso = fusoLocal(), calibracao = [], existente } = {}) {
+export function previa(itens, perguntasDoOnboarding, { fuso = fusoLocal(), calibracao = [], existente, suites = null } = {}) {
   const ps = Object.fromEntries(perguntasDoOnboarding.map((p) => [p.id, p]));
   const linhas = ['detectei:'];
   for (const i of itens) {
@@ -761,6 +776,7 @@ export function previa(itens, perguntasDoOnboarding, { fuso = fusoLocal(), calib
     const extra = i.item === 'ambientes' ? '; ambientes: informativo; a guarda usa guarda.ambientes' : '';
     linhas.push(`- ${i.item}: ${i.estado}${v ? ` ${v}` : ''} (fonte: ${i.fonte})${i.motivo ? `; motivo: ${i.motivo}` : ''}${extra}`);
   }
+  if (suites !== null) linhas.push(`- suítes de teste: ${suites.suites.map((x) => x.cmd).join(', ')} (fonte: ${suites.fonte})`);
   linhas.push('', 'decido com você (default entre colchetes):');
   const fixas = [['politica', 'política de entrega'], ['autonomia', 'autonomia para publicar'], ['perfil', 'perfil de modelos']];
   for (const [id, nome] of fixas) {
@@ -941,9 +957,17 @@ export function gravar(raiz, caminhoRespostas, { rodar = rodarReal, hoje = hojeI
     }
   }
   const { patches, perfil, naoDetectado } = configDasRespostas(itens, respostas, fatos.configExistente, hoje, { fuso, recalibrar: recalibrarPedido === true });
+  const suites = detectarSuites(fatos);
   let r;
   try {
-    r = aplicarConfig(raiz, { secoes: patches, perfil }, { dryRun });
+    r = aplicarConfig(raiz, { secoes: patches, perfil }, { dryRun: dryRun || suites !== null });
+    if (suites !== null) {
+      // `gates` não é seção do `aplicarConfig`: junta ao resultado dele e faz a MESMA escrita única (tmp + rename).
+      const depois = mergeDeep(r.depois, { gates: { suites: suites.suites } });
+      r = { ...r, depois, diff: diffChaves(r.antes, depois) };
+      const arquivo = join(raiz, 'harness.config.json');
+      if (!dryRun && (r.diff.length > 0 || !existsSync(arquivo))) escreverAtomico(arquivo, depois);
+    }
   } catch (e) {
     if (e instanceof ArquivoInvalido) return falha('config_invalida', e.message);
     return falha('falha', String(e.message ?? e).split('\n')[0]);
@@ -998,7 +1022,8 @@ function main(argv) {
     const recal = argv.includes('--recalibrar') ? previaRecalibracao(par, hoje) : null;
     const nova = recal === null && semCalibracao(par) ? calibracaoDaMaquina(hoje) : null;
     const calibracao = recal !== null ? [recal.texto] : nova !== null ? [`o paralelismo será calibrado para esta máquina (${nova.cores} núcleos): ${textoParalelismo(nova.paralelismo)}`] : [];
-    saida({ ok: true, itens, perguntas: ps, previaSimples: previaSimples(itens, ps), previa: previa(itens, ps, { fuso, calibracao, existente: fatos.configExistente }), ...(recal !== null ? { recalibrar: { antes: recal.antes, depois: recal.depois, cores: recal.cores } } : {}) });
+    const suitesDet = detectarSuites(fatos);
+    saida({ ok: true, itens, suites: suitesDet === null ? null : suitesDet.suites, perguntas: ps, previaSimples: previaSimples(itens, ps), previa: previa(itens, ps, { fuso, calibracao, existente: fatos.configExistente, suites: suitesDet }), ...(recal !== null ? { recalibrar: { antes: recal.antes, depois: recal.depois, cores: recal.cores } } : {}) });
     return 0;
   } catch (e) {
     saida({ ok: false, erro: 'falha', motivo: String(e.message).split('\n')[0] });
