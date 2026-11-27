@@ -3,6 +3,48 @@
 Formato: [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/). Versionamento: [SemVer](https://semver.org/lang/pt-BR/).
 Usuários do plugin só recebem atualização quando `version` muda.
 
+## [2.4.0] — 2026-11-27
+
+Resto do relato de um repo consumidor que veio da 2.1.0-alpha.1 (GM-21, D-G49, D-G50, D-G56). Os itens 1 e 6 do relato saíram na 2.3.1; o que a guarda ainda deixa passar fica em PBI próprio (D-G57). O release e a virada `next ⇒ main` seguem sob ordem do dono.
+
+### Corrigido
+
+- **O painel não encerra mais a entrega por um PR antigo (ex.: o PR só do plano), e o loop não a trata como publicada** (item 2). Com `plano.json` válido, a entrega só é dada como publicada quando todas as tasks estão integradas ou fora, e só por PR mergeado depois da última integração. PR mergeado com task aberta não encerra: o painel `estado` avisa (`PR #N mergeado não encerra a <ID>: tasks abertas …`) e o dono encerra com `/gabarito-mestre:encerrar <ID> <PR>`. O encerramento do dono vale na mesma regra. `plano.json` ausente, ilegível ou inválido segue a regra de antes.
+- **O modelo do orquestrador vem do papel `orquestrador` (opus nos 3 perfis), não do `revisor_final`** (item 3). O onboarding grava o alias por esse papel e o doctor avisa quando o alias gravado diverge dele.
+- **Plano no formato antigo e config sem `gates.suites` são recusados no `abrir`, antes de criar worktree, branch ou banco** (item 4). A recusa (`plano_nao_executavel`) cita a task, o campo e o que migrar; o `proxima` não despacha a task com problema e põe o motivo em `aviso`. Antes, só quebravam no `integrar`, depois do review. O formato das tasks (`mutacoes` como caminho de arquivo JSON, `teste_afetado` como comando de shell) está em `reference/fluxo.md` §4.5.
+- **O gate conta os resumos do vitest e do jest** (item 5): `Tests  N failed | N passed | N skipped (N)` e `Tests:  N failed, N passed, N total`, sem cores; `Test Files` e `Test Suites` não contam e pulados não são prova. Com contagem node/TAP na saída, uma linha `Tests …` é texto de fixture e não conta.
+- **O `teste_afetado` e as suítes com `serial: true` rodam sozinhos** (item 11): primeiro as paralelas juntas, depois cada serial, na ordem declarada, e por fim a do mod (a spec dizia "por último"; no código a do mod segue por último). A medição da base usa a mesma ordem.
+
+### Novo
+
+- **`onboarding.mjs herdar --tasks --entrega <ID> --arquivo <lista.json> [--gravar [--dry-run]]`** (item 7): importa tasks de antes do gabarito como `task.herdada`, cada uma com a origem conferida (`commit:<sha>` ancestral de HEAD, `pr:<n>` MERGED pelo `gh`, `ledger:<arquivo>:<linha>` versionado e com a linha). Tudo ou nada: 1 recusada e nada é gravado. Task que já está no `plano.json` é recusada (o loop mede) e task já herdada é pulada. Sem `--gravar` só lê. Nunca grava `task.integrada` falso. O painel mostra herdadas separadas das medidas e as herdadas entram no total e no %, nunca na previsão.
+- **O onboarding detecta `gates.suites`** de `package.json` (`scripts.test` ⇒ `npm test`) e a prévia mostra; nunca sobrescreve `gates` que o dono já declarou, e o placeholder do `npm init` não vale. O doctor ganha o aviso `suites-declaradas` (aviso: não muda o nível) quando falta `gates.suites`.
+
+### Mudado
+
+- **Previsão do projeto só com 5 tasks medidas ou mais; abaixo diz "sem ritmo: N de 5 tasks medidas"** (item 8). A amostra é a do ritmo (diário que tem ritmo, task integrada com `ts` válido, 1 vez por task). O piso `AMOSTRA_MINIMA_PROJETO = 5` ainda não tem confirmação do dono e pode mudar.
+- **O DEPENDE não pede "revisar e aceitar" o PR em rascunho nem quando a entrega tem `autonomia: true`** (item 9). O PR de rascunho (`isDraft` do `gh`) e o de entrega com autonomia saem só desse item; os outros itens do DEPENDE ficam. Fato `pr` de diário da 2.3.1, sem `rascunho`, vale como não rascunho.
+- **O título da entrega no painel vem do card do PBI** (item 12): o `# ` do card em `fluxo.mapeamento.FL1` cujo `id` é o da entrega; sem pasta, sem card ou card sem título vale o título de antes, e 2 cards com o mesmo `id` valem o título de antes com aviso.
+- **Mutação de migration de banco** (item 10): orientação em `reference/gates.md` ("Migration de banco"), sem tipo novo de mutação: fonte única que o teste lê, ou `teste` que recria banco local e efêmero e reaplica as migrations; nunca banco de produção nem compartilhado.
+
+### Para quem já usa
+
+- Entrega com task aberta e PR mergeado deixa de ser encerrada sozinha e o loop deixa de recusar com `entrega_publicada`; encerre com `/gabarito-mestre:encerrar <ID> <PR>`. Entrega já encerrada por engano antes da 2.4.0 segue encerrada até `/gabarito-mestre:reabrir-entrega`.
+- Repo sem `gates.suites` passa a ver o `abrir` recusar antes, em vez do `integrar` depois; rode o onboarding ou declare `gates.suites` em `harness.config.json`.
+- O alias do orquestrador gravado antes da 2.4.0 (ex.: `fable`) só muda quando o onboarding roda de novo; o doctor avisa a divergência.
+- Volta: reverter o merge; nenhuma config é regravada sem o onboarding.
+
+### Limites declarados
+
+- "RED conhecido" (falha pré-existente declarada) só para node --test/TAP; vitest e jest com falha reprovam.
+- O resumo do jest foi lido da documentação, sem jest real; outros runners sem resumo reconhecido (mocha etc.) seguem em "sem prova" ou `semContagem`. Saída de monorepo com prefixo de pacote (`pnpm -r`, `turbo`) também segue em "sem prova".
+- Teste de vitest ou jest que imprime no formato do node (`ℹ tests N`, `# pass N`) faz o gate descartar o resumo real: o jest com rc 0 vira falso vermelho e o vitest detalhado conta a fixture. Não vira falso verde.
+- A regra "task aberta não encerra" não vale na regra antiga de publicada antes de o PR final abrir: com o plano fechado e só o PR antigo mergeado, a entrega segue publicada pelo PR antigo (o loop recusa `pousar` e `parar` e o Stop silencia). Já era assim e não piora; a regra só muda se o dono pedir.
+- O piso de 5 tasks da previsão do projeto ainda não tem confirmação do dono.
+- `herdar --tasks` com erro de E/S no meio da gravação deixa gravadas as entradas anteriores (o erro `evento_nao_gravado` diz quantas), e não há trava entre ler as já herdadas e gravar.
+- Não medido: o plugin 2.3.1 lendo um diário que a 2.4.0 gravou com `pr.rascunho: true` pode rejeitar o evento (a forma recusa campo extra, como já era com `contem` e `pre_versao`); a janela de compatibilidade entre versões não foi medida.
+- Falsos negativos da guarda e o resto do backlog da GM-22 ficam fora (D-G57); o sufixo `autonomia (2.3.1)` do `ask` é a versão da regra e não muda.
+
 ## [2.3.1] — 2026-11-26
 
 Hotfix de segurança da guarda (GM-22, D-G51, D-G52).
