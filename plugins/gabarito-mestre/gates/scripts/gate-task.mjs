@@ -98,8 +98,8 @@ export function rodarShell(nome, cmd, cwd) {
 }
 
 /**
- * Nomes de teste que falharam + total de falhas declarado (soma de todos os `fail N`; null se
- * não há resumo). Com a seção "failing tests" do node, só ela dá os nomes: a suíte pai também
+ * Nomes de teste que falharam + total de falhas declarado (soma dos `fail N` do node/TAP ou dos
+ * resumos `Tests` do vitest/jest; null se não há resumo; `node` = leu contagem node/TAP). Com a seção "failing tests" do node, só ela dá os nomes: a suíte pai também
  * sai com ✖ mas não conta em `fail`.
  */
 export function falhas(out) {
@@ -140,16 +140,18 @@ export function contagem(saida) {
   const out = saida.replace(/\x1b\[[0-9;]*[A-Za-z]/g, '');
   const soma = (a, b) => (a === null && b === null ? null : (a ?? 0) + (b ?? 0));
   const nodeTests = somar(out, 'tests'); const nodePass = somar(out, 'pass'); const nodeFail = somar(out, 'fail');
+  const node = nodeTests !== null || nodePass !== null || nodeFail !== null;
+  // com contagem node/TAP, uma linha `Tests ...` na saída é texto de fixture, não resumo de vitest/jest
   let total = null;
-  for (const m of out.matchAll(/^\s*Tests:?\s+\d+ (?:failed|passed|skipped|todo)\b.*$/gm)) {
+  for (const m of node ? [] : out.matchAll(/^\s*Tests:?\s+\d+ (?:failed|passed|skipped|todo)\b.*$/gm)) {
     const t = /\((\d+)\)\s*$/.exec(m[0]) ?? /(\d+) total\s*$/.exec(m[0]);
     total = (total ?? 0) + (t ? Number(t[1]) : 0);
   }
   return {
     tests: soma(nodeTests, total),
-    pass: soma(nodePass, somarResumo(out, 'passed')),
-    fail: soma(nodeFail, somarResumo(out, 'failed')),
-    node: nodeTests !== null || nodePass !== null || nodeFail !== null,
+    pass: soma(nodePass, node ? null : somarResumo(out, 'passed')),
+    fail: soma(nodeFail, node ? null : somarResumo(out, 'failed')),
+    node,
   };
 }
 
