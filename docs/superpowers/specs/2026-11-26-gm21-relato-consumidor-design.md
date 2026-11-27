@@ -265,6 +265,8 @@ Emenda 12 (T12): o oráculo de `fumaca-onboarding-respostas` mora em `gates/test
 
 Emenda 13 (T6): entra no escopo da T6 `gates/test/origem.test.ts`, só o mapa `esperado` de `origem-tabela-cada-tipo`, que exige 1 expectativa por chave de `TIPOS_EVENTO`: ganha `'task.herdada': null` (o `src/origem.ts` não muda; tipo fora da tabela já devolve `null` e falha fechado), sem mudar outra asserção.
 
+Emenda 14 (T8): entra no escopo da T8 `gates/test/fumaca-gm14.test.mjs`, só a fase (8) `prAberto` de `fumaca-sete-fases`: a caminhada grava `entrega.autonomia: true` (`fumaca-gm14/caminhada.mjs:100`), então pela DT12 o item `revisar e aceitar o pedido de revisão #7` sai e as 2 asserções de `depende`/topo passam a esperar nada no DEPENDE; trilha, progresso e marcas ficam iguais.
+
 ## CHANGELOG [2.4.0] previsto
 
 ```
