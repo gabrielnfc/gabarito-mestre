@@ -263,6 +263,8 @@ Emenda 11 (T12): entra no escopo da T12 `gates/test/fumaca-e5.test.mjs`, só `fu
 
 Emenda 12 (T12): o oráculo de `fumaca-onboarding-respostas` mora em `gates/test/fumaca-e5/caminhada.mjs` (`configEsperada`, tabela do alias por perfil); esse arquivo entra no escopo da T12 só para a tabela do alias passar a `opus` nos 3 perfis (DT3), sem mudar outro byte do oráculo.
 
+Emenda 13 (T6): entra no escopo da T6 `gates/test/origem.test.ts`, só o mapa `esperado` de `origem-tabela-cada-tipo`, que exige 1 expectativa por chave de `TIPOS_EVENTO`: ganha `'task.herdada': null` (o `src/origem.ts` não muda; tipo fora da tabela já devolve `null` e falha fechado), sem mudar outra asserção.
+
 ## CHANGELOG [2.4.0] previsto
 
 ```
