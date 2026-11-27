@@ -18,11 +18,12 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { CHAVES_AUTONOMIA, ORDEM_ITENS, coletarFatos, detectar, rodarReal, lerWorkflow, TIMEOUT_MCP_MS, perguntas, previa, configDasRespostas, gravar, MOTIVO_BRANCHPADRAO, MAX_PERGUNTAS } from '../scripts/onboarding.mjs';
+import { CHAVES_AUTONOMIA, ORDEM_ITENS, coletarFatos, detectar, detectarSuites, itensDaPrevia, rodarReal, lerWorkflow, TIMEOUT_MCP_MS, perguntas, previa, configDasRespostas, gravar, MOTIVO_BRANCHPADRAO, MAX_PERGUNTAS } from '../scripts/onboarding.mjs';
 import { coletar as coletarCartao } from '../scripts/cartao-sessao.mjs';
 import { lerConfigEntrega, politicaEfetiva } from '../dist/entrega.js';
 import { PERFIS_MODELO } from '../lib/config.mjs';
 import { acharProibidos } from '../lib/glossario.mjs';
+import { conferirExecutavel } from '../scripts/plano-executavel.mjs';
 import * as capacidade from '../scripts/capacidade.mjs';
 
 const require = createRequire(import.meta.url);
@@ -780,7 +781,7 @@ const arquivoResp = (conteudo) => {
 /** `gravar` pelo núcleo, com o `claude` falso e o git real. */
 const gravarCom = (raiz, respostas, { claude = CLICKUP, previaClaude = claude, hoje = HOJE, fuso = FUSO, dryRun = false, bruto, semPrevia = false } = {}) => {
   // `_previa` = `itens` de `detectar` como o dono os viu (o `claude` da prévia pode diferir do do gravar).
-  const com = semPrevia || respostas === null ? respostas : { ...respostas, _previa: JSON.parse(JSON.stringify(detectar(fatosDe(raiz, { claude: previaClaude })))) };
+  const com = semPrevia || respostas === null ? respostas : { ...respostas, _previa: JSON.parse(JSON.stringify(itensDaPrevia(fatosDe(raiz, { claude: previaClaude })))) };
   return gravar(raiz, arquivoResp(bruto ?? com), { rodar: rodarCom(claude), hoje, fuso, dryRun });
 };
 const itensLista = (raiz, opts) => detectar(fatosDe(raiz, opts));
@@ -1206,7 +1207,7 @@ describe('gravar', () => {
     const cfg = cfgDe(raiz);
     const datas = [cfg.fluxo.resolvidoEm, cfg.versionamento.resolvidoEm, cfg.orquestracao.modelo.resolvidoEm, cfg.onboarding.resolvidoEm];
     assert.deepEqual(datas, Array(4).fill('2025-06-30'));
-    assert.equal(cfg.orquestracao.modelo.alias, 'opus', 'revisor_final do perfil economia');
+    assert.equal(cfg.orquestracao.modelo.alias, 'opus', 'papel orquestrador do perfil economia');
     assert.equal(cfg.orquestracao.modelo.politica, 'mais-potente');
     assert.equal(cfg.orquestracao.modelo.validadeDias, 90);
     assert.equal(cfg.orquestracao.perfil, 'economia');
@@ -1215,7 +1216,7 @@ describe('gravar', () => {
     assert.equal(r2.ok, true);
     const c2 = cfgDe(raiz);
     assert.deepEqual([c2.fluxo.resolvidoEm, c2.versionamento.resolvidoEm, c2.orquestracao.modelo.resolvidoEm, c2.onboarding.resolvidoEm], Array(4).fill('2025-07-01'));
-    assert.equal(c2.orquestracao.modelo.alias, 'fable');
+    assert.equal(c2.orquestracao.modelo.alias, 'opus', 'qualidade: opus no orquestrador (DT3), Fable só no review final');
   });
 
   test('gravar-alias-explicito-e-modelo-existente-ficam', () => {
@@ -1227,6 +1228,32 @@ describe('gravar', () => {
     assert.equal(m.modelo.politica, 'fixo');
     assert.equal(m.modelo.validadeDias, 30);
     assert.deepEqual(m.modelos, { revisor_final: 'claude-opus-9' });
+  });
+
+  test('alias-orquestrador-por-papel: alias = papel orquestrador (opus nos 3 perfis); explícito do orquestrador vence; revisor_final não manda', () => {
+    for (const perfil of ['economia', 'padrao', 'qualidade']) {
+      const raiz = fixtureComGit('completa', 'trunk');
+      assert.equal(gravarCom(raiz, { ...FIXAS, perfil }).ok, true, perfil);
+      assert.equal(cfgDe(raiz).orquestracao.modelo.alias, 'opus', perfil);
+    }
+    const so = comConfig(fixtureComGit('completa', 'trunk'), { orquestracao: { modelos: { orquestrador: 'sonnet' } } });
+    assert.equal(gravarCom(so, { ...FIXAS, perfil: 'padrao' }).ok, true);
+    assert.equal(cfgDe(so).orquestracao.modelo.alias, 'sonnet', 'modelos.orquestrador explícito');
+    const rf = comConfig(fixtureComGit('completa', 'trunk'), { orquestracao: { modelos: { revisor_final: 'sonnet' } } });
+    assert.equal(gravarCom(rf, { ...FIXAS, perfil: 'qualidade' }).ok, true);
+    assert.equal(cfgDe(rf).orquestracao.modelo.alias, 'opus', 'modelos.revisor_final não muda o alias do orquestrador');
+  });
+
+  test('previa-troca-de-alias-cita-modelos-orquestrador: a dica de manter o alias aponta modelos.orquestrador', () => {
+    const itens = [{ item: 'tipo_repo', estado: 'detectado', valor: 'app', fonte: 'x', candidatos: [] }];
+    const perg = (perfil) => [{ id: 'politica', opcoes: [], default: 'sob_demanda' }, { id: 'autonomia', opcoes: [], default: false }, { id: 'perfil', opcoes: [], default: perfil }];
+    const t = previa(itens, perg('padrao'), { fuso: 'UTC', existente: { orquestracao: { modelo: { alias: 'sonnet' } } } });
+    assert.match(t, /modelo do orquestrador: sonnet ⇒ opus \(vem do perfil padrao; para manter sonnet: modelos\.orquestrador\)/);
+    assert.doesNotMatch(t, /modelos\.revisor_final/);
+    const fable = previa(itens, perg('padrao'), { fuso: 'UTC', existente: { orquestracao: { modelo: { alias: 'fable' } } } });
+    assert.match(fable, /modelo do orquestrador: fable ⇒ opus/);
+    const igual = previa(itens, perg('padrao'), { fuso: 'UTC', existente: { orquestracao: { modelo: { alias: 'opus' } } } });
+    assert.doesNotMatch(igual, /modelo do orquestrador/);
   });
 
   test('gravar-cartao-sai-do-sem-onboarding', () => {
@@ -1370,7 +1397,7 @@ describe('gravar', () => {
     const verDepois = depois.find((i) => i.item === 'versionamento');
     assert.equal(verDepois.estado, 'ambiguo', 'segue aberto');
     assert.notDeepEqual(verDepois.valor, verAntes.valor, 'o valor do fato acima do teto mudou');
-    const v = gravarCom(acima, { ...FIXAS, tipo_repo: 'app', planejamento: null }, { claude: SEM_MCP, bruto: { ...FIXAS, tipo_repo: 'app', planejamento: null, _previa: JSON.parse(JSON.stringify(antes)) } });
+    const v = gravarCom(acima, { ...FIXAS, tipo_repo: 'app', planejamento: null }, { claude: SEM_MCP, bruto: { ...FIXAS, tipo_repo: 'app', planejamento: null, _previa: JSON.parse(JSON.stringify([...antes, ...itensDaPrevia(fatosDe(acima, { claude: SEM_MCP })).slice(-1)])) } });
     assert.deepEqual([v.ok, v.erro], [false, 'deteccao_mudou']);
     assert.match(v.motivo, /versionamento/);
     assert.equal(temCfg(acima), false, 'nada escrito');
@@ -1409,7 +1436,7 @@ describe('gravar', () => {
     const w = fs.writeFileSync;
     const rn = fs.renameSync;
     const raiz = fixtureComGit('completa', 'trunk');
-    const respostas = arquivoResp({ ...FIXAS, _previa: JSON.parse(JSON.stringify(detectar(fatosDe(raiz)))) });
+    const respostas = arquivoResp({ ...FIXAS, _previa: JSON.parse(JSON.stringify(itensDaPrevia(fatosDe(raiz)))) });
     fs.writeFileSync = (c, ...r) => { if (String(c).startsWith(raiz)) escritas.push(String(c)); return w(c, ...r); };
     fs.renameSync = (a, b) => { if (String(a).startsWith(raiz)) renames.push([String(a), String(b)]); return rn(a, b); };
     syncBuiltinESMExports();
@@ -2002,5 +2029,171 @@ describe('s6', () => {
     assert.match(skipS6(d, 'b'.repeat(40)), /golden foi medido em bbbbbbbb/, 'sha diferente: pula com motivo');
     assert.match(skipS6(join(d, 'nao-existe'), head), /sem .*\.git/);
     assert.ok(gabarito.filter((g) => g.repo === 'true_force').every((g) => /^[0-9a-f]{40}$/.test(g.sha)), 'o golden do true_force traz o sha medido');
+  });
+});
+
+// ────────────────────────────────────────────────────────────── GM-21 T2: suítes de teste (REQ-MIG-2, DT5)
+
+describe('suites (gates.suites)', () => {
+  const PLACEHOLDER = 'echo "Error: no test specified" && exit 1';
+  /** Fixture `completa` (tudo detectado) com o package.json trocado ANTES do commit. */
+  const comPackage = (pkg, cfg) => {
+    const d = novoDir();
+    cpSync(join(FIX, 'completa'), d, { recursive: true });
+    writeFileSync(join(d, 'package.json'), typeof pkg === 'string' ? pkg : JSON.stringify(pkg));
+    if (cfg !== undefined) writeFileSync(join(d, 'harness.config.json'), JSON.stringify(cfg, null, 2));
+    return montarRepo(d, 'trunk');
+  };
+  const pkgTeste = (test) => ({ name: 'app-completo', version: '1.0.0', scripts: { test } });
+  const detectarCli = (raiz) => {
+    const bin = novoDir('gm-onb-bin-');
+    writeFileSync(join(bin, 'claude'), '#!/bin/sh\nprintf "No MCP servers configured.\\n"\n');
+    chmodSync(join(bin, 'claude'), 0o755);
+    const r = spawnSync(process.execPath, [CLI, 'detectar', '--root', raiz, '--hoje', HOJE, '--fuso', FUSO], { encoding: 'utf8', env: { ...process.env, PATH: `${bin}:${process.env.PATH}` } });
+    assert.equal(r.status, 0, r.stderr);
+    return JSON.parse(r.stdout);
+  };
+  // Valor literal esperado (nada de comparar com a mesma detecção): fixture `completa` sem script test pergunta as 3 fixas + planejamento, com ou sem script test.
+  const IDS_ESPERADOS = ['politica', 'autonomia', 'perfil', 'planejamento'];
+
+  test('onboarding-detecta-suites: scripts.test ⇒ prévia, config gravada, nenhuma pergunta nova (CLI real)', () => {
+    const raiz = comPackage(pkgTeste('vitest run'));
+    assert.deepEqual(detectarSuites(fatosDe(raiz)).suites, [{ nome: 'unit', cmd: 'npm test' }]);
+    assert.match(detectarSuites(fatosDe(raiz)).fonte, /^package\.json:\d+ \(scripts\.test\)$/);
+    const s = detectarCli(raiz);
+    assert.deepEqual(s.suites, [{ nome: 'unit', cmd: 'npm test' }]);
+    assert.match(s.previa, /^- suítes de teste: npm test \(fonte: package\.json:\d+ \(scripts\.test\)\)$/m);
+    assert.deepEqual(s.perguntas.map((p) => p.id), IDS_ESPERADOS, 'nenhuma pergunta nova');
+    assert.deepEqual(detectar(fatosDe(raiz)).map((i) => i.item), ORDEM_ITENS, 'a detecção dos 5 itens não ganha item');
+    assert.deepEqual(s.itens.map((i) => i.item), [...ORDEM_ITENS, 'suites'], 'a prévia (`itens`) leva a suíte detectada para o deteccao_mudou cobri-la');
+    assert.deepEqual(s.itens.at(-1).valor, [{ nome: 'unit', cmd: 'npm test' }]);
+    assert.deepEqual(detectarCli(comPackage(pkgTeste(PLACEHOLDER))).itens.map((i) => i.item), ORDEM_ITENS, 'sem suíte detectada, `itens` segue com os 5');
+    // gravar: UMA escrita com as seções do onboarding e gates.suites juntas
+    const seco = gravarCom(raiz, FIXAS, { dryRun: true });
+    assert.equal(seco.ok, true, JSON.stringify(seco));
+    assert.ok(seco.diff.includes('+ gates = {"suites":[{"nome":"unit","cmd":"npm test"}]}'), seco.diff.join('\n'));
+    assert.equal(temCfg(raiz), false, 'dry-run não escreve');
+    const r = gravarCom(raiz, FIXAS);
+    assert.equal(r.ok, true, JSON.stringify(r));
+    assert.ok(r.diff.includes('+ gates = {"suites":[{"nome":"unit","cmd":"npm test"}]}'));
+    const cfg = cfgDe(raiz);
+    assert.deepEqual(cfg.gates, { suites: [{ nome: 'unit', cmd: 'npm test' }] });
+    assert.equal(cfg.fluxo.resolvidoEm, HOJE, 'as seções do onboarding seguem gravadas');
+    assert.equal(cfg.onboarding.resolvidoEm, HOJE);
+    assert.equal(readdirSync(raiz).filter((f) => f.includes('.tmp-')).length, 0, 'sem resíduo da escrita atômica');
+  });
+
+  test('onboarding-nao-sobrescreve-suites: gates.suites existente (inclusive lista vazia) e as outras chaves de gates ficam', () => {
+    for (const suites of [[{ nome: 'meu', cmd: 'make teste' }], ['make teste'], []]) {
+      const raiz = comPackage(pkgTeste('vitest run'), { gates: { suites, proibidos: ['x'] } });
+      const f = fatosDe(raiz);
+      assert.equal(detectarSuites(f), null, JSON.stringify(suites));
+      assert.doesNotMatch(detectarCli(raiz).previa, /suítes de teste/);
+      const r = gravarCom(raiz, FIXAS);
+      assert.equal(r.ok, true, JSON.stringify(r));
+      assert.equal(r.diff.some((l) => l.includes('gates')), false, 'o diff não toca gates');
+      assert.deepEqual(cfgDe(raiz).gates, { suites, proibidos: ['x'] });
+    }
+    // `gates` que não é objeto: não é do onboarding trocar por um objeto (o dono escreveu outra coisa)
+    for (const gates of ['x', null, 5, ['npm test']]) {
+      const r0 = comPackage(pkgTeste('vitest run'), { gates });
+      assert.equal(detectarSuites(fatosDe(r0)), null, JSON.stringify(gates));
+      assert.equal(gravarCom(r0, FIXAS).ok, true);
+      assert.deepEqual(cfgDe(r0).gates, gates);
+    }
+    // `gates` presente com outra chave e SEM suites: grava só suites e preserva a outra (merge, não troca de seção)
+    const raiz = comPackage(pkgTeste('vitest run'), { gates: { proibidos: ['x'] } });
+    assert.equal(gravarCom(raiz, FIXAS).ok, true);
+    assert.deepEqual(cfgDe(raiz).gates, { proibidos: ['x'], suites: [{ nome: 'unit', cmd: 'npm test' }] });
+  });
+
+  test('onboarding-sem-script-test-nao-pergunta: sem scripts.test (ausente, vazio, não texto) nada é gravado, nada é perguntado', () => {
+    const casos = [
+      { name: 'a' },
+      { name: 'a', scripts: {} },
+      { name: 'a', scripts: { build: 'tsc' } },
+      { name: 'a', scripts: { test: '' } },
+      { name: 'a', scripts: { test: '   ' } },
+      { name: 'a', scripts: { test: 5 } },
+      { name: 'a', scripts: { test: null } },
+      { name: 'a', scripts: 'texto' },
+    ];
+    for (const pkg of casos) {
+      const raiz = comPackage(pkg);
+      assert.equal(detectarSuites(fatosDe(raiz)), null, JSON.stringify(pkg));
+      const s = detectarCli(raiz);
+      assert.equal(s.suites, null);
+      assert.doesNotMatch(s.previa, /suítes de teste/);
+      assert.deepEqual(s.perguntas.map((p) => p.id), IDS_ESPERADOS, 'nenhuma pergunta nova');
+      assert.equal(gravarCom(raiz, FIXAS).ok, true);
+      assert.equal('gates' in cfgDe(raiz), false, JSON.stringify(pkg));
+    }
+    // package.json ausente ou ilegível: o mesmo (ausente ≠ erro, mas nunca inventa suíte)
+    const sem = repoCom({ 'README.md': 'x' });
+    assert.equal(detectarSuites(fatosDe(sem)), null);
+    const torto = repoCom({ 'package.json': '{"scripts": ' });
+    assert.equal(detectarSuites(fatosDe(torto)), null);
+  });
+
+  test('onboarding-placeholder-nao-grava: o `test` do npm init não vira suíte, em qualquer forma de escrever', () => {
+    const formas = [PLACEHOLDER, "echo 'Error: no test specified' && exit 1", `  ${PLACEHOLDER}  `, 'echo Error: no test specified && exit 1', 'echo "Error: no test specified"&&exit 1', 'echo "Error: no test specified"; exit 1', 'echo "Error: no test specified" || exit 1', 'echo no test specified'];
+    for (const t of formas) {
+      const raiz = comPackage(pkgTeste(t));
+      assert.equal(detectarSuites(fatosDe(raiz)), null, t);
+      assert.doesNotMatch(detectarCli(raiz).previa, /suítes de teste/, t);
+      assert.equal(gravarCom(raiz, FIXAS).ok, true);
+      assert.equal('gates' in cfgDe(raiz), false, t);
+    }
+    // vizinho: teste de verdade que apenas menciona `echo` não é o placeholder
+    assert.deepEqual(detectarSuites(fatosDe(comPackage(pkgTeste('echo ok && node --test')))).suites, [{ nome: 'unit', cmd: 'npm test' }]);
+  });
+
+  test('onboarding-previa-suites-deteccao-mudou: suítes entram na _previa; divergência da detecção falha fechado (nos dois sentidos)', () => {
+    // prévia SEM suíte (placeholder); dono troca scripts.test; gravar não pode gravar o que ele nunca viu
+    const raiz = comPackage(pkgTeste(PLACEHOLDER));
+    const viu = JSON.parse(JSON.stringify(itensDaPrevia(fatosDe(raiz))));
+    assert.equal(viu.some((i) => i.item === 'suites'), false, 'nada detectado: a prévia não mostrou suíte');
+    writeFileSync(join(raiz, 'package.json'), JSON.stringify(pkgTeste('vitest run')));
+    const r = gravarCom(raiz, FIXAS, { bruto: { ...FIXAS, _previa: viu } });
+    assert.deepEqual([r.ok, r.erro], [false, 'deteccao_mudou']);
+    assert.match(r.motivo, /suites/);
+    assert.equal(temCfg(raiz), false, 'nada escrito');
+    // inverso: prévia mostrou a suíte, o script sumiu antes do gravar
+    const raiz2 = comPackage(pkgTeste('vitest run'));
+    const viu2 = JSON.parse(JSON.stringify(itensDaPrevia(fatosDe(raiz2))));
+    assert.equal(viu2.find((i) => i.item === 'suites').estado, 'detectado');
+    writeFileSync(join(raiz2, 'package.json'), JSON.stringify({ name: 'app-completo', version: '1.0.0' }));
+    const r2 = gravarCom(raiz2, FIXAS, { bruto: { ...FIXAS, _previa: viu2 } });
+    assert.deepEqual([r2.ok, r2.erro], [false, 'deteccao_mudou']);
+    assert.match(r2.motivo, /suites/);
+    // sem divergência: grava
+    assert.equal(gravarCom(comPackage(pkgTeste('vitest run')), FIXAS).ok, true);
+  });
+
+  test('onboarding-suites-passa-no-conferir: o que o onboarding GRAVA em gates.suites passa no conferirExecutavel (P9); lista vazia derruba', () => {
+    const raiz = comPackage(pkgTeste('vitest run'));
+    assert.equal(gravarCom(raiz, FIXAS).ok, true);
+    const cfg = cfgDe(raiz);
+    const plano = { entrega: 'GM-1', tasks: [{ id: 'T1', deps: [], arquivos: ['src/a.txt'] }] };
+    const conf = (c) => conferirExecutavel({ raiz, plano, eventos: [], cfg: c });
+    const r = conf(cfg);
+    assert.deepEqual(r.problemas, []);
+    assert.equal(r.ok, true);
+    // o gravado é exatamente o que o doctor conta como declarado e o gate normaliza
+    assert.deepEqual(cfg.gates.suites, [{ nome: 'unit', cmd: 'npm test' }]);
+    // controle: a mesma config sem a suíte gravada é recusada pelo conferir
+    for (const suites of [[], undefined, [{ nome: 'x' }]]) {
+      const sem = conf({ ...cfg, gates: { ...cfg.gates, suites } });
+      assert.equal(sem.ok, false, JSON.stringify(suites));
+    }
+  });
+
+  test('onboarding-suites-config-corrompida: config ilegível não vira gates.suites (a falha segue a de hoje)', () => {
+    const raiz = comPackage(pkgTeste('vitest run'));
+    writeFileSync(join(raiz, 'harness.config.json'), '{"gates": ');
+    assert.equal(detectarSuites(fatosDe(raiz)), null);
+    const r = gravarCom(raiz, FIXAS);
+    assert.deepEqual([r.ok, r.erro], [false, 'config_invalida']);
+    assert.equal(textoCfg(raiz), '{"gates": ', 'bytes intactos');
   });
 });

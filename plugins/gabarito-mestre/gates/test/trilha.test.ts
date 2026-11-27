@@ -14,7 +14,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { ancoraDaPerguntaB, ancoraDaPerguntaC, FASES, idDaBranch, trilhaDe } from '../src/trilha.ts';
+import { ancoraDaPerguntaB, ancoraDaPerguntaC, FASES, idDaBranch, planoAberto, tasksAbertas, trilhaDe } from '../src/trilha.ts';
 import type { FatosTrilha, SpecFato, Trilha } from '../src/trilha.ts';
 import { formaInvalida } from '../src/formas.ts';
 import type { Evento, TipoEvento } from '../src/tipos.ts';
@@ -560,4 +560,57 @@ test('primeira-resposta-vence', () => {
   const base: Compacto[] = [specMedida(SPEC), specMedida(s2.caminho)];
   const c = trilhaDe(fatos({ specs: [specFato(), s2] }), expandir([...base, respostaC(SPEC), respostaC('Trilha da GM-20 v2')]));
   assert.equal(c.progresso, 'spec com 6 seções · falta aprovar', 'a 1ª resposta (v1, 6 seções) vence');
+});
+
+// ── GM-21 T1 (REQ-ENC-1, DT1 + emenda 1): a regra única "plano aberto" ──────────────────────────────────────────────────────────────────────
+// MUTAÇÕES: ME1-b contar `fora` como aberta ⇒ plano-aberto-fora-nao-conta · ME1-d fase PR de trilhaDe ignora o plano ⇒ fase-pr-com-plano-aberto-nao-cumpre ·
+// m2 diário que não projeta tratado como aberto ⇒ plano-aberto-diario-que-nao-projeta · m2 `invalidas` fora da conta ⇒ plano-aberto-task-invalida-conta-aberta
+const T1_INTEGRADA: Compacto = { integradas: ['T1'] };
+const fora = (task: string, como = 'cortada'): Compacto => ({ t: 'task.fora', d: { task, como } });
+
+test('plano-aberto-regra: pendente é aberta; integrada, adiada e cortada não (ME1-b)', () => {
+  assert.deepEqual(tasksAbertas(['T1', 'T2'], expandir([T1_INTEGRADA])), ['T2']);
+  assert.equal(planoAberto(['T1', 'T2'], expandir([T1_INTEGRADA])), true);
+  assert.equal(planoAberto(['T1', 'T2'], expandir([T1_INTEGRADA, fora('T2')])), false, 'cortada não conta');
+  assert.equal(planoAberto(['T1', 'T2'], expandir([T1_INTEGRADA, fora('T2', 'adiada')])), false, 'adiada não conta');
+  assert.equal(planoAberto(['T1', 'T2'], expandir([T1_INTEGRADA, { integradas: ['T2'] }])), false);
+  assert.equal(planoAberto(['T1'], []), true, 'sem evento nenhum, a task está pendente');
+  assert.equal(planoAberto([], []), false, 'plano sem task não está aberto');
+});
+
+test('plano-aberto-diario-que-nao-projeta: ciclo impossível ⇒ regra de hoje (não aberto); task em `invalidas` conta como aberta (backlog m2)', () => {
+  // task.integrada sem aprovação é defeito de tabela: o diário não projeta ⇒ false (lado seguro: a regra de hoje)
+  assert.equal(planoAberto(['T1', 'T2'], expandir([{ t: 'task.integrada', d: { task: 'T1' } }])), false);
+  assert.deepEqual(tasksAbertas(['T1', 'T2'], expandir([{ t: 'task.integrada', d: { task: 'T1' } }])), []);
+  // evento fora do plano: a trilha ignora (ignorarFora), a regra também
+  assert.equal(planoAberto(['T1'], expandir([T1_INTEGRADA, { t: 'task.iniciada', d: { task: 'T9', papel: 'implementador' } }])), false);
+  // reabertura de origem inválida em T2: T2 entra em `invalidas` e CONTA como aberta; T1 integrada não
+  const ev = expandir([T1_INTEGRADA, { t: 'task.iniciada', d: { task: 'T2', papel: 'implementador' } }, { t: 'task.reaberta', d: { task: 'T2', origem: 'xpto' } }]);
+  assert.deepEqual(tasksAbertas(['T1', 'T2'], ev), ['T2']);
+  assert.equal(planoAberto(['T1', 'T2'], ev), true);
+  assert.equal(planoAberto(['T1'], ev), false, 'só T1 no plano: integrada');
+});
+
+test('fase-pr-com-plano-aberto-nao-cumpre (ME1-d, emenda 1): PR mergeado e nenhum aberto, T2 aberta ⇒ a fase PR não é ✓ e a entrega segue identificada; T2 cortada ⇒ ✓', () => {
+  const plano = { tasks: ['T1', 'T2'] };
+  const f = fatos({ plano, specs: [] });
+  const aberto = trilhaDe(f, expandir([T1_INTEGRADA, pr(10, 'mergeado')]));
+  assert.equal(aberto.identificada, true, 'identificada: o plano não é descartado');
+  assert.equal(aberto.entrega, 'GM-20');
+  assert.notEqual(aberto.marcas[5], '✓', marcas(aberto));
+  assert.equal(aberto.progresso, '1 de 2 tasks integradas');
+  const fechado = trilhaDe(f, expandir([T1_INTEGRADA, fora('T2'), pr(10, 'mergeado')]));
+  assert.equal(fechado.identificada, false, 'plano fechado + PR mergeado: publicada (a regra de hoje)');
+  const comAberto = trilhaDe(f, expandir([T1_INTEGRADA, pr(10, 'mergeado'), pr(11, 'aberto')]));
+  assert.equal(comAberto.identificada, true, 'regressão: com o #11 aberto é o mesmo');
+  // gh falhou: a regra de hoje (a fase PR é `?`, nunca ✓ por causa do plano)
+  assert.equal(trilhaDe(fatos({ plano, specs: [], gh: 'falhou' }), expandir([T1_INTEGRADA, pr(10, 'mergeado')])).marcas[5], '?');
+});
+
+test('fase-pr-encerramento-do-dono-vale (r1 MAJOR-2): entrega.encerrada vigente com T2 aberta ⇒ publicada (a mesma regra de entregaPublicada); reaberta volta a identificada', () => {
+  const f = fatos({ plano: { tasks: ['T1', 'T2'] }, specs: [] });
+  const dono: Compacto = { t: 'entrega.encerrada', d: { entrega: 'GM-20', pr: 10, via: 'dono', mergeado_em: '2026-11-01T00:00:00.000Z' } };
+  assert.equal(trilhaDe(f, expandir([T1_INTEGRADA, pr(10, 'mergeado'), dono])).identificada, false, 'o encerramento manda');
+  const reaberta: Compacto = { t: 'entrega.reaberta', d: { entrega: 'GM-20', em: '2026-11-02T00:00:00.000Z' } };
+  assert.equal(trilhaDe(f, expandir([T1_INTEGRADA, pr(10, 'mergeado'), dono, reaberta])).identificada, true, 'reaberta: plano aberto volta a valer');
 });

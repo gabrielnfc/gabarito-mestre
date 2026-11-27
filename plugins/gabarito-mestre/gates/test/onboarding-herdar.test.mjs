@@ -20,6 +20,8 @@ import { fileURLToPath } from 'node:url';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { montarNoDisco } from './painel-fixtures/adotado.mjs';
 import { projetoDoRepo } from '../scripts/painel.mjs';
+import { herdarTasks } from '../scripts/onboarding-herdar.mjs';
+import { rodarReal } from '../scripts/onboarding.mjs';
 import { ehColunaFl1, ehFeito, ehTerminal } from '../dist/projeto.js';
 
 const AQUI = dirname(fileURLToPath(import.meta.url));
@@ -604,4 +606,219 @@ test('herdar-aceitar-terminais-acrescenta: --gravar --terminais com o statusFora
   for (const id of ['PBI-4', 'PBI-10', 'PBI-11']) assert.ok(!depois.abertos.includes(id), `${id} segue fora: ${JSON.stringify(depois)}`);
   // 2ª aceitação com o que já é terminal: nada muda
   assert.deepEqual(herdar(dir, '--gravar', '--terminais', 'arquivado, Superado').j.diff, []);
+});
+
+// ───────────────────────────────────────────────── GM-21 T6 (REQ-HER-2, DT9): `herdar --tasks`, CLI real, gh falso
+// Mutações: MH2-a gravar as válidas quando há recusada ⇒ herdar-tasks-recusa-tudo-ou-nada · MH2-b aceitar task do plano ⇒ idem (task-no-plano) ·
+// MH2-c não conferir ancestral ⇒ idem (commit-fora-do-historico) · MH2-d PR sem gh aceito ⇒ idem (gh-ausente) · sem a idempotência ⇒ herdar-tasks-idempotente.
+const g = (dir, ...a) => execFileSync('git', ['-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', '-c', 'user.useConfigOnly=true', '-c', 'commit.gpgsign=false', ...a], { cwd: dir, encoding: 'utf8' }).trim();
+
+/** `gh` falso: `pr view 10` ⇒ MERGED, `pr view 11` ⇒ OPEN, o resto ⇒ rc 1. Só existe no PATH do subprocesso. */
+function ghFalso() {
+  const d = novoDir('gh');
+  mkdirSync(d, { recursive: true });
+  symlinkSync(execFileSync('which', ['git'], { encoding: 'utf8' }).trim(), join(d, 'git'));
+  writeFileSync(join(d, 'gh'), '#!/bin/sh\n[ "$1 $2" = "pr view" ] || exit 2\ncase "$3" in 10) echo \'{"state":"MERGED"}\';; 11) echo \'{"state":"OPEN"}\';; *) echo "nao encontrado" >&2; exit 1;; esac\n', { mode: 0o755 });
+  return d;
+}
+/** PATH só com o `git` (symlink): o `gh` não existe. */
+function semGh() {
+  const d = novoDir('sem-gh');
+  mkdirSync(d, { recursive: true });
+  symlinkSync(execFileSync('which', ['git'], { encoding: 'utf8' }).trim(), join(d, 'git'));
+  return d;
+}
+
+/** Fixture adotado (PBI-7 tem `plano.json` T1..T2) + `docs/ledger.md` de 50 linhas versionado. Devolve o dir e o sha do HEAD. */
+async function repoTasks(rotulo) {
+  const dir = await projeto(rotulo);
+  writeFileSync(join(dir, 'docs', 'ledger.md'), `${Array.from({ length: 50 }, (_, i) => `linha ${i + 1}`).join('\n')}\n`);
+  g(dir, 'add', 'docs/ledger.md');
+  g(dir, 'commit', '-q', '-m', 'ledger');
+  return { dir, sha: g(dir, 'rev-parse', 'HEAD') };
+}
+const lista = (dir, itens) => { const f = join(dir, '..', `lista-${dir.split('/').pop()}.json`); writeFileSync(f, JSON.stringify(itens)); criados.push(f); return f; };
+const tasks = (dir, itens, { path = ghFalso(), extra = [] } = {}) => {
+  const r = spawnSync(process.execPath, [ONBOARDING, 'herdar', '--tasks', '--entrega', 'PBI-7', '--arquivo', lista(dir, itens), '--root', dir, ...extra], { encoding: 'utf8', input: '', env: { PATH: `${path}:${dirname(process.execPath)}`, HOME: dir } });
+  let j = null;
+  try { j = JSON.parse(r.stdout.trim()); } catch { /* fica null */ }
+  return { rc: r.status, j, out: r.stdout, err: r.stderr };
+};
+const DIARIO_HERDAR = (dir) => join(dir, '.harness', 'entregas', 'PBI-7', 'events.herdar.jsonl');
+const tres = (sha) => [{ task: 'T3', origem: `commit:${sha}` }, { task: 'T4', origem: 'pr:10' }, { task: 'T5', origem: 'ledger:docs/ledger.md:42' }];
+const linhasHerdar = (dir) => (existsSync(DIARIO_HERDAR(dir)) ? readFileSync(DIARIO_HERDAR(dir), 'utf8').trim().split('\n').map((l) => JSON.parse(l)) : []);
+
+test('herdar-tasks-le-sem-gravar: sem --gravar a saída lista as 3 como ok e nada muda em disco (bytes, mtime, arquivos)', async () => {
+  const { dir, sha } = await repoTasks('t-le');
+  const antes = foto(dir);
+  const r = tasks(dir, tres(sha));
+  assert.equal(r.rc, 0, r.out + r.err);
+  assert.equal(r.j.ok, true);
+  assert.deepEqual(r.j.tasks.map((t) => [t.task, t.estado]), [['T3', 'ok'], ['T4', 'ok'], ['T5', 'ok']]);
+  assert.equal(r.j.gravado, false);
+  assert.deepEqual(foto(dir), antes);
+  assert.equal(existsSync(DIARIO_HERDAR(dir)), false);
+});
+
+test('herdar-tasks-grava-3: --gravar grava 3 task.herdada em events.herdar.jsonl, encadeados, com a origem e o sha por extenso', async () => {
+  const { dir, sha } = await repoTasks('t-grava');
+  const curto = g(dir, 'rev-parse', '--short', 'HEAD');
+  const itens = tres(curto);
+  itens[1] = { task: 'T4', origem: 'pr:10', titulo: 'Sincronização' };
+  const r = tasks(dir, itens, { extra: ['--gravar'] });
+  assert.equal(r.rc, 0, r.out + r.err);
+  assert.equal(r.j.gravado, true);
+  assert.equal(r.j.gravadas, 3);
+  const ev = linhasHerdar(dir);
+  assert.equal(ev.length, 3);
+  assert.deepEqual(ev.map((e) => e.seq), [1, 2, 3]);
+  assert.equal(ev[0].hash_anterior, null);
+  assert.match(ev[1].hash_anterior, /^[0-9a-f]{64}$/);
+  assert.match(ev[2].hash_anterior, /^[0-9a-f]{64}$/);
+  assert.notEqual(ev[1].hash_anterior, ev[2].hash_anterior);
+  assert.ok(ev.every((e) => e.tipo === 'task.herdada' && e.sessao === 'herdar'));
+  assert.deepEqual(ev.map((e) => e.dados), [
+    { task: 'T3', origem: { tipo: 'commit', ref: sha } },
+    { task: 'T4', origem: { tipo: 'pr', ref: '10' }, titulo: 'Sincronização' },
+    { task: 'T5', origem: { tipo: 'ledger', ref: 'docs/ledger.md:42' } },
+  ]);
+  const { lerEstrito } = await import('../dist/diario.js');
+  assert.equal(lerEstrito(join(dir, '.harness', 'entregas', 'PBI-7')).ok, true, 'o diário da entrega segue íntegro com a herança');
+});
+
+test('herdar-tasks-dry-run: --gravar --dry-run só mostra', async () => {
+  const { dir, sha } = await repoTasks('t-dry');
+  const antes = foto(dir);
+  const r = tasks(dir, tres(sha), { extra: ['--gravar', '--dry-run'] });
+  assert.equal(r.rc, 0, r.out + r.err);
+  assert.equal(r.j.dryRun, true);
+  assert.equal(r.j.gravado, false);
+  assert.deepEqual(r.j.tasks.map((t) => t.estado), ['ok', 'ok', 'ok']);
+  assert.deepEqual(foto(dir), antes);
+});
+
+/** Um caso por motivo de recusa: a entrada ruim sai `recusada` com motivo e, com --gravar, NADA é gravado, nem a válida ao lado (tudo ou nada). */
+async function recusa(rotulo, itemRuim, motivo, { path } = {}) {
+  const { dir, sha } = await repoTasks(`t-rec-${rotulo}`);
+  const bom = { task: 'T4', origem: 'pr:10' };
+  const itens = [bom, typeof itemRuim === 'function' ? itemRuim({ dir, sha }) : itemRuim];
+  const antes = foto(dir);
+  const r = tasks(dir, itens, { extra: ['--gravar'], path });
+  assert.equal(r.rc, 1, r.out + r.err);
+  assert.equal(r.j.ok, false);
+  assert.equal(r.j.gravado, false);
+  const rec = r.j.tasks.filter((t) => t.estado === 'recusada');
+  assert.equal(rec.length, 1, JSON.stringify(r.j.tasks));
+  assert.match(rec[0].motivo, motivo);
+  assert.equal(r.j.tasks.find((t) => t.task === 'T4').estado, 'ok', 'a válida ao lado segue ok na saída, mas não é gravada');
+  assert.equal(existsSync(DIARIO_HERDAR(dir)), false, 'tudo ou nada: nada gravado');
+  assert.deepEqual(foto(dir), antes);
+}
+test('herdar-tasks-recusa-tudo-ou-nada: commit inexistente', () => recusa('commit-inexistente', { task: 'T3', origem: `commit:${'0'.repeat(40)}` }, /não existe/));
+test('herdar-tasks-recusa-tudo-ou-nada: commit fora do histórico de HEAD', () => recusa('commit-fora', ({ dir }) => {
+  const orfao = g(dir, 'commit-tree', 'HEAD^{tree}', '-m', 'solto');
+  return { task: 'T3', origem: `commit:${orfao}` };
+}, /ancestral|hist/));
+test('herdar-tasks-recusa-tudo-ou-nada: commit com forma inválida (não é hex)', () => recusa('commit-forma', { task: 'T3', origem: 'commit:--all' }, /sha inválido/));
+test('herdar-tasks-recusa-tudo-ou-nada: PR aberto (OPEN)', () => recusa('pr-aberto', { task: 'T3', origem: 'pr:11' }, /MERGED|merge/));
+test('herdar-tasks-recusa-tudo-ou-nada: PR que o gh não acha', () => recusa('pr-some', { task: 'T3', origem: 'pr:99' }, /gh não leu/));
+test('herdar-tasks-recusa-tudo-ou-nada: gh ausente recusa o PR (falha fechada)', async () => {
+  const { dir } = await repoTasks('t-sem-gh');
+  const r = tasks(dir, [{ task: 'T3', origem: 'pr:10' }], { extra: ['--gravar'], path: semGh() });
+  assert.equal(r.rc, 1, r.out + r.err);
+  assert.equal(r.j.tasks[0].estado, 'recusada');
+  assert.match(r.j.tasks[0].motivo, /gh/);
+  assert.equal(existsSync(DIARIO_HERDAR(dir)), false);
+});
+test('herdar-tasks-recusa-tudo-ou-nada: ledger sem linha', () => recusa('ledger-sem-linha', { task: 'T3', origem: 'ledger:docs/ledger.md' }, /esperado ledger/));
+test('herdar-tasks-recusa-tudo-ou-nada: ledger com linha além do fim', () => recusa('ledger-linha', { task: 'T3', origem: 'ledger:docs/ledger.md:51' }, /além do fim/));
+test('herdar-tasks-recusa-tudo-ou-nada: ledger com arquivo fora da raiz', () => recusa('ledger-fora', { task: 'T3', origem: 'ledger:../fora.md:1' }, /fora da raiz/));
+test('herdar-tasks-recusa-tudo-ou-nada: ledger com arquivo não versionado', () => recusa('ledger-sem-git', ({ dir }) => {
+  writeFileSync(join(dir, 'docs', 'solto.md'), 'a\nb\n');
+  return { task: 'T3', origem: 'ledger:docs/solto.md:1' };
+}, /não versionado/));
+test('herdar-tasks-recusa-tudo-ou-nada: task que está no plano.json da entrega (o loop mede)', () => recusa('task-no-plano', { task: 'T1', origem: 'pr:10' }, /plano/));
+test('herdar-tasks-recusa-tudo-ou-nada: task repetida na lista', () => recusa('task-repetida', { task: 'T4', origem: 'pr:10' }, /repetid/));
+test('herdar-tasks-recusa-tudo-ou-nada: origem com tipo desconhecido', () => recusa('origem-tipo', { task: 'T3', origem: 'branch:feat/x' }, /origem/));
+test('herdar-tasks-recusa-tudo-ou-nada: id de task fora da forma', () => recusa('task-id', { task: '../T3', origem: 'pr:10' }, /task/));
+test('herdar-tasks-recusa-tudo-ou-nada: titulo vazio (a forma do diário recusa)', () => recusa('titulo-vazio', { task: 'T3', origem: 'pr:10', titulo: '' }, /titulo/));
+test('herdar-tasks-recusa-tudo-ou-nada: titulo multilinha', () => recusa('titulo-multilinha', { task: 'T3', origem: 'pr:10', titulo: 'a\nb' }, /titulo/));
+test('herdar-tasks-recusa-tudo-ou-nada: titulo com mais de 160 caracteres', () => recusa('titulo-longo', { task: 'T3', origem: 'pr:10', titulo: 'x'.repeat(161) }, /titulo/));
+test('herdar-tasks-recusa-tudo-ou-nada: titulo inválido sem --gravar também sai recusada e nada é gravado', async () => {
+  const { dir } = await repoTasks('t-titulo-le');
+  for (const titulo of ['', 'a\nb', 'x'.repeat(161)]) {
+    const r = tasks(dir, [{ task: 'T4', origem: 'pr:10' }, { task: 'T3', origem: 'pr:10', titulo }]);
+    assert.equal(r.rc, 0, r.out + r.err);
+    assert.deepEqual(r.j.tasks.map((t) => t.estado), ['ok', 'recusada']);
+    assert.match(r.j.tasks[1].motivo, /titulo/);
+    assert.equal(existsSync(DIARIO_HERDAR(dir)), false);
+  }
+});
+test('herdar-tasks-recusa-tudo-ou-nada: historico que o git não consegue conferir (timeout) tem motivo próprio', async () => {
+  const { dir, sha } = await repoTasks('t-anc-motivo');
+  const rodar = (cmd, args, o) => (args[0] === 'merge-base' ? { rc: null, stdout: '', stderr: '', motivo: 'timeout' } : rodarReal(cmd, args, o));
+  const r = herdarTasks(dir, { rodar, entrega: 'PBI-7', arquivo: lista(dir, [{ task: 'T3', origem: `commit:${sha}` }]) });
+  assert.equal(r.tasks[0].estado, 'recusada');
+  assert.match(r.tasks[0].motivo, /não consegui conferir o histórico \(timeout\)/);
+});
+
+test('herdar-tasks-idempotente: a 2ª rodada com a mesma lista não grava nada (ja_herdada); lista com 1 nova grava só a nova', async () => {
+  const { dir, sha } = await repoTasks('t-idem');
+  const um = tasks(dir, tres(sha).slice(0, 2), { extra: ['--gravar'] });
+  assert.equal(um.j.gravadas, 2, um.out + um.err);
+  const antes = readFileSync(DIARIO_HERDAR(dir), 'utf8');
+  const dois = tasks(dir, tres(sha).slice(0, 2), { extra: ['--gravar'] });
+  assert.equal(dois.rc, 0, dois.out + dois.err);
+  assert.deepEqual(dois.j.tasks.map((t) => t.estado), ['ja_herdada', 'ja_herdada']);
+  assert.equal(dois.j.gravado, false);
+  assert.equal(dois.j.gravadas, 0);
+  assert.equal(readFileSync(DIARIO_HERDAR(dir), 'utf8'), antes);
+  const tres3 = tasks(dir, tres(sha), { extra: ['--gravar'] });
+  assert.deepEqual(tres3.j.tasks.map((t) => t.estado), ['ja_herdada', 'ja_herdada', 'ok']);
+  assert.equal(tres3.j.gravadas, 1);
+  assert.deepEqual(linhasHerdar(dir).map((e) => [e.seq, e.dados.task]), [[1, 'T3'], [2, 'T4'], [3, 'T5']]);
+});
+
+test('herdar-tasks-idempotente: task já herdada com origem recusável hoje (PR reaberto) segue ja_herdada, não recusada', async () => {
+  const { dir, sha } = await repoTasks('t-idem-recusa');
+  tasks(dir, tres(sha).slice(0, 2), { extra: ['--gravar'] });
+  const r = tasks(dir, [{ task: 'T4', origem: 'pr:11' }], { extra: ['--gravar'] });
+  assert.equal(r.rc, 0, r.out + r.err);
+  assert.equal(r.j.tasks[0].estado, 'ja_herdada');
+});
+
+test('herdar-tasks-nao-toca-plano: plano.json, config, cards e o diário de task ficam byte a byte; só events.herdar.jsonl nasce', async () => {
+  const { dir, sha } = await repoTasks('t-plano');
+  const antes = foto(dir);
+  const r = tasks(dir, tres(sha), { extra: ['--gravar'] });
+  assert.equal(r.rc, 0, r.out + r.err);
+  const depois = foto(dir);
+  const novos = Object.keys(depois).filter((k) => !(k in antes));
+  assert.deepEqual(novos, ['.harness/entregas/PBI-7/events.herdar.jsonl']);
+  for (const k of Object.keys(antes)) assert.deepEqual(depois[k], antes[k], k);
+  assert.equal(readFileSync(join(dir, '.harness', 'entregas', 'PBI-7', 'plano.json'), 'utf8'), antes['.harness/entregas/PBI-7/plano.json'].txt);
+});
+
+test('herdar-tasks-uso: --tasks sem --entrega ou sem --arquivo, entrega fora da forma, arquivo ilegível ou lista fora da forma ⇒ rc 1 argumento_invalido, nada gravado', async () => {
+  const { dir } = await repoTasks('t-uso');
+  const roda = (...a) => {
+    const r = spawnSync(process.execPath, [ONBOARDING, 'herdar', '--tasks', '--root', dir, ...a], { encoding: 'utf8', input: '', env: { PATH: `${ghFalso()}:${dirname(process.execPath)}`, HOME: dir } });
+    return { rc: r.status, j: JSON.parse(r.stdout.trim()) };
+  };
+  const arq = lista(dir, [{ task: 'T3', origem: 'pr:10' }]);
+  for (const a of [['--arquivo', arq], ['--entrega', 'PBI-7'], ['--entrega', 'pbi-7', '--arquivo', arq], ['--entrega', 'PBI-7', '--arquivo', join(dir, 'nao-existe.json')],
+    ['--entrega', 'PBI-7', '--arquivo', lista(dir, { task: 'T3' })], ['--entrega', 'PBI-7', '--arquivo', lista(dir, [{ task: 'T3', origem: 'pr:10', x: 1 }])], ['--entrega', 'PBI-7', '--arquivo', lista(dir, [])]]) {
+    const r = roda(...a, '--gravar');
+    assert.equal(r.rc, 1, JSON.stringify(a));
+    assert.equal(r.j.erro, 'argumento_invalido', JSON.stringify([a, r.j]));
+    assert.match(r.j.motivo, /--entrega|--arquivo|item|lista/, JSON.stringify([a, r.j]));
+  }
+  assert.equal(existsSync(DIARIO_HERDAR(dir)), false);
+});
+
+test('herdar-sem-tasks-segue-igual: sem --tasks o herdar de adoção responde como antes (sem o campo tasks) e --tasks ignora a detecção', async () => {
+  const dir = await projeto('t-regressao');
+  const r = herdar(dir);
+  assert.equal(r.j.tasks, undefined);
+  assert.equal(r.j.oferecer, true);
 });

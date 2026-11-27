@@ -1072,6 +1072,108 @@ describe('medir: grava o encerramento da entrega (REQ-ENT-1 a, c)', () => {
     assert.equal(medirEnc(d2, { extra: extra2 }).ok, true);
     assert.deepEqual(encerradas(d2, 'GM-32').map((e) => e.dados.pr), [42]);
   });
+
+  // ── GM-21 T1 (REQ-ENC-1, REQ-ENC-2; DT1, DT2): plano aberto não encerra, PR anterior à última integração não encerra ───────────────────────────
+  // MUTAÇÕES: ME1-a/c/d/f e ME2-a/b/c (nomes nos testes); ME1-f: aviso a cada medição ⇒ aviso-encerrar-uma-vez.
+  describe('GM-21 T1: plano aberto e PR posterior à integração', () => {
+    const PLANO7 = { entrega: 'PBI-7', tasks: ['T1', 'T2'].map((id) => ({ id, deps: [], arquivos: [`src/${id}.txt`], reqs: ['REQ-A-1'], titulo: id })) };
+    const PR10 = { number: 10, state: 'MERGED', baseRefName: 'main', headRefName: 'docs/PBI-7-plano', title: 'docs(PBI-7): plano', mergedAt: '2026-11-20T12:00:00Z' };
+    const grava7 = (d, tipo, dados, ts) => {
+      const r = append(dirDe(d, 'PBI-7'), 'loop', { ts, autor: 't@t', sessao: 'loop', agente: 'orquestrador', tipo, dados });
+      assert.ok(r.ok && r.gravado === 'evento', `preparo ${tipo}: ${JSON.stringify(r)}`);
+    };
+    /** O ciclo completo de uma task até `task.integrada`, terminando em `fim` (ISO). */
+    const integra7 = (d, task, fim) => {
+      const t = (min) => new Date(Date.parse(fim) - min * 60_000).toISOString();
+      grava7(d, 'task.iniciada', { task, papel: 'implementador' }, t(4));
+      grava7(d, 'task.concluida', { task }, t(3));
+      grava7(d, 'task.iniciada', { task, papel: 'revisor' }, t(2));
+      grava7(d, 'review.veredito', { task, veredito: 'APROVADO', rodada: 1, major: 0, blocker: 0 }, t(1));
+      grava7(d, 'task.integrada', { task }, fim);
+    };
+    /** Repo na branch de implementação da PBI-7, com o `plano.json` de T1 e T2 e a T1 integrada em 2026-11-19. */
+    const repo7 = (branch = 'feat/PBI-7-loop') => {
+      const d = repo(branch);
+      mkdirSync(dirDe(d, 'PBI-7'), { recursive: true });
+      writeFileSync(join(dirDe(d, 'PBI-7'), 'plano.json'), JSON.stringify(PLANO7));
+      integra7(d, 'T1', '2026-11-19T10:00:00.000Z');
+      return d;
+    };
+    const medir7 = (d, extra, opts = {}) => medirEnc(d, { extra, agora: '2026-11-21T00:00:00Z', ...opts });
+    const prs7 = (d) => fatos(d, 'PBI-7', 'pr').map((e) => e.dados.valor.numero);
+
+    test('encerra-nao-com-plano-aberto-titulo (ME1-a, P9): PR do plano por título, T2 aberta ⇒ nenhum entrega.encerrada, o fato pr #10 gravado, não publicada em nenhuma sessão', () => {
+      const d = repo7();
+      const r = medir7(d, [PR10]);
+      assert.equal(r.ok, true, JSON.stringify(r.falhas));
+      assert.equal(encerradas(d, 'PBI-7').length, 0);
+      assert.deepEqual(prs7(d), [10], 'o PR segue na trilha e no DEPENDE');
+      assert.equal(entregaPublicada(d, 'PBI-7', SESSAO_QUALQUER), false);
+      assert.equal(entregaPublicada(d, 'PBI-7', 's2'), false);
+      // controle (troca de valor): com T2 cortada o mesmo PR encerra
+      const d2 = repo7();
+      grava7(d2, 'task.fora', { task: 'T2', como: 'cortada', motivo: 'fora do corte', origem: 'dono' }, '2026-11-19T11:00:00.000Z');
+      assert.equal(medir7(d2, [PR10]).ok, true);
+      assert.deepEqual(encerradas(d2, 'PBI-7').map((e) => e.dados.pr), [10], 'encerra-com-task-fora');
+      assert.equal(entregaPublicada(d2, 'PBI-7', SESSAO_QUALQUER), true);
+    });
+
+    test('encerra-nao-com-plano-aberto-head (ME1-c): PR com o head da entrega (sessão em feat/PBI-7-loop e em docs/PBI-7-plano) não encerra com T2 aberta', () => {
+      for (const branch of ['feat/PBI-7-loop', 'docs/PBI-7-plano']) {
+        const d = repo7(branch);
+        const extra = [{ number: 12, state: 'MERGED', baseRefName: 'main', headRefName: branch, title: 'sem o id no título', mergedAt: '2026-11-20T12:00:00Z' }];
+        assert.equal(medir7(d, extra).ok, true, branch);
+        assert.equal(encerradas(d, 'PBI-7').length, 0, `head ${branch}`);
+        assert.deepEqual(prs7(d), [12], branch);
+      }
+    });
+
+    test('medir-sem-aviso-de-plano (ME1-f; o `aviso-no-estado-some-ao-encerrar-ou-fechar` de entrega-encerrada-cli.test.mjs cobre o estado): o aviso de plano aberto nunca no resultado do `medir` (o mod descarta essa saída e gastaria o aviso)', () => {
+      const d = repo7();
+      const r1 = medir7(d, [PR10]);
+      assert.equal(r1.ok, true, JSON.stringify(r1.falhas));
+      assert.equal(r1.avisos, undefined, 'a 1ª medição do PR não traz aviso');
+      assert.deepEqual(r1.falhas, []);
+      assert.equal(medir7(d, [PR10], { sessao: SID2 }).avisos, undefined, 'nem numa sessão nova');
+      assert.equal(ler(dirDe(d, 'PBI-7')).filter((e) => /avis/.test(e.tipo)).length, 0, 'nenhum evento novo');
+    });
+
+    test('sem-aviso-quando-nao-e-o-plano: plano fechado (o PR encerra) e entrega sem plano.json não avisam', () => {
+      const d = repo7();
+      grava7(d, 'task.fora', { task: 'T2', como: 'cortada', motivo: 'fora do corte', origem: 'dono' }, '2026-11-19T11:00:00.000Z');
+      assert.equal(medir7(d, [PR10]).avisos, undefined);
+      const d2 = repo('feat/PBI-8-x');
+      assert.equal(medir7(d2, [{ ...PR10, number: 13, headRefName: 'feat/PBI-8-x', title: 'feat(PBI-8): x' }]).avisos, undefined);
+      assert.deepEqual(encerradas(d2, 'PBI-8').map((e) => e.dados.pr), [13], 'sem plano.json: a regra de hoje');
+    });
+
+    test('encerra-so-pr-posterior (ME2-a, P9): T1 em 11-01, T2 em 11-20, PR #10 mergeado em 11-03 e #38 em 11-21 ⇒ encerra o #38, nunca o #10', () => {
+      const d = repo('feat/PBI-7-loop');
+      mkdirSync(dirDe(d, 'PBI-7'), { recursive: true });
+      writeFileSync(join(dirDe(d, 'PBI-7'), 'plano.json'), JSON.stringify(PLANO7));
+      integra7(d, 'T1', '2026-11-01T10:00:00.000Z');
+      integra7(d, 'T2', '2026-11-20T10:00:00.000Z');
+      const extra = [
+        { ...PR10, mergedAt: '2026-11-03T12:00:00Z' },
+        { number: 38, state: 'MERGED', baseRefName: 'main', headRefName: 'feat/PBI-7-loop', title: 'feat(PBI-7): loop', mergedAt: '2026-11-21T09:00:00Z' },
+      ];
+      assert.equal(medir7(d, extra).ok, true);
+      assert.deepEqual(encerradas(d, 'PBI-7').map((e) => e.dados), [{ entrega: 'PBI-7', pr: 38, via: 'head', mergeado_em: '2026-11-21T09:00:00Z' }]);
+    });
+
+    test('encerra-margem-de-relogio (ME2-b, ME2-c): PR 4 min antes da última integração encerra; 6 min antes não', () => {
+      const casos = [['2026-11-20T09:56:00Z', [10]], ['2026-11-20T09:54:00Z', []]];
+      for (const [mergedAt, esperado] of casos) {
+        const d = repo('docs/PBI-7-plano');
+        mkdirSync(dirDe(d, 'PBI-7'), { recursive: true });
+        writeFileSync(join(dirDe(d, 'PBI-7'), 'plano.json'), JSON.stringify(PLANO7));
+        integra7(d, 'T1', '2026-11-19T10:00:00.000Z');
+        integra7(d, 'T2', '2026-11-20T10:00:00.000Z');
+        assert.equal(medir7(d, [{ ...PR10, mergedAt }]).ok, true);
+        assert.deepEqual(encerradas(d, 'PBI-7').map((e) => e.dados.pr), esperado, mergedAt);
+      }
+    });
+  });
 });
 
 // ── GM-20 T6 (REQ-CRD-2): o medir encerra pela base configurada da entrega ───────────────────────────────────────────────────────────────────
@@ -1273,5 +1375,72 @@ const r = require('node:child_process').spawnSync(process.env.GH_REAL, a, { stdi
     assert.equal(cli(ambiente([enc], [pr(50, 'main', { headRefName: 'next', title: 'release', mergedAt: '2026-11-24T08:00:00Z' })])).status, 0);
     assert.equal(lerEstrito(dirG(d)).ok, true, 'o diário gravado passa na leitura estrita (formas)');
     assert.deepEqual(lote(d), []);
+  });
+});
+
+// ── GM-21 T8 (REQ-DEP-1, DT12): gh ⇒ fato `pr` com `rascunho` ⇒ DEPENDE do painel real (P9) ──────────────────────────────────────────────────
+// MUTAÇÕES: MD1-d `prDoGh` não copia `isDraft` ⇒ cai painel-rascunho-ponta-a-ponta · MD1-b o `painel.ts` não passa `autonomiaEntrega` ao `dependeDe` ⇒ cai painel-autonomia-ponta-a-ponta.
+describe('GM-21 T8: DEPENDE sem PR de rascunho nem de merge do orquestrador (gh ⇒ fato ⇒ DEPENDE)', () => {
+  const GH_ENC = join(AQUI, 'fixtures', 'gh-encerramento');
+  const PAINEL = join(AQUI, '..', 'scripts', 'painel.mjs');
+  const BR = 'enabler/GM-14-clareza';
+  /** o PR #12 aberto da entrega, como o `gh pr list --json` o devolve (`isDraft` booleano real; sem a chave o fixture devolve null) */
+  const pr12 = (extra = {}) => ({ number: 12, state: 'OPEN', baseRefName: 'next', headRefName: BR, title: 'enabler(GM-14): x', ...extra });
+  const rodar = (extra) => (cmd, args, { cwd, timeoutMs }) => spawnSync(cmd, args, { cwd, encoding: 'utf8', timeout: timeoutMs, stdio: ['ignore', 'pipe', 'pipe'],
+    env: { ...process.env, GH_PRS_EXTRA: JSON.stringify(extra), ...(cmd === 'gh' ? { PATH: `${GH_ENC}:${process.env.PATH}` } : {}) } });
+  /** `harness.config.json` publicado em origin/HEAD (a leitura da autonomia de entrega); volta à branch da entrega. */
+  const comOrigin = (d, cfg) => {
+    git(d, 'checkout', '-q', 'main');
+    writeFileSync(join(d, 'harness.config.json'), `${JSON.stringify(cfg)}\n`);
+    git(d, 'add', 'harness.config.json'); git(d, 'commit', '-q', '-m', 'cfg');
+    const bare = join(mkdtempSync(join(tmpdir(), 'origin ')), 'o.git');
+    mkdirSync(bare);
+    git(bare, 'init', '-q', '--bare', '-b', 'main');
+    git(d, 'remote', 'add', 'origin', bare); git(d, 'push', '-q', 'origin', 'main'); git(d, 'remote', 'set-head', 'origin', 'main');
+    git(d, 'checkout', '-q', BR);
+  };
+  const prsDe = (d) => fatos(d, 'GM-14', 'pr').map((e) => e.dados.valor).filter((v) => v.numero === 12);
+  /** `painel.mjs estado` (CLI real) sobre o diário que o medir gravou. */
+  const dependeCli = (d) => {
+    const r = spawnSync(process.execPath, [PAINEL, 'estado'], { cwd: d, encoding: 'utf8', timeout: 60_000, env: process.env });
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    return JSON.parse(r.stdout.trim().split('\n').at(-1)).estado.depende.map((i) => i.motivo);
+  };
+  const medirPr = (d, extra) => { const r = medir(d, { rodar: rodar([pr12(extra)]), agentes: entrada([]), timeoutMs: 5000, agora: () => Date.parse('2026-11-11T20:00:00Z') }); assert.equal(r.ok, true, JSON.stringify(r)); };
+  /** repo na branch da entrega com o 2º fato (spec `PBI: GM-14`): a trilha identifica a entrega e o DEPENDE tem de onde tirar o item */
+  const entregaGm14 = () => { const d = repo(); spec(d, 'a.md', 'PBI: GM-14', '## S1\n'); return d; };
+  const REVISAR = /pedido de revisão #12/;
+
+  test('painel-rascunho-ponta-a-ponta: gh com #12 `isDraft: true` ⇒ fato `pr` com `rascunho: true` ⇒ o DEPENDE do painel não tem "revisar e aceitar #12"', () => {
+    const d = entregaGm14();
+    medirPr(d, { isDraft: true });
+    assert.deepEqual(prsDe(d).map((v) => [v.estado, v.rascunho]), [['aberto', true]]);
+    assert.deepEqual(dependeCli(d).filter((m) => REVISAR.test(m)), []);
+  });
+
+  test('painel-rascunho-ponta-a-ponta (contraprova): `isDraft: false` e `isDraft` ausente ⇒ sem `rascunho: true` no fato e o DEPENDE tem "revisar e aceitar #12"', () => {
+    for (const extra of [{ isDraft: false }, {}]) {
+      const d = entregaGm14();
+      medirPr(d, extra);
+      assert.deepEqual(prsDe(d).map((v) => v.rascunho === true), [false], JSON.stringify(extra));
+      assert.deepEqual(dependeCli(d).filter((m) => REVISAR.test(m)), ['revisar e aceitar o pedido de revisão #12'], JSON.stringify(extra));
+    }
+  });
+
+  test('o PR que sai do rascunho entra no DEPENDE: a medição seguinte grava o valor novo (sem `rascunho: true`)', () => {
+    const d = entregaGm14();
+    medirPr(d, { isDraft: true });
+    medirPr(d, { isDraft: false });
+    assert.deepEqual(prsDe(d).map((v) => v.rascunho === true), [true, false]);
+    assert.deepEqual(dependeCli(d).filter((m) => REVISAR.test(m)), ['revisar e aceitar o pedido de revisão #12']);
+  });
+
+  test('painel-autonomia-ponta-a-ponta: PR aberto não rascunho com `entrega.autonomia: true` em origin ⇒ sem o item; `false` ou ausente ⇒ com o item', () => {
+    for (const [cfg, esperado] of [[{ entrega: { base: 'next', autonomia: true } }, []], [{ entrega: { base: 'next', autonomia: false } }, ['revisar e aceitar o pedido de revisão #12']], [{ entrega: { base: 'next' } }, ['revisar e aceitar o pedido de revisão #12']]]) {
+      const d = entregaGm14();
+      comOrigin(d, cfg);
+      medirPr(d, { isDraft: false });
+      assert.deepEqual(dependeCli(d).filter((m) => REVISAR.test(m)), esperado, JSON.stringify(cfg));
+    }
   });
 });

@@ -395,7 +395,11 @@ export function prepararCopia(raiz, destino, celula) {
   copyFileSync(join(BIN_GH, 'estado.json'), join(destino, '..', 'gh.json'));
   const cfg = JSON.parse(readFileSync(join(destino, 'harness.config.json'), 'utf8'));
   cfg.painel = { ...(cfg.painel ?? {}), local: celula.local };
+  // GM-21 T3 (REQ-MIG-1, emenda 8): o proxima/abrir exigem gates.suites; a cópia do SHA da GM-13 não declara, a fixture passa a declarar
+  if (cfg.gates?.suites === undefined) cfg.gates = { ...(cfg.gates ?? {}), suites: ["echo '# pass 1'"] };
   writeFileSync(join(destino, 'harness.config.json'), `${JSON.stringify(cfg, null, 2)}\n`);
+  git(destino, 'add', 'harness.config.json'); // a worktree/gate lê a config do commit (r1 MAJOR-1): a do working tree sozinha não vale
+  git(destino, 'commit', '-q', '--allow-empty', '-m', 'chore(a1): config da cópia');
   mkdirSync(join(destino, '.claude'), { recursive: true });
   writeFileSync(join(destino, '.claude', 'settings.local.json'), `${JSON.stringify({ tui: celula.cheia ? 'fullscreen' : 'default' })}\n`);
   semear(destino, bin, join(destino, '..', 'gh.json'));

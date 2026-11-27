@@ -10,7 +10,7 @@ import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { avaliar, falhas, desviosDaTask } from '../scripts/gate-task.mjs';
+import { avaliar, falhas, contagem, desviosDaTask, normalizarSuites } from '../scripts/gate-task.mjs';
 import { append } from '../dist/diario.js';
 
 const CLI = join(dirname(fileURLToPath(import.meta.url)), '../scripts/gate-task.mjs');
@@ -381,6 +381,103 @@ describe('gate-task', () => {
     assert.ok(log.indexOf('ini:hooks') < log.indexOf('fim:gates'), `as outras seguem em paralelo: ${log.join(' ')}`);
     const t = texto(r);
     assert.ok(t.indexOf('mod verde') < t.indexOf('gates verde') && t.indexOf('gates verde') < t.indexOf('hooks verde'), 'a ordem do relato é a declarada');
+  });
+
+  // GM-21 T5 (REQ-SUI-1, item 11): barreira por marcador, sem relógio. Cada suíte é o MESMO script fora da worktree: grava `ini-<nome>` num dir próprio da worktree em que roda
+  // (o da base na A4 é outro). `par` espera até 10 s pelo `ini-<outro>` (prova de paralelismo); `excl` registra violação se achar `ini-*` de outra sem o `fim-*` dela, no início e
+  // depois de 0,3 s (prova de exclusão). Violação vai a `viol` (a A4 só lê nomes, não rc) e o rc vira 1.
+  const barreira = () => {
+    const d = mkdtempSync(join(tmpdir(), 'gate-bar-'));
+    const f = join(d, 'bar.sh');
+    writeFileSync(f, [
+      'nome=$1; modo=$2; d=$3; outro=$4; verm=$5',
+      'k="$d/$(basename "$PWD")"; mkdir -p "$k"',
+      'echo "ini:$nome" >> "$k/ordem"; touch "$k/ini-$nome"',
+      'ocupado() { for i in "$k"/ini-*; do o=${i##*/ini-}; if [ "$o" != "$nome" ] && [ ! -e "$k/fim-$o" ]; then echo "sobrepos:$nome:$o" >> "$k/viol"; fi; done; }',
+      'if [ "$modo" = par ]; then n=0; while [ ! -e "$k/ini-$outro" ] && [ $n -lt 100 ]; do sleep 0.1; n=$((n+1)); done; [ -e "$k/ini-$outro" ] || echo "sem-par:$nome" >> "$k/viol"; fi',
+      'if [ "$modo" = excl ]; then ocupado; sleep 0.3; ocupado; fi',
+      'touch "$k/fim-$nome"; echo "fim:$nome" >> "$k/ordem"',
+      'if [ "$verm" = red ]; then echo "✖ esperado (1ms)"; echo "ℹ tests 1"; echo "ℹ pass 0"; echo "ℹ fail 1"; exit 1; fi',
+      'echo "ℹ tests 1"; echo "ℹ pass 1"; echo "ℹ fail 0"; [ ! -e "$k/viol" ]',
+      '',
+    ].join('\n'));
+    const cmd = (nome, modo, outro = '-', verm = '-') => `bash ${f} ${nome} ${modo} ${d} ${outro} ${verm}`;
+    const ler = (wt, arq) => { try { return readFileSync(join(d, wt, arq), 'utf8').trim().split('\n').filter(Boolean); } catch { return []; } };
+    const dirs = () => { try { return execFileSync('ls', [d], { encoding: 'utf8' }).split('\n').filter((x) => x && x !== 'bar.sh'); } catch { return []; } };
+    return { cmd, ler, dirs, d };
+  };
+
+  test('paralelas-seguem-paralelas (GM-21 T5): 2 suítes sem serial se encontram (cada uma espera a outra) e passam', async () => {
+    const { dir, base } = repo();
+    commit(dir, 'src/b.txt', 'b\n');
+    const b = barreira();
+    const r = await avaliar({ wt: dir, base, suites: [{ nome: 'p1', cmd: b.cmd('p1', 'par', 'p2') }, { nome: 'p2', cmd: b.cmd('p2', 'par', 'p1') }] });
+    assert.equal(r.reprova, 0, texto(r));
+    assert.deepEqual(b.dirs().flatMap((w) => b.ler(w, 'viol')), []);
+  });
+
+  test('teste-afetado-depois (GM-21 T5): o teste_afetado (serial) roda sozinho e depois das 2 paralelas, que se encontram', async () => {
+    const { dir, base } = repo();
+    commit(dir, 'src/b.txt', 'b\n');
+    const b = barreira();
+    const r = await avaliar({ wt: dir, base, suites: [{ nome: 'teste_afetado', cmd: b.cmd('ta', 'excl'), serial: true }, { nome: 'p1', cmd: b.cmd('p1', 'par', 'p2') }, { nome: 'p2', cmd: b.cmd('p2', 'par', 'p1') }] });
+    assert.equal(r.reprova, 0, texto(r));
+    const w = b.dirs()[0];
+    assert.deepEqual(b.ler(w, 'viol'), []);
+    const o = b.ler(w, 'ordem');
+    assert.ok(o.indexOf('ini:ta') > o.indexOf('fim:p1') && o.indexOf('ini:ta') > o.indexOf('fim:p2'), o.join(' '));
+    assert.ok(texto(r).indexOf('teste_afetado verde') < texto(r).indexOf('p1 verde'), 'o relato segue a ordem declarada');
+  });
+
+  test('serial-nao-sobrepoe (GM-21 T5): 2 suítes serial rodam sozinhas, uma de cada vez, na ordem declarada, depois das paralelas', async () => {
+    const { dir, base } = repo();
+    commit(dir, 'src/b.txt', 'b\n');
+    const b = barreira();
+    const r = await avaliar({ wt: dir, base, suites: [
+      { nome: 's1', cmd: b.cmd('s1', 'excl'), serial: true }, { nome: 'p1', cmd: b.cmd('p1', 'par', 'p2') },
+      { nome: 's2', cmd: b.cmd('s2', 'excl'), serial: true }, { nome: 'p2', cmd: b.cmd('p2', 'par', 'p1') }] });
+    assert.equal(r.reprova, 0, texto(r));
+    const w = b.dirs()[0];
+    assert.deepEqual(b.ler(w, 'viol'), []);
+    const o = b.ler(w, 'ordem');
+    assert.deepEqual(o.filter((x) => /^ini:s/.test(x)), ['ini:s1', 'ini:s2']);
+    assert.ok(o.indexOf('ini:s1') > o.indexOf('fim:p1') && o.indexOf('ini:s1') > o.indexOf('fim:p2'), o.join(' '));
+    assert.ok(o.indexOf('ini:s2') > o.indexOf('fim:s1'), o.join(' '));
+  });
+
+  test('a4-mesma-ordem (GM-21 T5): na medição --red da base, as paralelas se encontram e a serial roda sozinha e depois', async () => {
+    const { dir, base } = repo();
+    commit(dir, 'src/b.txt', 'b\n');
+    const b = barreira();
+    const r = await avaliar({ wt: dir, base, red: ['esperado'], suites: [
+      { nome: 's1', cmd: b.cmd('s1', 'excl', '-', 'red'), serial: true }, { nome: 'p1', cmd: b.cmd('p1', 'par', 'p2', 'red') }, { nome: 'p2', cmd: b.cmd('p2', 'par', 'p1', 'red') }] });
+    assert.match(texto(r), /RED "esperado" medido na base/, texto(r));
+    const bases = b.dirs().filter((w) => w.startsWith('gate-base-'));
+    assert.equal(bases.length, 1, b.dirs().join(','));
+    assert.deepEqual(b.ler(bases[0], 'viol'), []);
+    const o = b.ler(bases[0], 'ordem');
+    assert.ok(o.indexOf('ini:s1') > o.indexOf('fim:p1') && o.indexOf('ini:s1') > o.indexOf('fim:p2'), `na base: ${o.join(' ')}`);
+  });
+
+  test('mod-test-segue-depois (GM-21 T5): a suíte do mod continua depois das paralelas e agora também depois da serial', async () => {
+    const { dir, base } = repo();
+    commit(dir, 'src/b.txt', 'b\n');
+    const log = [];
+    const rodar = async (nome) => {
+      log.push(`ini:${nome}`);
+      await new Promise((r) => setTimeout(r, nome === 'gates' ? 40 : 5));
+      log.push(`fim:${nome}`);
+      return { nome, rc: 0, out: 'ℹ tests 1\nℹ pass 1\nℹ fail 0\n', ms: 1 };
+    };
+    const r = await avaliar({ wt: dir, base, rodar, suites: [{ nome: 'mod', cmd: 'bash scripts/test/mod-test.sh' }, { nome: 'ser', cmd: 'x', serial: true }, { nome: 'gates', cmd: 'npm test' }] });
+    assert.equal(r.reprova, 0, texto(r));
+    assert.ok(log.indexOf('ini:ser') > log.indexOf('fim:gates'), log.join(' '));
+    assert.ok(log.indexOf('ini:mod') > log.indexOf('fim:ser'), `o mod espera a serial: ${log.join(' ')}`);
+  });
+
+  test('serial-so-vale-true (GM-21 T5): normalizarSuites lê serial === true e só ele', () => {
+    const { suites } = normalizarSuites([{ cmd: 'a', serial: true }, { cmd: 'b', serial: 'true' }, { cmd: 'c' }, 'd']);
+    assert.deepEqual(suites.map((s) => s.serial), [true, false, false, false]);
   });
 
   test('gate-teste-ja-falha-sem-mutacao (E19): morte falsa não conta', async () => {
@@ -1063,5 +1160,103 @@ describe('gate-task: sem dist/ o gate segue e avisa (GM-11 T13 r2)', () => {
     const c = rodar(semDist(), wt, base);
     assert.equal(c.status, 0, c.stdout + c.stderr);
     assert.ok(!/desvio/i.test(c.stdout), c.stdout);
+  });
+});
+
+// GM-21 T4 (REQ-CNT-1): contagem de vitest e jest pelo resumo de texto. A suíte é o texto impresso (cat de arquivo fora do repo).
+describe('gate-task: contagem de vitest e jest (GM-21 T4)', () => {
+  const E = String.fromCharCode(27);
+  const saida = (txt, rc = 0) => {
+    const f = join(mkdtempSync(join(tmpdir(), 'gate-task-out-')), 'saida.txt');
+    writeFileSync(f, txt);
+    return script(`cat ${f}\nexit ${rc}`);
+  };
+  const roda = async (txt, rc = 0, extra = {}) => {
+    const { dir, base } = repo();
+    commit(dir, 'src/b.txt', 'b\n');
+    return avaliar({ wt: dir, base, suites: [{ nome: 's', cmd: saida(txt, rc) }], ...extra });
+  };
+  const vitestVerde = ' Test Files  1 passed (1)\n      Tests  3 passed (3)\n   Duration  1.2s\n';
+  const node = 'ℹ tests 5\nℹ suites 0\nℹ pass 4\nℹ fail 1\n';
+
+  test('conta-vitest-verde: Tests 3 passed (3) rc 0 dá verde: 3', async () => {
+    const r = await roda(vitestVerde);
+    assert.equal(r.reprova, 0, texto(r));
+    assert.match(texto(r), /s verde: 3 teste\(s\)/);
+    assert.equal(r.testes, 3);
+  });
+
+  test('conta-vitest-com-ansi: o mesmo texto com cores ANSI dá o mesmo', async () => {
+    const r = await roda(` ${E}[2mTest Files${E}[22m  ${E}[1m${E}[32m1 passed${E}[39m${E}[22m (1)\n      ${E}[2mTests${E}[22m  ${E}[1m${E}[32m3 passed${E}[39m${E}[22m${E}[90m (3)${E}[39m\n`);
+    assert.equal(r.reprova, 0, texto(r));
+    assert.match(texto(r), /s verde: 3 teste\(s\)/);
+  });
+
+  test('vitest-falha-reprova: 1 failed com rc 0 reprova com a causa; com rc 1 reprova e não é RED conhecido', async () => {
+    const txt = '      Tests  1 failed | 3 passed | 1 skipped (5)\n';
+    const r0 = await roda(txt);
+    assert.ok(r0.reprova > 0);
+    assert.match(texto(r0), /rc=0 mas a saída declara fail 1/);
+    const r1 = await roda(txt, 1);
+    assert.ok(r1.reprova > 0);
+    assert.doesNotMatch(texto(r1), /só RED conhecido/);
+    assert.match(texto(r1), /rc=1/);
+  });
+
+  test('vitest-so-falhas: Tests 3 failed (3) rc 1 reprova com fail 3 declarado', async () => {
+    const r = await roda('      Tests  3 failed (3)\n', 1);
+    assert.ok(r.reprova > 0);
+    assert.doesNotMatch(texto(r), /só RED conhecido/);
+    assert.match(texto(r), /fail 3 declarado pelo resumo/);
+    assert.deepEqual(contagem('      Tests  3 failed (3)\n'), { tests: 3, pass: 0, fail: 3, node: false });
+  });
+
+  test('vitest com --red: rc 1 com nome conhecido nunca vira RED conhecido (só node/TAP)', async () => {
+    const r = await roda(' ✓ outro\n ✖ esperado\n      Tests  1 failed | 2 passed (3)\n', 1, { red: ['esperado'] });
+    assert.ok(r.reprova > 0);
+    assert.doesNotMatch(texto(r), /só RED conhecido/);
+  });
+
+  test('conta-jest-verde: Tests: 3 passed, 3 total dá verde: 3', async () => {
+    const r = await roda('Test Suites: 1 passed, 1 total\nTests:       3 passed, 3 total\n');
+    assert.equal(r.reprova, 0, texto(r));
+    assert.match(texto(r), /s verde: 3 teste\(s\)/);
+  });
+
+  test('conta-jest-com-pulado: 1 skipped, 3 passed, 4 total dá verde: 3 (pulado não é prova)', async () => {
+    const r = await roda('Tests:       1 skipped, 3 passed, 4 total\n');
+    assert.equal(r.reprova, 0, texto(r));
+    assert.match(texto(r), /s verde: 3 teste\(s\)/);
+    assert.deepEqual(contagem('Tests:       1 skipped, 3 passed, 4 total\n'), { tests: 4, pass: 3, fail: 0, node: false });
+  });
+
+  test('jest com falha: 1 failed, 3 passed rc 1 reprova; ordem das partes não importa', async () => {
+    const r = await roda('Tests:       1 failed, 3 passed, 4 total\n', 1);
+    assert.ok(r.reprova > 0);
+    assert.doesNotMatch(texto(r), /só RED conhecido/);
+    assert.deepEqual(contagem('Tests:       3 passed, 1 todo, 1 failed, 5 total\n'), { tests: 5, pass: 3, fail: 1, node: false });
+  });
+
+  test('test-files-nao-conta: só Test Files / Test Suites passou ⇒ rc=0 sem prova', async () => {
+    const r = await roda(' Test Files  2 passed (2)\n');
+    assert.ok(r.reprova > 0);
+    assert.match(texto(r), /rc=0 sem prova/);
+    const j = await roda('Test Suites: 2 passed, 2 total\n');
+    assert.match(texto(j), /rc=0 sem prova/);
+    assert.deepEqual(contagem(' Test Files  2 passed (2)\nTest Suites: 2 failed, 2 total\n'), { tests: null, pass: null, fail: null, node: false });
+  });
+
+  test('node-test-igual: saída do node --test conta e relata como antes (byte a byte)', async () => {
+    assert.deepEqual(contagem(node), { tests: 5, pass: 4, fail: 1, node: true });
+    assert.deepEqual(contagem('ℹ tests 3\nℹ pass 3\nℹ fail 0\n'), { tests: 3, pass: 3, fail: 0, node: true });
+    const r = await roda('ℹ tests 3\nℹ pass 3\nℹ fail 0\n');
+    assert.equal(r.reprova, 0, texto(r));
+    assert.match(texto(r), /^ok {5}s verde: 3 teste\(s\) \(\d+\.\ds\)$/m);
+    assert.equal(r.testes, 3);
+  });
+
+  test('RED conhecido segue só para node: nome + fail declarado igual', async () => {
+    const r = await roda('✖ esperado (1.2ms)\nℹ tests 1\nℹ fail 1\n', 1, { red: ['esperado'] });
+    assert.match(texto(r), /só RED conhecido: 1/);
   });
 });

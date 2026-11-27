@@ -725,6 +725,15 @@ describe('coletar: a evidência vem do que a execução produziu (P3: negada fix
     assert.equal(lerTudo(ENTREGA_PUBLICADA).length, antesPub, 'a publicada vigiada fica com 0 eventos novos (nem o fato.medido do painel vai para ela)');
     assert.equal(await publicadaPeloProduto(lerTudo(ENTREGA_PUBLICADA), FUT, ENTREGA_PUBLICADA), true);
     assert.equal(await publicadaPeloProduto(lerTudo(ENTREGA_ATIVA), FUT, ENTREGA_ATIVA), false);
+    // GM-21 DT1 (emenda 5): "publicada" exige plano sem task aberta. No SHA da cópia as 20 tasks da GM-13 estão pendentes (medido); depois de todas as asserções da conversa ativa,
+    // elas recebem `task.fora` (cortada), e só então a semente antiga (PR mergeado) pode publicar a GM-13. Nenhuma asserção acima muda.
+    const { tasksAbertas } = await import('../dist/trilha.js');
+    const dirAtiva = join(destino, '.harness', 'entregas', ENTREGA_ATIVA);
+    const idsPlano = JSON.parse(readFileSync(join(dirAtiva, 'plano.json'), 'utf8')).tasks.map((t) => t.id);
+    const abertas = tasksAbertas(idsPlano, lerTudo(ENTREGA_ATIVA));
+    assert.equal(abertas.length, 20, 'preparo: as 20 tasks da GM-13 estão abertas no SHA da cópia');
+    abertas.forEach((task, i) => assert.equal(append(dirAtiva, 'fecha-plano', { ts: `2026-11-10T11:00:${String(i).padStart(2, '0')}.000Z`, autor: 'a1@example.invalid', sessao: 'fecha-plano', agente: 'orquestrador', tipo: 'task.fora', dados: { task, como: 'cortada', motivo: 'plano fechado para a semente antiga publicar', origem: 'dono' } }).ok, true));
+    assert.deepEqual(tasksAbertas(idsPlano, lerTudo(ENTREGA_ATIVA)), []);
     // (i) a causa: a ativa com PR mergeado no diário (a semente antiga) ⇒ sessão sem entrega
     const r = append(join(destino, '.harness', 'entregas', ENTREGA_ATIVA), 'semente-antiga', { ts: '2026-11-10T12:00:00.000Z', autor: 'a1@example.invalid', sessao: 'semente-antiga', agente: 'painel', tipo: 'fato.medido', dados: { chave: 'pr', fonte: 'gh', valor: { numero: 14, estado: 'mergeado', branch: 'enabler/GM-13-a1' } } });
     assert.equal(r.ok, true);

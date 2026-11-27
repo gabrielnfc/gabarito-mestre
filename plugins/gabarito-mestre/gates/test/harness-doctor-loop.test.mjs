@@ -14,7 +14,7 @@ import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { spawnSync, execFileSync } from 'node:child_process';
 import * as doctor from '../scripts/harness-doctor.mjs';
-import { MOTIVO_BRANCHPADRAO, ORDEM_ITENS, coletarFatos, detectar, perguntas, gravar, rodarReal } from '../scripts/onboarding.mjs';
+import { MOTIVO_BRANCHPADRAO, ORDEM_ITENS, coletarFatos, detectar, itensDaPrevia, perguntas, gravar, rodarReal } from '../scripts/onboarding.mjs';
 import * as diario from '../dist/diario.js';
 import { repo, agents, SCRIPT, git, repoComGit, AGORA, horasAtras, arq, heartbeatLocal, ARQ_DIARIO } from './_doctor-helpers.mjs';
 
@@ -257,6 +257,25 @@ describe('T14 doctor — modelos-por-papel (REQ-MOD-1): só aviso', () => {
   test('doctor-economia-abaixo-do-perfil-avisa: haiku onde a economia recomenda sonnet; qualidade recomenda opus', () => {
     assert.equal(avisosDe(comPerfil({ perfil: 'economia', modelos: { revisor: 'haiku' } })).join('|'), 'modelos-por-papel: revisor: declarado haiku < recomendado sonnet');
     assert.equal(avisosDe(comPerfil({ perfil: 'qualidade', modelos: { basico: 'haiku', revisor_final: 'opus' } })).join('|'), 'modelos-por-papel: basico: declarado haiku < recomendado sonnet; revisor_final: declarado opus < recomendado fable');
+  });
+
+  test('doctor-orquestrador-abaixo: modelos.orquestrador abaixo do recomendado (opus) avisa; opus não', () => {
+    assert.equal(avisosDe(comModelos({ orquestrador: 'haiku' })).join('|'), 'modelos-por-papel: orquestrador: declarado haiku < recomendado opus');
+    assert.equal(avisosDe(comPerfil({ perfil: 'economia', modelos: { orquestrador: 'sonnet' } })).join('|'), 'modelos-por-papel: orquestrador: declarado sonnet < recomendado opus');
+    assert.deepEqual(avisosDe(comModelos({ orquestrador: 'opus' })), []);
+  });
+
+  test('doctor-alias-divergente: alias gravado ≠ papel orquestrador avisa (vem à Janela pelos avisos); igual ou sem alias não', () => {
+    const hoje = new Date().toISOString().slice(0, 10);
+    const comAlias = (alias, extra = {}) => repoComGit({ 'AGENTS.md': agents(1), 'harness.config.json': JSON.stringify({ orquestracao: { modelo: { alias, resolvidoEm: hoje, validadeDias: 90 }, ...extra } }) });
+    const avisosAlias = (dir) => doctor.run(dir).avisos.filter((a) => a.startsWith('modelo-resolvido'));
+    const a = avisosAlias(comAlias('fable'));
+    assert.equal(a.length, 1, a.join('|'));
+    assert.match(a[0], /modelo do orquestrador gravado fable ≠ opus do papel orquestrador: rode o onboarding de novo/);
+    assert.deepEqual(avisosAlias(comAlias('opus')), []);
+    assert.deepEqual(avisosAlias(comAlias('sonnet', { modelos: { orquestrador: 'sonnet' } })), [], 'o explícito vale como o papel');
+    assert.match(avisosAlias(comAlias('opus', { modelos: { orquestrador: 'sonnet' } }))[0], /gravado opus ≠ sonnet do papel orquestrador/);
+    assert.deepEqual(avisosAlias(comAlias('')), [], 'sem alias gravado não há divergência a avisar');
   });
 
   test('doctor-economia-linha-informar: economia ⇒ 1 linha informativa na evidência (found, sem aviso); outros perfis não a trazem', () => {
@@ -688,7 +707,7 @@ const semClaude = (cmd, args, opts) => (cmd === 'claude' ? { rc: 0, stdout: 'No 
 function onboardingNoRepo(dir, { recalibrar = false, hoje = new Date().toISOString().slice(0, 10) } = {}) {
   const fatos = coletarFatos(dir, { rodar: semClaude, hoje });
   const itens = detectar(fatos);
-  const resp = { _previa: JSON.parse(JSON.stringify(itens)), ...(recalibrar ? { _recalibrar: true } : {}) };
+  const resp = { _previa: JSON.parse(JSON.stringify(itensDaPrevia(fatos))), ...(recalibrar ? { _recalibrar: true } : {}) };
   for (const p of perguntas(itens, fatos.configExistente)) resp[p.id] = p.default;
   const arqResp = join(mkdtempSync(join(tmpdir(), 'fx3-resp-')), 'respostas.json');
   writeFileSync(arqResp, JSON.stringify(resp));
@@ -811,5 +830,57 @@ describe('FX3 doctor — nenhum comando para colar depois do onboarding', () => 
     // o planejamento da exceção: o comando do aprendizado EXISTE no aviso de pendência real (senão a exceção seria letra morta)
     assert.match('aprendizado-sem-destino: feche com: loop.mjs aprendizado nada', EXCECAO_APRENDIZADO);
     assert.doesNotMatch('modelo-resolvido: rode node x.mjs', EXCECAO_APRENDIZADO);
+  });
+});
+
+describe('GM-21 T2 doctor — suites-declaradas (REQ-MIG-2)', () => {
+  const FIX_CMD = 'o abrir recusa sem suíte: declare gates.suites';
+  const comCfg = (cfg) => repoComGit({ 'AGENTS.md': agents(1), ...(cfg === undefined ? {} : { 'harness.config.json': typeof cfg === 'string' ? cfg : JSON.stringify(cfg) }) });
+  const achado = (out) => out.resultados.find((r) => r.id === 'suites-declaradas');
+
+  test('doctor-suites-declaradas: sem gates.suites ⇒ FALTA com o conserto; com, found e o número de suítes', () => {
+    const sem = doctor.run(comCfg());
+    assert.equal(achado(sem).found, false);
+    assert.equal(achado(sem).evidence, FIX_CMD);
+    assert.equal(achado(sem).level, 'warn', 'aviso: não muda o nível');
+    assert.equal(achado(sem).rule, 'REQ-MIG-2');
+    assert.ok(sem.avisos.includes(`suites-declaradas: ${FIX_CMD}`), JSON.stringify(sem.avisos));
+    const dois = doctor.run(comCfg({ gates: { suites: [{ nome: 'unit', cmd: 'npm test' }, 'node --test'] } }));
+    assert.equal(achado(dois).found, true);
+    assert.equal(achado(dois).evidence, '2 suíte(s)');
+    assert.equal(dois.avisos.some((a) => a.startsWith('suites-declaradas')), false);
+    assert.equal(achado(doctor.run(comCfg({ gates: { suites: ['npm test'] } }))).evidence, '1 suíte(s)');
+    // o doctor lê o mesmo gates.suites que o onboarding grava (costura onboarding ⇒ doctor)
+    assert.match(doctor.CHECKS.find((c) => c.id === 'suites-declaradas').fix, /gates\.suites/);
+  });
+
+  test('doctor-suites-declaradas-nao-valem: lista vazia, entrada sem cmd, tipo errado, gates torto e config inválida ⇒ FALTA (falha nunca vira ok)', () => {
+    const casos = {
+      'lista vazia': { gates: { suites: [] } },
+      'não é lista': { gates: { suites: 'npm test' } },
+      'gates não objeto': { gates: 'x' },
+      'gates null': { gates: null },
+      'gates sem suites': { gates: { proibidos: [] } },
+    };
+    for (const [nome, cfg] of Object.entries(casos)) {
+      const r = achado(doctor.run(comCfg(cfg)));
+      assert.equal(r.found, false, nome);
+      assert.equal(r.evidence, FIX_CMD, nome);
+    }
+    const invalida = achado(doctor.run(comCfg('{"gates": ')));
+    assert.equal(invalida.found, false);
+    assert.match(invalida.evidence, /harness\.config\.json inválido/);
+    // O doctor só CONTA o declarado (REQ-MIG-2): a régua do gate fica no conferirExecutavel da T3, não aqui.
+    assert.equal(achado(doctor.run(comCfg({ gates: { suites: [{ nome: 'x' }, { cmd: 'npm test' }] } }))).evidence, '2 suíte(s)');
+  });
+
+  test('doctor-suites-declaradas-nao-muda-nivel: o aviso não derruba o nível nem o exit code (CLI real)', () => {
+    const sem = doctor.run(comCfg());
+    const com = doctor.run(comCfg({ gates: { suites: ['npm test'] } }));
+    assert.equal(sem.alcancado, com.alcancado);
+    assert.deepEqual(sem.novasFaltando, com.novasFaltando);
+    const rc = (d) => spawnSync(process.execPath, [SCRIPT], { cwd: d, encoding: 'utf8' });
+    assert.equal(rc(comCfg()).status, rc(comCfg({ gates: { suites: ['npm test'] } })).status);
+    assert.match(rc(comCfg()).stdout, new RegExp(FIX_CMD));
   });
 });

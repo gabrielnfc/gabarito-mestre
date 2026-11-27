@@ -2,7 +2,8 @@
 // O corpo e o de bfa322ad por faixa; ver REQ-SEG-1 da spec da GM-19.
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, writeFileSync, readFileSync, existsSync, symlinkSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, writeFileSync, readFileSync, existsSync, symlinkSync, rmSync, readdirSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -11,7 +12,7 @@ import { trilhaDe } from '../dist/trilha.js';
 import { estadoDe as estadoNucleo, ordenar as ordenarNucleo } from '../dist/loop.js';
 import { coberturaDoOrquestrador } from '../dist/painel-equipe.js';
 import * as diario from '../dist/diario.js';
-import { AQUI, GITIGNORE_RAIZ, VERSAO_PLUGIN, CONFIG_PADRAO, planoDe, PLANO_PADRAO, ambiente, PLANO_REQ, IMPL_E, APROVA_E, INTEGRA_E, PROPOSTA, relogioDe, escreve, grava, bytesDoDiario, ambReq, comOrigin, proporArgs } from './_loop-cli-helpers.mjs';
+import { g, AQUI, GITIGNORE_RAIZ, VERSAO_PLUGIN, CONFIG_PADRAO, planoDe, PLANO_PADRAO, ambiente, PLANO_REQ, IMPL_E, APROVA_E, INTEGRA_E, PROPOSTA, relogioDe, escreve, grava, bytesDoDiario, ambReq, comOrigin, proporArgs } from './_loop-cli-helpers.mjs';
 // --- corpo movido ---
 describe('GM-14 T34: pouso é regra do produto (FIEL-14 a, b, c, e, f)', () => {
   const PAINEL_CLI = join(AQUI, '..', 'scripts', 'painel.mjs');
@@ -162,7 +163,8 @@ describe('GM-14 T34: pouso é regra do produto (FIEL-14 a, b, c, e, f)', () => {
     assert.doesNotMatch(painelDa(amb, 'S2'), /limpar a conversa/);
   });
 
-  const semConfig = (amb) => { spawnSync('rm', [join(amb.dir, 'harness.config.json')]); return amb; }; // sem config em lugar nenhum (a guarda vê onboarding em qualquer config válida)
+  // GM-21 T3 (emenda 8, REQ-MIG-1): `proxima` exige gates.suites, então "sem config" vira config mínima só com suítes (sem `fluxo`); as asserções não mudam
+  const semConfig = (amb) => { writeFileSync(join(amb.dir, 'harness.config.json'), JSON.stringify({ gates: { suites: ["echo '# pass 1'"] } })); return amb; };
   test('proxima-sem-onboarding-nao-trava-pelo-pouso (FIEL-14 h; GM-15 T23, critério da guarda): sem config o pouso gravado não trava proxima nem o painel; com onboarding trava (controle)', () => {
     const amb = semConfig(plano1());
     assert.equal(amb.cli(['pousar', '--sessao', 'S1']).rc, 0);
@@ -309,7 +311,10 @@ describe('GM-14 T34: pouso é regra do produto (FIEL-14 a, b, c, e, f)', () => {
 
 describe('entrega publicada: nada de sessao.*, guarda.*, task.* nem loop.parar (T48)', () => {
   const PR = (numero, estado) => ['fato.medido', { chave: 'pr', fonte: 'gh', valor: { numero, estado, branch: 'enabler/GM-10-loop' } }];
-  const publicar = (amb) => amb.semear([PR(7, 'mergeado')]);
+  // GM-21 DT1: "publicada" = PR mergeado E plano sem task aberta; os testes desta suíte (T48) são sobre as CONSEQUÊNCIAS de publicada, então o plano que simulam é o fechado (`tasks: []`).
+  // O critério com task aberta tem os casos próprios (`publicada-nao-com-plano-aberto`, `regra-unica`).
+  const planoFechado = (amb) => writeFileSync(join(amb.entregas, 'plano.json'), JSON.stringify(planoDe([])));
+  const publicar = (amb) => { planoFechado(amb); amb.semear([PR(7, 'mergeado')]); };
   const PLUGIN_RAIZ = join(AQUI, '..', '..');
   const configOnboarding = { ...CONFIG_PADRAO, fluxo: { resolvidoEm: '2026-11-13T00:00:00Z' } };
   const semId = (amb) => join(amb.dir, '.harness', 'entregas', '_sem-id');
@@ -371,6 +376,31 @@ describe('entrega publicada: nada de sessao.*, guarda.*, task.* nem loop.parar (
     const r = amb.cli(['pousar', '--sessao', 'S1']);
     assert.equal(r.j?.erro, 'entrega_publicada', r.out + r.err);
     assert.equal(amb.eventos().length, antes);
+  });
+
+  test('publicada-nao-com-plano-aberto (GM-21 T1, REQ-ENC-1, P9): PR do plano mergeado e T2 aberta ⇒ iniciar T2 não recusa com entrega_publicada e grava; plano fechado (T2 cortada) ⇒ recusa', () => {
+    const amb = ambiente({ plano: planoDe([{ id: 'T1', deps: [], arquivos: ['src/t1.txt'] }, { id: 'T2', deps: [], arquivos: ['src/t2.txt'] }]) });
+    // T1 integrada pelo ciclo real do loop; T2 só aberta (worktree), o PR do plano (#10, via titulo, base main) já mergeado depois da integração
+    assert.equal(amb.cli(['abrir', 'T1']).rc, 0);
+    assert.equal(amb.cli(['iniciar', 'T1', 'implementador']).rc, 0);
+    amb.commitNaWt('T1', 'src/t1.txt');
+    assert.equal(amb.cli(['concluir', 'T1']).rc, 0);
+    assert.equal(amb.cli(['iniciar', 'T1', 'revisor']).rc, 0);
+    assert.equal(amb.cli(['veredito', 'T1', 'APROVADO', '1', '0', '0']).rc, 0);
+    assert.equal(amb.cli(['integrar', 'T1']).rc, 0);
+    assert.equal(amb.cli(['abrir', 'T2']).rc, 0);
+    const pr10 = ['fato.medido', { chave: 'pr', fonte: 'gh', valor: { numero: 10, estado: 'mergeado', branch: 'docs/GM-10-plano', base: 'main', via: 'titulo' } }];
+    amb.semear([pr10]);
+    // o diário relido: nenhum entrega.encerrada e a regra única (a da trilha) não dá a entrega por publicada
+    assert.equal(amb.tipos().includes('entrega.encerrada'), false);
+    const r = amb.cli(['iniciar', 'T2', 'implementador']);
+    assert.equal(r.rc, 0, r.out + r.err);
+    assert.notEqual(r.j?.erro, 'entrega_publicada');
+    assert.ok(amb.tipos().filter((t) => t === 'task.iniciada').length >= 2, 'a task.iniciada de T2 foi gravada');
+    // controle (troca de valor): com T2 cortada o mesmo PR publica e o loop recusa
+    const amb2 = ambiente({ plano: planoDe([{ id: 'T1', deps: [], arquivos: ['src/t1.txt'] }, { id: 'T2', deps: [], arquivos: ['src/t2.txt'] }]) });
+    amb2.semear([['task.fora', { task: 'T1', como: 'cortada', motivo: 'fora do corte', origem: 'dono' }], ['task.fora', { task: 'T2', como: 'cortada', motivo: 'fora do corte', origem: 'dono' }], pr10]);
+    assert.equal(amb2.cli(['parar', 'nao_conseguiu']).j?.erro, 'entrega_publicada');
   });
 
   test('identificada-continua-gravando (vizinho): sem PR medido, ou com PR aberto depois do mergeado, parar, iniciar e pousar gravam', () => {
@@ -440,8 +470,10 @@ describe('entrega publicada: nada de sessao.*, guarda.*, task.* nem loop.parar (
     assert.equal(amb.cli(['abrir', 'T1']).rc, 0);
     assert.equal(amb.cli(['iniciar', 'T1', 'implementador']).rc, 0);
     amb.commitNaWt('T1', 'src/t1.txt');
+    const planoAberto = readFileSync(join(amb.entregas, 'plano.json'), 'utf8');
     publicar(amb);
     assert.equal(amb.cli(['concluir', 'T1']).j?.erro, 'entrega_publicada', 'controle: sem ligação, publicada');
+    writeFileSync(join(amb.entregas, 'plano.json'), planoAberto); // o dono religa a sessão: o loop volta a ver as tasks (a ligação é o que o destrava)
     ligarPeloDono(amb, 'SDONO');
     const r1 = amb.cli(['concluir', 'T1']);
     assert.equal(r1.rc, 0, r1.out + r1.err);
@@ -452,7 +484,8 @@ describe('entrega publicada: nada de sessao.*, guarda.*, task.* nem loop.parar (
     assert.equal(amb.cli(['parar', 'nao_conseguiu']).rc, 0);
     assert.equal(amb.cli(['parar', 'nao_conseguiu', '--sessao', 'SDONO']).rc, 0);
     assert.ok(amb.tipos().includes('task.integrada'));
-    // vizinho perigoso: sessão EXPLÍCITA que o dono não ligou continua recusada (o filtro que libera não fura a guarda)
+    // vizinho perigoso: sessão EXPLÍCITA que o dono não ligou continua recusada (o filtro que libera não fura a guarda); T2 e T3 saem do plano para ele voltar a ser fechado
+    planoFechado(amb);
     assert.equal(amb.cli(['parar', 'nao_conseguiu', '--sessao', 'OUTRA']).j?.erro, 'entrega_publicada');
     // vizinho perigoso: a resposta do dono liga OUTRA entrega ⇒ esta segue publicada
     const amb2 = ambiente();
@@ -495,6 +528,7 @@ describe('entrega publicada: nada de sessao.*, guarda.*, task.* nem loop.parar (
 
   test('ligada-ts-empatado (MINOR-2 r1): resposta do dono com o MESMO ts do merge não é posterior ⇒ recusa', () => {
     const amb = ambiente();
+    planoFechado(amb);
     ligarPeloDono(amb, 'S1');
     medirPR(amb, 'S2', 7, 'mergeado', '2026-11-13T10:00:01.000Z');
     amb.fechar();
@@ -546,12 +580,13 @@ describe('entrega publicada: nada de sessao.*, guarda.*, task.* nem loop.parar (
       ['fechado', [PR(7, 'fechado')], true, false],
     ];
     for (const [nome, prs, plano, esperado] of casos) {
-      const amb = ambiente({ plano: plano ? PLANO_PADRAO : null });
+      const amb = ambiente({ plano: plano ? planoDe([]) : null });
       if (prs.length > 0) amb.semear(prs);
       assert.equal(entregaPublicada(amb.dir, 'GM-10', null), esperado, nome);
     }
     // o diário que liga a sessão por `dono.resposta` tira a entrega de "publicada" (REQ-TRI-1), como na trilha
     const amb = ambiente();
+    planoFechado(amb);
     amb.semear([PR(7, 'mergeado')]);
     assert.equal(entregaPublicada(amb.dir, 'GM-10', 'S1'), true);
     assert.equal(entregaPublicada(amb.dir, 'GM-99', 'S1'), false, 'entrega sem diário não é publicada');
@@ -1413,5 +1448,205 @@ describe('GM-20 REQ-EXE-1: iniciar --executor orquestrador (D-G44, DT10 a DT12)'
     const e = amb.eventos().find((x) => x.tipo === 'task.iniciada');
     assert.deepEqual(Object.keys(e.dados).sort().filter((k) => !['modelo', 'executor', 'motivo'].includes(k)), ['papel', 'task']);
     assert.equal(estadoNucleo(ordenarNucleo(amb.eventos()).eventos.filter((x) => x.dados?.task === 'T1')).estado, 'implementando');
+  });
+});
+
+describe('GM-21 T3: plano executável conferido antes do abrir e do proxima (REQ-MIG-1, DT4; CLI real, P9)', () => {
+  const MUT = [{ nome: 'm1', arquivo: 'src/t1.txt', de: 'a', para: 'b', teste: 'npm test' }];
+  const ladoDe = (amb) => ({
+    branches: g(amb.dir, 'branch', '--list', 'wt/*').trim(),
+    worktrees: existsSync(join(amb.dir, '.harness', 'worktrees')) ? readdirSync(join(amb.dir, '.harness', 'worktrees')) : [],
+  });
+  const comTask = (extra = {}, config = CONFIG_PADRAO) => {
+    const amb = ambiente({ config, plano: planoDe([{ id: 'T1', deps: [], arquivos: ['src/t1.txt'], ...extra }]) });
+    return amb;
+  };
+  const recusou = (amb, r, task, campo) => {
+    assert.equal(r.rc, 1, r.out + r.err);
+    assert.equal(r.j.ok, false);
+    assert.equal(r.j.erro, 'plano_nao_executavel', r.out);
+    assert.deepEqual(ladoDe(amb), { branches: '', worktrees: [] }, 'nenhuma worktree nem branch');
+    assert.ok(r.j.problemas.some((p) => p.task === task && p.campo === campo), JSON.stringify(r.j.problemas));
+    for (const p of r.j.problemas) assert.ok(r.j.mensagem.includes(p.motivo) || r.out.includes(p.motivo), p.motivo);
+    assert.ok(r.j.mensagem.includes(task ?? 'gates.suites'), r.j.mensagem);
+  };
+
+  test('abrir-recusa-mutacoes-texto-livre: a forma da l.122 do backlog; a mensagem cita task, campo e motivo; nada criado', () => {
+    const amb = comTask({ mutacoes: 'mutar a função X e ver o teste cair' });
+    const r = amb.cli(['abrir', 'T1']);
+    recusou(amb, r, 'T1', 'mutacoes');
+    assert.equal(r.j.problemas.length, 1);
+    assert.match(r.j.mensagem, /T1/);
+    assert.match(r.j.mensagem, /mutacoes/);
+    assert.match(r.j.mensagem, /caminho/);
+  });
+
+  test('abrir-recusa-teste-afetado-caminho: arquivo existente sem bit de execução ⇒ recusa com o exemplo fixo; nada criado', () => {
+    const amb = comTask({ teste_afetado: 'src/t1.test.ts' });
+    writeFileSync(join(amb.dir, 'src/t1.test.ts'), 'x');
+    const r = amb.cli(['abrir', 'T1']);
+    recusou(amb, r, 'T1', 'teste_afetado');
+    assert.ok(r.j.mensagem.includes('use o comando, ex.: "npx vitest run src/t1.test.ts"'), r.j.mensagem);
+  });
+
+  test('abrir-recusa-sem-suites: config sem gates.suites, lista vazia ou item sem cmd ⇒ recusa citando a config; nada criado', () => {
+    for (const config of [{ loop: { slots: 2 } }, { gates: { suites: [] } }, { gates: { suites: [{ nome: 'x' }] } }]) {
+      const amb = comTask({}, config);
+      const r = amb.cli(['abrir', 'T1']);
+      recusou(amb, r, null, 'gates.suites');
+    }
+  });
+
+  test('abrir-suites-nao-commitadas: a worktree nasce do commit; gates.suites só no working tree ⇒ recusa mandando commitar; commitada ⇒ abre (r1 MAJOR-1)', () => {
+    const suites = { gates: { suites: ["echo '# pass 1'"] } };
+    const amb = comTask({}, { loop: { slots: 2 } });
+    writeFileSync(join(amb.dir, 'harness.config.json'), JSON.stringify({ loop: { slots: 2 }, ...suites }));
+    const r = amb.cli(['abrir', 'T1']);
+    recusou(amb, r, null, 'gates.suites');
+    assert.match(r.j.mensagem, /commit/i, r.j.mensagem);
+    const p = amb.cli(['proxima', '--vivos', '0']);
+    assert.deepEqual(p.j.acao, { tipo: 'esperar', motivo: 'plano_nao_executavel' });
+    assert.match(JSON.stringify(p.j.aviso), /commit/i);
+    g(amb.dir, 'add', 'harness.config.json');
+    g(amb.dir, 'commit', '-q', '-m', 'chore: suites');
+    const ok = amb.cli(['abrir', 'T1']);
+    assert.equal(ok.rc, 0, ok.out + ok.err);
+  });
+
+  test('abrir-diretorio-novo-no-escopo: arquivos aponta para pasta que a task ainda vai criar; mutação dentro dela não recusa; irmão com mesmo prefixo recusa (r1 MAJOR-2)', () => {
+    const amb = comTask({ arquivos: ['src/novo'], mutacoes: 'mut.json' });
+    writeFileSync(join(amb.dir, 'mut.json'), JSON.stringify([{ ...MUT[0], arquivo: 'src/novo/a.js' }]));
+    const p = amb.cli(['proxima', '--vivos', '0']);
+    assert.equal(p.j.acao.tipo, 'despachar', p.out);
+    assert.deepEqual(p.j.acao.itens.map((i) => i.task), ['T1']);
+    assert.equal(amb.cli(['abrir', 'T1']).rc, 0);
+    const irmao = comTask({ arquivos: ['src/novo'], mutacoes: 'mut.json' });
+    writeFileSync(join(irmao.dir, 'mut.json'), JSON.stringify([{ ...MUT[0], arquivo: 'src/novoX.js' }]));
+    recusou(irmao, irmao.cli(['abrir', 'T1']), 'T1', 'mutacoes');
+  });
+
+  test('abrir-plano-valido-igual: o formato da GM-16 (mutacoes em JSON com cwd, teste_afetado em comando) abre como antes', () => {
+    const amb = comTask({ mutacoes: 'mut.json', teste_afetado: 'npx vitest run src/t1.test.ts' });
+    writeFileSync(join(amb.dir, 'mut.json'), JSON.stringify([{ ...MUT[0], cwd: '.' }]));
+    const r = amb.cli(['abrir', 'T1']);
+    assert.equal(r.rc, 0, r.out + r.err);
+    assert.equal(r.j.task, 'T1');
+    assert.ok(existsSync(join(amb.dir, '.harness', 'worktrees', 'T1')));
+    assert.equal(r.j.problemas, undefined);
+  });
+
+  test('suites-em-texto-aceitas: gates.suites com texto puro não recusa (a régua é a do gate)', () => {
+    const amb = comTask({}, { gates: { suites: ["echo '# pass 1'", { cmd: "echo '# pass 1'", nome: 'b' }] } });
+    const r = amb.cli(['abrir', 'T1']);
+    assert.equal(r.rc, 0, r.out + r.err);
+  });
+
+  test('escopo-por-emenda-e-diretorio: arquivo da mutação dentro de diretório de `arquivos` ou do escopo ampliado por emenda aplicada não recusa; fora de ambos recusa', () => {
+    // diretório listado
+    const dir = comTask({ arquivos: ['src'], mutacoes: 'mut.json' });
+    writeFileSync(join(dir.dir, 'mut.json'), JSON.stringify([{ ...MUT[0], arquivo: 'src/fundo/x.txt' }]));
+    assert.equal(dir.cli(['abrir', 'T1']).rc, 0);
+    // fora do escopo sem emenda
+    const PLANO_INT = { entrega: 'GM-10', tasks: [{ id: 'T1', deps: [], arquivos: ['src/t1.txt'], reqs: ['REQ-A-1'], mutacoes: 'mut.json' }] };
+    const sem = ambiente({ plano: PLANO_INT });
+    writeFileSync(join(sem.dir, 'mut.json'), JSON.stringify([{ ...MUT[0], arquivo: 'src/extra.txt' }]));
+    const rec = sem.cli(['abrir', 'T1']);
+    recusou(sem, rec, 'T1', 'mutacoes');
+    assert.match(rec.j.mensagem, /src\/extra\.txt/);
+    // com emenda aprovada que traz o arquivo
+    const amb = ambiente({ plano: PLANO_INT });
+    writeFileSync(join(amb.dir, 'mut.json'), JSON.stringify([{ ...MUT[0], arquivo: 'src/extra.txt' }]));
+    comOrigin(amb, { sombra: { julga_emendas: true }, gates: { suites: ["echo '# pass 1'"] } });
+    assert.equal(amb.cli(proporArgs(amb, { task: 'T1', arquivos: 'src/extra.txt' })).rc, 0);
+    assert.equal(amb.cli(['emenda', 'julgar', '1', 'aprovar']).rc, 0);
+    const ok = amb.cli(['abrir', 'T1']);
+    assert.equal(ok.rc, 0, ok.out + ok.err);
+  });
+
+  test('conferir-ignora-integrada: task integrada ou fora com campo inválido não recusa o abrir da outra nem entra no aviso', () => {
+    const amb = ambiente({ plano: planoDe([
+      { id: 'T1', deps: [], arquivos: ['src/t1.txt'], mutacoes: 'texto livre' },
+      { id: 'T2', deps: [], arquivos: ['src/t2.txt'], mutacoes: 'texto livre' },
+      { id: 'T3', deps: [], arquivos: ['src/t3.txt'] },
+    ]) });
+    amb.semear([...IMPL_E('T1'), APROVA_E('T1'), INTEGRA_E('T1'), ['task.fora', { task: 'T2', como: 'cortada', motivo: 'x', origem: 'dono' }]]);
+    const p = amb.cli(['proxima', '--vivos', '0']);
+    assert.equal(p.rc, 0, p.out + p.err);
+    assert.deepEqual(p.j.acao.itens.map((i) => i.task), ['T3']);
+    assert.equal(JSON.stringify(p.j.aviso ?? []).includes('plano_nao_executavel') || JSON.stringify(p.j.aviso ?? []).includes('mutacoes'), false, JSON.stringify(p.j.aviso));
+    assert.equal(amb.cli(['abrir', 'T3']).rc, 0);
+  });
+
+  test('proxima-tira-invalida: 1 task inválida e outra válida ⇒ itens só com a válida; o aviso traz os problemas da inválida', () => {
+    const amb = ambiente({ plano: planoDe([
+      { id: 'T1', deps: [], arquivos: ['src/t1.txt'], mutacoes: 'mutar X' },
+      { id: 'T2', deps: [], arquivos: ['src/t2.txt'] },
+    ]) });
+    const r = amb.cli(['proxima', '--vivos', '0']);
+    assert.equal(r.rc, 0, r.out + r.err);
+    assert.equal(r.j.acao.tipo, 'despachar');
+    assert.deepEqual(r.j.acao.itens.map((i) => i.task), ['T2']);
+    const aviso = r.j.aviso.filter((a) => a.includes('T1') && a.includes('mutacoes'));
+    assert.equal(aviso.length, 1, JSON.stringify(r.j.aviso));
+    assert.equal(r.j.aviso.some((a) => a.includes('T2') && /mutacoes|teste_afetado/.test(a)), false);
+  });
+
+  test('proxima-todas-invalidas-espera: toda task com problema (ou a config) ⇒ esperar plano_nao_executavel, com o aviso de cada uma', () => {
+    const amb = ambiente({ plano: planoDe([
+      { id: 'T1', deps: [], arquivos: ['src/t1.txt'], mutacoes: 'mutar X' },
+      { id: 'T2', deps: [], arquivos: ['src/t2.txt'], teste_afetado: 'src/a.sh' },
+    ]) });
+    writeFileSync(join(amb.dir, 'src/a.sh'), 'x');
+    const r = amb.cli(['proxima', '--vivos', '0']);
+    assert.equal(r.rc, 0, r.out + r.err);
+    assert.deepEqual(r.j.acao, { tipo: 'esperar', motivo: 'plano_nao_executavel' });
+    assert.ok(r.j.aviso.some((a) => a.includes('T1') && a.includes('mutacoes')), JSON.stringify(r.j.aviso));
+    assert.ok(r.j.aviso.some((a) => a.includes('T2') && a.includes('teste_afetado')), JSON.stringify(r.j.aviso));
+    const semCfg = comTask({}, { loop: { slots: 2 } }); // config presente, sem gates.suites
+    const c = semCfg.cli(['proxima', '--vivos', '0']);
+    assert.deepEqual(c.j.acao, { tipo: 'esperar', motivo: 'plano_nao_executavel' });
+    assert.ok(c.j.aviso.some((a) => a.includes('gates.suites')), JSON.stringify(c.j.aviso));
+  });
+
+  test('proxima-config-ausente-conta-como-sem-suites (emenda 8, DT4): sem harness.config.json o proxima tira a task, avisa gates.suites e espera; o abrir recusa', () => {
+    const amb = comTask({});
+    spawnSync('rm', [join(amb.dir, 'harness.config.json')]);
+    g(amb.dir, 'add', '-A'); // a worktree nasce do commit: a ausência só vale commitada (r1 MAJOR-1)
+    g(amb.dir, 'commit', '-q', '-m', 'chore: sem config');
+    const p = amb.cli(['proxima', '--vivos', '0']);
+    assert.equal(p.rc, 0, p.out + p.err);
+    assert.deepEqual(p.j.acao, { tipo: 'esperar', motivo: 'plano_nao_executavel' });
+    assert.ok(p.j.aviso.some((a) => a.includes('gates.suites') && a.includes('ausente')), JSON.stringify(p.j.aviso));
+    assert.ok(p.j.aviso.includes('harness.config.json ausente'), JSON.stringify(p.j.aviso));
+    const a = amb.cli(['abrir', 'T1']);
+    assert.equal(a.j.erro, 'plano_nao_executavel', a.out);
+    assert.deepEqual(ladoDe(amb), { branches: '', worktrees: [] });
+  });
+});
+
+// GM-21 T5 (REQ-SUI-1, P9): o `loop.mjs integrar` real (sem `opcoes.avaliar` injetado) leva o `teste_afetado` do plano por `suitesDaTask` até o `avaliar`.
+describe('GM-21 T5: teste_afetado em série pelo integrar real', () => {
+  test('integrar-teste-afetado-em-serie: o teste_afetado roda depois da suíte da config e sozinho (barreira por marcador, sem relógio)', () => {
+    const d = mkdtempSync(join(tmpdir(), 'gm21-t5-'));
+    const f = join(d, 'bar.sh');
+    writeFileSync(f, [
+      'nome=$1; d=$2',
+      'k="$d/$(basename "$PWD")"; mkdir -p "$k"',
+      'echo "ini:$nome" >> "$k/ordem"; touch "$k/ini-$nome"',
+      'ocupado() { for i in "$k"/ini-*; do o=${i##*/ini-}; if [ "$o" != "$nome" ] && [ ! -e "$k/fim-$o" ]; then echo "sobrepos:$nome:$o" >> "$k/viol"; fi; done; }',
+      'ocupado; sleep 0.3; ocupado',
+      'touch "$k/fim-$nome"; echo "fim:$nome" >> "$k/ordem"',
+      'echo "ℹ tests 1"; echo "ℹ pass 1"; echo "ℹ fail 0"; [ ! -e "$k/viol" ]',
+      '',
+    ].join('\n'));
+    const plano = planoDe([{ id: 'T1', deps: [], arquivos: ['src/t1.txt'], teste_afetado: `bash ${f} ta ${d}` }]);
+    const amb = ambiente({ plano, config: { ...CONFIG_PADRAO, gates: { suites: [`bash ${f} suite ${d}`] } } });
+    amb.aprovar('T1');
+    const r = amb.cli(['integrar', 'T1']);
+    assert.equal(r.rc, 0, r.out + r.err);
+    assert.equal(r.j.merge, true);
+    const [w] = readdirSync(d).filter((x) => x !== 'bar.sh');
+    assert.equal(existsSync(join(d, w, 'viol')), false, 'a suíte e o teste_afetado não se sobrepuseram');
+    assert.deepEqual(readFileSync(join(d, w, 'ordem'), 'utf8').trim().split('\n'), ['ini:suite', 'fim:suite', 'ini:ta', 'fim:ta']);
   });
 });

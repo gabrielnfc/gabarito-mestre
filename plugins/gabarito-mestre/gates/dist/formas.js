@@ -21,6 +21,7 @@ export const TIPOS_EVENTO                        = Object.freeze([
   'aprendizado', 'aprendizado.nada', 'dono.mensagem',
   'fato.medido', 'nota', 'dono.resposta',
   'task.fora', 'entrega.encerrada', 'entrega.reaberta', 'guarda.autonomia_usada',
+  'task.herdada',
 ]                                         );
 
 /** Lista runtime da união `MotivoParar` (GM-14), conferida do mesmo jeito. */
@@ -387,6 +388,8 @@ const FORMAS_FATO                                                               
     pre_versao: (o, n) => (campo(o, n) === undefined ? null : textoLinha(o, n, 64)),
     // GM-20 D-G47: o sha de merge da encerrada que este PR (em `main`) contém: o fato que tira da lista "levar <base> para main"
     contem: shaGitOpcional,
+    // GM-21 T8 (REQ-DEP-1): o PR aberto está em rascunho (`isDraft` do gh); fato sem ele (diário 2.3.1) = não rascunho
+    rascunho: (o, n) => (campo(o, n) === undefined ? null : exigirBooleano(o, n)),
   }],
   ['release', { tag: (o, n) => textoLinha(o, n) }],
   ['agente', { id: (o, n) => textoLinha(o, n), papel: (o, n) => textoLinha(o, n), estado: (o, n) => textoLinha(o, n) }],
@@ -465,6 +468,38 @@ const taskFora        = (o) => primeiro(
   textoLinha(o, 'task'), exigirEnum(o, 'como', ['adiada', 'cortada']), textoLinha(o, 'motivo', MOTIVO_FORA_MAX), exigirEnum(o, 'origem', ORIGENS),
   campo(o, 'fonte') === undefined ? (campo(o, 'origem') === 'sombra' ? obrigatorio('fonte') + ': a origem `sombra` cita a decisão que a autorizou' : null) : textoLinha(o, 'fonte'),
 );
+
+// ── GM-21 T6 (REQ-HER-1, DT8): task.herdada ──────────────────────────────────────────────────────────────────────────────────
+
+/** Mesma forma do id de task do `loop.mjs` (`ID_RE`): vira chave de diário, nunca caminho. */
+const TASK_ID_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,31}$/;
+/** `commit`: sha por extenso; `pr`: inteiro ≥ 1; `ledger`: `<arquivo>:<linha ≥ 1>`. O `tipo` é fechado nos 3. */
+const REF_DE_ORIGEM                                   = { commit: /^[0-9a-f]{40}$/, pr: /^[1-9]\d{0,9}$/, ledger: /^[^\0\n]+:[1-9]\d{0,9}$/ };
+
+function origemHerdada(o     )                {
+  const v = campo(o, 'origem');
+  if (v === undefined) return obrigatorio('origem');
+  if (!ehObjeto(v)) return 'campo `origem` inválido: esperado {tipo, ref}';
+  const extra = chaveExtra(v, ['tipo', 'ref'], '`origem` carrega só {tipo, ref}');
+  if (extra !== null) return extra;
+  const tipo = campo(v, 'tipo');
+  if (tipo === undefined) return obrigatorio('origem.tipo');
+  if (typeof tipo !== 'string' || !Object.hasOwn(REF_DE_ORIGEM, tipo)) return 'campo `origem.tipo` inválido: esperado commit, pr ou ledger';
+  const ref = campo(v, 'ref');
+  if (ref === undefined) return obrigatorio('origem.ref');
+  return typeof ref === 'string' && REF_DE_ORIGEM[tipo].test(ref) ? null : `campo \`origem.ref\` inválido para \`${tipo}\`: esperado ${tipo === 'commit' ? 'sha de 40 hex' : tipo === 'pr' ? 'número do PR (inteiro ≥ 1)' : '<arquivo>:<linha ≥ 1>'}`;
+}
+
+/** `task.herdada {task, origem:{tipo, ref}, titulo?}`: gravada por `herdar --tasks --gravar`; o título é texto de 1 linha. */
+const taskHerdada        = (o) => {
+  const t = campo(o, 'task');
+  return primeiro(
+    chaveExtra(o, ['task', 'origem', 'titulo'], '`task.herdada` carrega só {task, origem, titulo?}'),
+    t === undefined ? obrigatorio('task') : typeof t === 'string' && TASK_ID_RE.test(t) ? null : 'campo `task` inválido: esperado id de task (ex. T3)',
+    origemHerdada(o),
+    campo(o, 'titulo') === undefined ? null : textoLinha(o, 'titulo', MOTIVO_FORA_MAX),
+  );
+};
 
 function idEntrega(o     )                {
   const v = campo(o, 'entrega');
@@ -566,6 +601,7 @@ const REGRAS                             = new Map               ([
   // GM-14 T36 (FIEL-15) + GM-15 T1 (F7 a): `task.reaberta` saiu das regras opcionais: origem fechada, `dados` ausente/corrompido recusado.
   ['task.reaberta', taskReaberta],
   ['task.fora', taskFora],
+  ['task.herdada', taskHerdada],
   ['entrega.encerrada', entregaEncerrada],
   ['entrega.reaberta', entregaReaberta],
   ['guarda.autonomia_usada', guardaAutonomiaUsada],

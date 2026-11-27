@@ -137,7 +137,7 @@ describe('doctor 1.1.0 — modelo-resolvido é warn, não FALTA (ORQ-5)', () => 
     assert.match(out.resultados.find((r) => r.id === 'modelo-resolvido').evidence, /VENCIDO/);
   });
   test('dentro da validade: sem aviso', () => {
-    const out = run(repo(fixtureNivel2_110(2, { orquestracao: { modelo: { alias: 'fable', resolvidoEm: diasAtras(10), validadeDias: 90 } } })));
+    const out = run(repo(fixtureNivel2_110(2, { orquestracao: { modelo: { alias: 'opus', resolvidoEm: diasAtras(10), validadeDias: 90 } } })));
     // T6: sem guarda.ambientes o doctor avisa (guarda-ambientes); aqui só interessa que o MODELO não avisa
     assert.deepEqual(out.avisos.filter((a) => a.startsWith('modelo-resolvido')), []);
   });

@@ -276,7 +276,7 @@ check "SKILL.md conformidade: fio condutor · contenda (R21) · Epic: PBIs" "gre
 echo "── pacote — versões, sem hooks em plugin.json, sem 77 testes, nomes da 1.0.1"
 v1=$(node -p "require('$P/.claude-plugin/plugin.json').version" 2>/dev/null)
 v3=$(node -p "require('$P/gates/package.json').version" 2>/dev/null)
-check "version plugin == gates == 2.3.1 (achei '$v1' '$v3')" '[ "$v1" = "$v3" ] && [ "$v1" = "2.3.1" ]' "versões divergem ou ≠ 2.3.1"
+check "version plugin == gates == 2.4.0 (achei '$v1' '$v3')" '[ "$v1" = "$v3" ] && [ "$v1" = "2.4.0" ]' "versões divergem ou ≠ 2.4.0"
 # GM-15 T28: a virada 2.1.0 no CHANGELOG (seção estável com data; alpha.1 com a data medida da tag, 2026-11-15)
 check "CHANGELOG: [2.1.0] com data, sem [Unreleased], alpha.1 em 2026-11-15" 'grep -qE "^## \\[2\\.1\\.0\\] — [0-9]{4}-[0-9]{2}-[0-9]{2}$" "$ROOT/CHANGELOG.md" && ! grep -q "^## \\[Unreleased\\]" "$ROOT/CHANGELOG.md" && grep -qF "## [2.1.0-alpha.1] — 2026-11-15" "$ROOT/CHANGELOG.md"' "CHANGELOG sem a seção [2.1.0] datada, com [Unreleased] ou com a data errada da alpha.1"
 # GM-16 T8 r1 MINOR-2: a [2.2.0] é datada (mesmo separador das outras seções) e traz a subseção "Muda para quem já usa" dentro dela
@@ -312,6 +312,13 @@ sha256_stdin() { if command -v sha256sum >/dev/null 2>&1; then sha256sum; else s
 SHA231_FIXO=9ae07b266d00659562ff6fcb8053e7181137444a32aea1f33e0e072166c73e05
 SHA231_ATUAL=$(sed -n '/^## \[2\.3\.1\]/,/^## \[2\.3\.0\]/p' "$ROOT/CHANGELOG.md" | sed '$d' | sha256_stdin)
 check "CHANGELOG: corpo da [2.3.1] com sha256 fixo (achei '$SHA231_ATUAL')" '[ "$SHA231_ATUAL" = "$SHA231_FIXO" ]' "corpo da [2.3.1] mudou: revise e atualize o sha"
+# GM-21 T11 (REQ-VRS-1): a [2.4.0] é datada, vem acima da [2.3.1] e da [2.3.0], aponta cada item do relato que corrige e declara os limites
+check "CHANGELOG: [2.4.0] datada e ordem [2.4.0] > [2.3.1] > [2.3.0] (GM-21, D-G56)" 'grep -qE "^## \\[2\\.4\\.0\\] — [0-9]{4}-[0-9]{2}-[0-9]{2}$" "$ROOT/CHANGELOG.md" && a=$(grep -n "^## \\[2\\.4\\.0\\]" "$ROOT/CHANGELOG.md" | cut -d: -f1); b=$(grep -n "^## \\[2\\.3\\.1\\]" "$ROOT/CHANGELOG.md" | cut -d: -f1); c=$(grep -n "^## \\[2\\.3\\.0\\]" "$ROOT/CHANGELOG.md" | cut -d: -f1); [ -n "$a" ] && [ -n "$b" ] && [ -n "$c" ] && [ "$a" -lt "$b" ] && [ "$b" -lt "$c" ]' "[2.4.0] ausente, sem data ou fora da ordem"
+D240=$(grep -E '^## \[2\.4\.0\] — ' "$ROOT/CHANGELOG.md" | sed -E 's/.*— //')
+RT240=$(date -j -f %Y-%m-%d "$D240" +%Y-%m-%d 2>/dev/null || date -d "$D240" +%Y-%m-%d 2>/dev/null)
+check "CHANGELOG: data da [2.4.0] é válida e não futura (achei '$D240')" '[ -n "'"$D240"'" ] && [ "'"$RT240"'" = "'"$D240"'" ] && ! [ "'"$D240"'" \> "'"$HOJE"'" ]' "data inválida ou futura"
+check "CHANGELOG: [2.4.0] aponta os itens 2, 3, 4, 5, 7, 8, 9, 10, 11 e 12 do relato" 'c240=$(sed -n "/^## \\[2\\.4\\.0\\]/,/^## \\[2\\.3\\.1\\]/p" "$ROOT/CHANGELOG.md"); r=0; for i in 2 3 4 5 7 8 9 10 11 12; do printf "%s" "$c240" | grep -qF "(item $i)" || { echo "falta: item $i"; r=1; }; done; [ "${r:-0}" = 0 ]' "[2.4.0] sem apontar algum item do relato"
+check "CHANGELOG: [2.4.0] Limites declarados traz a DT2 na regra antiga e RED conhecido só node; o piso de 5 vem confirmado pelo dono" 'c=$(sed -n "/^## \\[2\\.4\\.0\\]/,/^## \\[2\\.3\\.1\\]/p" "$ROOT/CHANGELOG.md"); l=$(printf "%s" "$c" | sed -n "/^### Limites declarados$/,\$p"); printf "%s" "$l" | grep -qF "antes de o PR final abrir" && printf "%s" "$l" | grep -qF "só para node --test/TAP" && printf "%s" "$c" | grep -qF "foi confirmado pelo dono" && ! printf "%s" "$c" | grep -qF "ainda não tem confirmação do dono"' "Limites da [2.4.0] sem a DT2 ou o RED conhecido, ou piso sem confirmação do dono"
 check "CHANGELOG: [2.3.0] fixa o limite da D-G46(não atualiza o status do card) e o --executor orquestrador" 'c230=$(sed -n "/^## \\[2\\.3\\.0\\]/,/^## \\[2\\.2\\.2\\]/p" "$ROOT/CHANGELOG.md"); printf "%s\n" "$c230" | grep -qF "O plugin não atualiza o status do card" && printf "%s\n" "$c230" | grep -qF -- "--executor orquestrador"' "[2.3.0] sem o limite da D-G46 ou sem o --executor orquestrador"
 check "CHANGELOG: [2.2.1] 'Adicionado' traz o comando encerrar com via dono e a entrega em cortar/adiar/reabrir" 'sed -n "/^## \\[2\\.2\\.1\\]/,/^## \\[2\\.2\\.0\\]/p" "$ROOT/CHANGELOG.md" | sed -n "/^### Adicionado$/,/^### Limites declarados$/p" | grep -qF "/gabarito-mestre:encerrar <entrega> <PR> [<versão>]" && sed -n "/^## \\[2\\.2\\.1\\]/,/^## \\[2\\.2\\.0\\]/p" "$ROOT/CHANGELOG.md" | sed -n "/^### Adicionado$/,/^### Limites declarados$/p" | grep -qF "via: '"'"'dono'"'"'" && sed -n "/^## \\[2\\.2\\.1\\]/,/^## \\[2\\.2\\.0\\]/p" "$ROOT/CHANGELOG.md" | grep -qF "[<entrega>]"' "Adicionado da [2.2.1] sem o comando encerrar, o via dono ou o [<entrega>]"
 check "CHANGELOG: [2.2.1] 'Limites declarados' traz PR obrigatório e release só pelo campo versao" 'sed -n "/^## \\[2\\.2\\.1\\]/,/^## \\[2\\.2\\.0\\]/p" "$ROOT/CHANGELOG.md" | sed -n "/^### Limites declarados$/,\$p" | grep -q "PR é obrigatório" && sed -n "/^## \\[2\\.2\\.1\\]/,/^## \\[2\\.2\\.0\\]/p" "$ROOT/CHANGELOG.md" | sed -n "/^### Limites declarados$/,\$p" | grep -qF "campo \`versao\`"' "Limites declarados da [2.2.1] sem PR obrigatório ou sem o campo versao"
@@ -459,6 +466,20 @@ check "nota da 2.1.0: cita /reload-plugins, o foco reversível e a herança prom
 
 # GM-19 REQ-FURO-2 (F12): os casos de NOM-1 de texto-nom.test.sh só rodavam à mão. Sem argumento, o filho roda `--nom` e sai antes; sem recursão.
 check "texto-nom: os casos de NOM-1 de texto-nom.test.sh passam (rc 0)" 'bash "$P/scripts/test/texto-nom.test.sh" >/dev/null 2>&1' "texto-nom.test.sh falhou: rode-o sozinho"
+
+# GM-21 T3 (REQ-MIG-3, M12): o formato do plano.json está escrito em fluxo.md (§4.5) e a skill do loop aponta para ele
+echo "── GM-21 T3: campos da task do plano.json em fluxo.md"
+check "fluxo.md §4.5: cita teste_afetado, o formato de mutacoes com exemplo e plano_nao_executavel" 'grep -qF "teste_afetado" "$F" && grep -qF "{nome, arquivo, de, para, teste, cwd?}" "$F" && grep -qF "plano_nao_executavel" "$F"' "fluxo.md sem teste_afetado, sem {nome, arquivo, de, para, teste, cwd?} ou sem plano_nao_executavel"
+check "fluxo.md §4.5: o exemplo de mutacoes e de teste_afetado está lá (campo = valor)" 'grep -qF "\"teste_afetado\": \"npx vitest run" "$F" && grep -qF "\"mutacoes\": \".harness/entregas/" "$F"' "exemplo de mutacoes ou de teste_afetado ausente"
+check "SKILL.md do loop: 1 linha com o ponteiro para fluxo.md §4.5" 'grep -qF "reference/fluxo.md" "$P/skills/gabarito-loop/SKILL.md" && grep -qF "§4.5" "$P/skills/gabarito-loop/SKILL.md"' "skill do loop sem o ponteiro para fluxo.md §4.5"
+
+# GM-21 T10 (REQ-MUT-1, DT14, MU1-a): mutação de SQL de migration sem tipo novo; a regra central e as 2 formas ficam escritas em gates.md
+echo "── GM-21 T10: Migration de banco em gates.md"
+GT="$P/reference/gates.md"
+check "gates.md: subseção 'Migration de banco' dentro de 'Mutações prescritas' e o teste da mutação é comando de shell" 'awk "/^## Mutações prescritas/{d=1;next} /^## /{d=0} d&&/^### Migration de banco/{f=1} END{exit !f}" "$GT" && grep -qF "comando de shell" "$GT"' "gates.md sem a subseção Migration de banco em Mutações prescritas, ou sem 'comando de shell'"
+check "gates.md: forma 1 (fonte única que o teste lê) e forma 2 (banco local e efêmero recriado, migrations reaplicadas)" 'grep -qF "fonte única" "$GT" && grep -qF "local e efêmero" "$GT" && grep -qF "reaplica as migrations" "$GT"' "gates.md sem a forma 1 ou sem a forma 2"
+check "gates.md: exemplo de teste que recria o banco local antes de rodar" 'grep -qF "npm run db:reset:test && npx vitest run" "$GT"' "exemplo do teste com recriação do banco ausente"
+check "gates.md: a regra central 'nunca banco de produção nem compartilhado' está escrita" 'grep -qF "nunca banco de produção nem compartilhado" "$GT"' "frase 'nunca banco de produção nem compartilhado' ausente"
 
 echo "── $falhas falha(s)"
 [ "$falhas" -eq 0 ]

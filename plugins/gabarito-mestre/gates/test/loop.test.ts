@@ -1930,6 +1930,22 @@ test('foraPermitido: livre, dependentes listados, dependente fora libera, diári
   assert.deepEqual(foraPermitido(p, diario(), 'zz'), { ok: false, motivo: 'task_desconhecida' });
   assert.deepEqual(foraPermitido(p, [ev(2, '2026-11-03T00:00:01.000Z', 's1', ...ini('a')), ev(1, '2026-11-03T00:00:02.000Z', 's1', ...con('a'))], 'a'), { ok: false, motivo: 'diario_invalido' });
 });
+// GM-21 T6 (REQ-HER-1, cláusula negativa; MH1-b: pôr `task.herdada` em TIPOS_DE_TASK ⇒ cai): a herança nunca é progresso nem ciclo de task.
+test('herdada-fora-do-loop: TIPOS_DE_TASK e TIPOS_DE_PROGRESSO não ganham task.herdada (deepEqual) e o loop o ignora', () => {
+  assert.deepEqual([...TIPOS_DE_TASK], ['task.iniciada', 'task.concluida', 'review.veredito', 'task.integrada', 'task.reaberta', 'task.fora']);
+  assert.deepEqual([...TIPOS_DE_PROGRESSO], [...TIPOS_DE_TASK, 'ci.resultado', 'spec.emendada', 'emenda.rejeitada', 'aprendizado', 'aprendizado.nada']);
+  assert.equal(TIPOS_DE_TASK.includes('task.herdada'), false);
+  assert.equal(TIPOS_DE_PROGRESSO.includes('task.herdada'), false);
+  // com `task.herdada` no diário, o loop decide e mede igual: nada vira ciclo de task nem progresso
+  const herdada: [TipoEvento, Record<string, unknown>] = ['task.herdada', { task: 'a', origem: { tipo: 'pr', ref: '10' } }];
+  const base = diario(ini('b'));
+  const com = diario(herdada, ini('b'));
+  assert.deepEqual(proximaAcao(plano(['a', 'b']), com, sinais()), proximaAcao(plano(['a', 'b']), base, sinais()));
+  assert.deepEqual(estadoDe(com), { invalido: 'tipo fora do contrato de task' }, 'estadoDe recusa task.herdada: não é evento de task');
+  assert.notDeepEqual(estadoDe(base), estadoDe(com));
+  assert.equal(proximaAcao(plano(['a']), diario(herdada), sinais()).tipo, 'despachar', 'herdar a task a não a tira do plano: o loop só lê task.iniciada e companhia');
+});
+
 test('task.fora é evento de task e de progresso (o Stop e o painel o enxergam)', () => {
   assert.ok(TIPOS_DE_TASK.includes('task.fora'));
   assert.ok(TIPOS_DE_PROGRESSO.includes('task.fora'));

@@ -1191,7 +1191,7 @@ function projetarNovo(plano              , eventos                 , entrada    
     ? dependeDe(null                            , [], [], { falhou: fontes }, pedidoClear, { branch: null, idPadrao: fatos.idPadrao }, comLote ? viradaDoDono(plano, lista, entrada.configLote ) : undefined)
     : dependeDe(trilha, lista, legado.depende, { falhou: fontes }, pedidoClear,
       { branch: typeof fatos.branch === 'string' ? fatos.branch : null, idPadrao: fatos.idPadrao },
-      comLote ? loteDoDono(plano, lista, entrada.configLote ) : undefined);
+      comLote ? loteDoDono(plano, lista, entrada.configLote ) : undefined, entrada.configLote?.autonomiaEntrega);
   // GM-15 T8 (review r1 MAJOR-1): a próxima com botão vira item do DEPENDE (o mod já desenha os botões dos itens); nunca é item da encerrada
   if (entregue !== null && proxima !== null && Array.isArray(proxima.acoes) && proxima.acoes.length > 0) {
     depende = [...depende.filter((i) => i.motivo !== NADA), { nivel: 'dono', motivo: motivoDaProxima(proxima.texto), acoes: proxima.acoes.map((a) => ({ ...a })) }];

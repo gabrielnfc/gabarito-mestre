@@ -59,17 +59,21 @@ const itemEmenda = (seq        )              => item(`decidir a emenda ${seq}`,
 
 const copia = (i             )              => ({ nivel: i.nivel, motivo: i.motivo, acoes: (Array.isArray(i.acoes) ? i.acoes : []).map((a) => ({ ...a })) });
 
-/** Estado do último fato `pr` por número; devolve o maior número aberto. */
-function prAberto(evs          )                {
-  const por = new Map                ();
+/**
+ * Estado do último fato `pr` por número; devolve o maior número aberto, de rascunho ou não.
+ * GM-21 T8 (REQ-DEP-1, DT12): PR em rascunho (`rascunho: true` do último fato do número) não é do dono rever; com `autonomiaEntrega` o merge é do orquestrador: nenhum PR.
+ */
+function prAberto(evs          , autonomiaEntrega          )                {
+  if (autonomiaEntrega === true) return null;
+  const por = new Map                                               ();
   for (const e of evs) {
     if (e.tipo !== 'fato.medido' || obj(e.dados).chave !== 'pr') continue;
     const v = obj(obj(e.dados).valor);
     // mesmo critério de prs() da trilha (trilha.ts:95): número inteiro e estado texto, sem exigir a forma exata do fato.
-    if (Number.isInteger(v.numero) && typeof v.estado === 'string') por.set(v.numero          , v.estado);
+    if (Number.isInteger(v.numero) && typeof v.estado === 'string') por.set(v.numero          , { estado: v.estado, rascunho: v.rascunho === true });
   }
   let aberto                = null;
-  for (const [numero, estado] of por) if (estado === 'aberto' && (aberto === null || numero > aberto)) aberto = numero;
+  for (const [numero, { estado, rascunho }] of por) if (estado === 'aberto' && !rascunho && (aberto === null || numero > aberto)) aberto = numero;
   return aberto;
 }
 
@@ -233,6 +237,8 @@ export function dependeDe(
   pousoPendente                                                                                                                                                               ,
   git                                             ,
   lote                       ,
+  // GM-21 T8 (REQ-DEP-1): `entrega.autonomia` de origin; `true` ⇒ o merge é do orquestrador e o DEPENDE não pede "revisar e aceitar" PR (só esse item)
+  autonomiaEntrega          ,
 )                {
   // GM-15 T13 (REQ-AUT-1): com o lote do dono (`loteDoDono`, o MESMO que `loop.mjs proxima` devolve), ele substitui (5) e (7), inteiro e na mesma ordem.
   const comLote = Array.isArray(lote);
@@ -295,7 +301,7 @@ export function dependeDe(
   }
 
   // (2) pedido de revisão aberto da entrega
-  const aberto = identificada ? prAberto(evs) : null;
+  const aberto = identificada ? prAberto(evs, autonomiaEntrega) : null;
   const revisar = aberto !== null ? [item(`revisar e aceitar o pedido de revisão #${aberto}`)] : [];
 
   // (3) pendências abertas, com o botão "feito"

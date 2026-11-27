@@ -37,7 +37,7 @@ import { readFileSync, existsSync, readdirSync, mkdirSync, writeFileSync, rename
 import { join, relative, sep, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ehEntrypoint } from '../lib/cli.mjs';
-import { lerGuarda, lerConfigOrigin, lerBaseDaEntrega, idPadraoDe, DENY_GUARDA, CHAVES_MORTAS, ORDEM_MODELO, PERFIS_MODELO, resolverPerfil } from '../lib/config.mjs';
+import { lerGuarda, lerConfigOrigin, lerBaseDaEntrega, idPadraoDe, DENY_GUARDA, CHAVES_MORTAS, ORDEM_MODELO, PERFIS_MODELO, resolverPerfil, resolverModelo } from '../lib/config.mjs';
 import { diasEntre } from '../lib/datas.mjs';
 import { execFileSync } from 'node:child_process';
 import { checar, validarBranch, DEFAULTS as VERSIONAMENTO_DEFAULTS } from './versionamento-check.mjs';
@@ -868,9 +868,12 @@ export const CHECKS = [
       const d = diasDesde(m.resolvidoEm);
       const v = Number(m.validadeDias ?? 90);
       if (d === null) return { found: false, evidence: `resolvidoEm inválido (${m.resolvidoEm})` };
-      return d <= v
-        ? { found: true, evidence: `${m.alias || '?'} resolvido em ${m.resolvidoEm} (${Math.round(v - d)} d restantes)` }
-        : { found: false, evidence: `VENCIDO há ${Math.round(d - v)} d (${m.alias || '?'}, resolvido em ${m.resolvidoEm}) — revalide` };
+      // GM-21 REQ-ORQ-1: o alias só muda quando o onboarding regrava; gravado antes do papel `orquestrador` pode divergir dele.
+      const orq = cfg.orquestracao;
+      const papel = typeof m.alias === 'string' && m.alias !== '' && orq !== null && typeof orq === 'object' && !Array.isArray(orq) ? resolverModelo(orq, 'orquestrador').modelo : undefined;
+      const diverge = papel !== undefined && papel !== m.alias ? `modelo do orquestrador gravado ${m.alias} ≠ ${papel} do papel orquestrador: rode o onboarding de novo` : undefined;
+      if (d > v) return { found: false, evidence: `VENCIDO há ${Math.round(d - v)} d (${m.alias || '?'}, resolvido em ${m.resolvidoEm}) — revalide${diverge ? `; ${diverge}` : ''}` };
+      return diverge ? { found: false, evidence: diverge } : { found: true, evidence: `${m.alias || '?'} resolvido em ${m.resolvidoEm} (${Math.round(v - d)} d restantes)` };
     },
   },
   {
@@ -909,6 +912,20 @@ export const CHECKS = [
       }
       if (nd.length === 0) return { found: true, evidence: 'todos os itens detectados ou respondidos' };
       return { found: false, evidence: nd.map((item) => `${item}: gabarito-instalar (trocar ${item})${item === 'versionamento' && branchPadraoNaoEhRegex(cfg) ? ` — ${MOTIVO_BRANCHPADRAO}` : ''}`).join('\n') };
+    },
+  },
+  {
+    id: 'suites-declaradas',
+    rule: 'REQ-MIG-2',
+    level: 'warn',
+    kind: 'scan',
+    label: 'suítes de teste declaradas em gates.suites (o abrir do loop recusa sem elas)',
+    fix: 'declare gates.suites em harness.config.json (ex.: [{"nome":"unit","cmd":"npm test"}]) ou rode o onboarding — é aviso: não muda o nível nem quebra o CI',
+    detect: (ix, cfg) => {
+      if (cfg.configInvalido) return { found: false, evidence: 'harness.config.json inválido: não li gates.suites' };
+      const lista = cfg.gates !== null && typeof cfg.gates === 'object' ? cfg.gates.suites : undefined;
+      // Só conta o que foi declarado (REQ-MIG-2); a régua do gate (entrada válida, comando simples) fica no conferirExecutavel da T3.
+      return Array.isArray(lista) && lista.length > 0 ? { found: true, evidence: `${lista.length} suíte(s)` } : { found: false, evidence: 'o abrir recusa sem suíte: declare gates.suites' };
     },
   },
   {

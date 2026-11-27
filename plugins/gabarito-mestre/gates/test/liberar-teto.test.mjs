@@ -43,6 +43,9 @@ function repo({ plano = PLANO, semear = [], branch = 'enabler/GM-10-teste', init
     git(dir, 'init', '-q', '-b', branch);
     git(dir, 'commit', '-q', '--allow-empty', '-m', 'chore: base');
   }
+  // GM-21 T3 (REQ-MIG-1, emenda 8): `abrir` e `proxima` exigem gates.suites; a config só dá o que a fixture não tinha, nenhuma asserção muda
+  if (init) writeFileSync(join(dir, 'harness.config.json'), JSON.stringify({ gates: { suites: ["echo '# pass 1'"] } }));
+  if (init) { git(dir, 'add', 'harness.config.json'); git(dir, 'commit', '-q', '-m', 'chore: config'); } // a worktree nasce do commit: o conferir lê a config dele (r1 MAJOR-1)
   const entregas = join(dir, '.harness', 'entregas', 'GM-10');
   mkdirSync(entregas, { recursive: true });
   if (plano !== null) writeFileSync(join(entregas, 'plano.json'), typeof plano === 'string' ? plano : JSON.stringify(plano));
