@@ -466,5 +466,13 @@ check "fluxo.md §4.5: cita teste_afetado, o formato de mutacoes com exemplo e p
 check "fluxo.md §4.5: o exemplo de mutacoes e de teste_afetado está lá (campo = valor)" 'grep -qF "\"teste_afetado\": \"npx vitest run" "$F" && grep -qF "\"mutacoes\": \".harness/entregas/" "$F"' "exemplo de mutacoes ou de teste_afetado ausente"
 check "SKILL.md do loop: 1 linha com o ponteiro para fluxo.md §4.5" 'grep -qF "reference/fluxo.md" "$P/skills/gabarito-loop/SKILL.md" && grep -qF "§4.5" "$P/skills/gabarito-loop/SKILL.md"' "skill do loop sem o ponteiro para fluxo.md §4.5"
 
+# GM-21 T10 (REQ-MUT-1, DT14, MU1-a): mutação de SQL de migration sem tipo novo; a regra central e as 2 formas ficam escritas em gates.md
+echo "── GM-21 T10: Migration de banco em gates.md"
+GT="$P/reference/gates.md"
+check "gates.md: subseção 'Migration de banco' dentro de 'Mutações prescritas' e o teste da mutação é comando de shell" 'awk "/^## Mutações prescritas/{d=1;next} /^## /{d=0} d&&/^### Migration de banco/{f=1} END{exit !f}" "$GT" && grep -qF "comando de shell" "$GT"' "gates.md sem a subseção Migration de banco em Mutações prescritas, ou sem 'comando de shell'"
+check "gates.md: forma 1 (fonte única que o teste lê) e forma 2 (banco local e efêmero recriado, migrations reaplicadas)" 'grep -qF "fonte única" "$GT" && grep -qF "local e efêmero" "$GT" && grep -qF "reaplica as migrations" "$GT"' "gates.md sem a forma 1 ou sem a forma 2"
+check "gates.md: exemplo de teste que recria o banco local antes de rodar" 'grep -qF "npm run db:reset:test && npx vitest run" "$GT"' "exemplo do teste com recriação do banco ausente"
+check "gates.md: a regra central 'nunca banco de produção nem compartilhado' está escrita" 'grep -qF "nunca banco de produção nem compartilhado" "$GT"' "frase 'nunca banco de produção nem compartilhado' ausente"
+
 echo "── $falhas falha(s)"
 [ "$falhas" -eq 0 ]
