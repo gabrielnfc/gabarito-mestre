@@ -255,6 +255,8 @@ Emenda 1: `painel.mjs` é de T1 e T9; a T9 depende de T1 e segue na onda 2.
 
 Emenda 8 (T3): entram no escopo da T3, só para fixtures que chamam `abrir`/`proxima` sem plano executável ganharem `harness.config.json` com `gates.suites` ou plano executável, sem mudar asserção: `gates/test/liberar-teto.test.mjs` (D1-*) e `gates/test/conversa-pontos.test.mjs` (cópia real da GM-13). Em `gates/test/loop-cli.test.mjs`, `integrar-gate-sem-suite-reprova` e `integrar-mutacoes-fora-da-raiz-recusa` semeiam a worktree sem o `abrir` e ganham irmãos que provam a recusa no `abrir`. Config ausente conta como config sem `gates.suites` (REQ-MIG-1, sem exceção).
 
+Emenda 9 (T3): no mesmo molde da emenda 8 (só `harness.config.json` com `gates.suites` na fixture, sem mudar asserção), entram no escopo da T3 `gates/test/comando-dono.test.mjs`, `gates/test/emenda-dono.test.mjs` e `gates/test/e2e/conversa-2026-11-11/rodar-a1.mjs` (helper da cópia de `conversa-pontos`).
+
 ## CHANGELOG [2.4.0] previsto
 
 ```
