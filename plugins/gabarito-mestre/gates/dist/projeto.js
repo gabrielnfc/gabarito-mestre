@@ -461,12 +461,19 @@ function previsaoDoProjeto(linhas                , diarios                      
   return { ritmoS: ritmo, medida, estimada: { restanteS: estS, hora: h, pbisSemPlano: est.abertos, tasksPorPbi: est.tasksPorPbi, tasks, texto }, motivo: null };
 }
 
-/** Tasks integradas no projeto (cada uma 1 vez por entrega): a amostra do ritmo. */
+/**
+ * A amostra é a MESMA que o ritmo usa (DT11): só entra o diário que `ritmoDasAnteriores` conta (ele sozinho dá ritmo: task.iniciada antes da última
+ * integrada, ts válido) e, nele, cada task integrada com ts válido, 1 vez. Nunca contagem paralela: o piso e o ritmo divergiriam.
+ */
 function tasksMedidas(diarios                                          )         {
   let n = 0;
   for (const d of diarios) {
+    if (ritmoDasAnteriores([d], null) === null) continue;
     const ints = new Set        ();
-    for (const ev of d.eventos) if (ev.tipo === 'task.integrada' && typeof (ev.dados ?? {}).task === 'string') ints.add((ev.dados                    ).task);
+    for (const ev of d.eventos) {
+      const dados = (ev.dados ?? {})                      ;
+      if (ev.tipo === 'task.integrada' && typeof dados.task === 'string' && Number.isFinite(Date.parse(ev.ts))) ints.add(dados.task);
+    }
     n += ints.size;
   }
   return n;

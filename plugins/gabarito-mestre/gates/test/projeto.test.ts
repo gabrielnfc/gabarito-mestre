@@ -271,7 +271,7 @@ test('sombra-sem-task-fora-do-loop: a Sombra sem task também é "agente fora do
 
 test('previsao-medida-e-estimada: ritmo medido × restantes (a); sem plano entra só na estimada (b), sinalizada', () => {
   const p = projetoCompleto().totais.previsao;
-  // ritmo: PBI-4 10:00→11:50 (2 integradas) + PBI-2 13:00→13:50 (1) = 160 min ÷ 3 = 3200 s
+  // ritmo: PBI-4 10:00→11:50 (2 integradas) + PBI-2 13:00→13:50 (1) + 2 da `comAmostra` = 16000 s ÷ 5 = 3200 s
   assert.equal(p.ritmoS, 3200);
   assert.ok(p.medida !== null);
   assert.equal(p.medida.restanteS, 3 * 3200);
@@ -1004,6 +1004,18 @@ test('previsao-projeto-pede-5: com 1 a 4 tasks integradas no projeto a previsão
   const cinco = com(5);
   assert.notEqual(cinco.medida, null);
   assert.equal(cinco.motivo, null);
+});
+
+test('previsao-projeto-amostra-e-a-do-ritmo: integrada sem task.iniciada ou sem ts válido não entra na amostra (o piso conta o que o ritmo usa)', () => {
+  const ev = (seq: number, min: number, tipo: string, task: string, ts?: string): Evento =>
+    ({ seq, ts: ts ?? new Date(Date.parse('2026-11-10T10:00:00Z') + min * 60000).toISOString(), autor: 'a', sessao: 's', agente: 'o', tipo, dados: { task }, hash_anterior: null }) as Evento;
+  const plano = (id: string, ids: string[]) => ({ ok: true, bruto: { entrega: id, tasks: ids.map((t) => ({ id: t, titulo: t, deps: [], arquivos: [`${t}.ts`] })) } });
+  const A = [ev(1, 0, 'task.iniciada', 'T1'), ev(2, 60, 'task.integrada', 'T1')];
+  const B = ['T1', 'T2', 'T3', 'T4'].map((t, i) => ev(i + 1, 10 + i, 'task.integrada', t)); // sem task.iniciada: o ritmo ignora o diário
+  const arv = [{ caminho: '/r', cards: [], entregas: [{ id: 'PBI-1', plano: plano('PBI-1', ['T1', 'T2']), eventos: A }, { id: 'PBI-2', plano: plano('PBI-2', ['T1', 'T2', 'T3', 'T4', 'T5']), eventos: B }] }] as unknown as ArvoreLida[];
+  const p = projetarProjeto(arv, OPC).totais.previsao;
+  assert.equal(p.medida, null);
+  assert.equal(p.motivo, 'sem ritmo: 1 de 5 tasks medidas');
 });
 
 test('previsao-projeto-com-5-igual: com 5 integradas a previsão é a de hoje (ritmo × restantes)', () => {
