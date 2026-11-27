@@ -170,6 +170,18 @@ function lerConfig(wt) {
   }
 }
 
+const eMod = (x) => /mod-test\.sh/.test(x.cmd);
+
+/** Paralelas juntas; depois cada `serial` sozinha, na ordem declarada; por fim a do mod. Devolve os resultados na ordem declarada (a mesma regra no passo 5 e na A4). */
+async function rodarEmOrdem(suites, exec) {
+  const rs = new Array(suites.length);
+  const paralela = (x) => !x.serial && !eMod(x);
+  await Promise.all(suites.map(async (x, i) => { if (paralela(x)) rs[i] = await exec(x); }));
+  for (const [i, x] of suites.entries()) if (x.serial && !eMod(x)) rs[i] = await exec(x);
+  for (const [i, x] of suites.entries()) if (eMod(x)) rs[i] = await exec(x);
+  return rs;
+}
+
 /** Devolve { suites, erros }: entrada sem `cmd` string não vazio é erro, não suíte ignorada. */
 // Com --red, o resumo e o rc de partes diferentes de um comando composto se misturam: só comando simples.
 const COMPOSTO = /[;&|`\n\r]|\$\(/;
@@ -183,14 +195,14 @@ export function normalizarSuites(lista, comRed = false) {
     const nome = o.nome ?? `suite-${i + 1}`;
     if (typeof o.cmd !== 'string' || !o.cmd.trim()) erros.push(`suíte ${nome}: comando vazio ou ausente`);
     else if (comRed && COMPOSTO.test(o.cmd)) erros.push(`suíte ${nome}: com --red, a suíte precisa ser comando simples (sem &&, ||, ;, |, &, quebra de linha, $( ou crase): ${JSON.stringify(o.cmd.slice(0, 80))}`);
-    else suites.push({ nome, cmd: o.cmd, cwd: o.cwd, semContagem: o.semContagem === true });
+    else suites.push({ nome, cmd: o.cmd, cwd: o.cwd, semContagem: o.semContagem === true, serial: o.serial === true });
   });
   return { suites, erros };
 }
 
 /**
  * opts: { wt, base, card?, red?: string[], files?: string[], mutacoes?: [],
- *         suites?: (string|{nome,cmd,cwd?,semContagem?})[], proibidos?: string[] (regex), rodar?: fn }
+ *         suites?: (string|{nome,cmd,cwd?,semContagem?,serial?})[], proibidos?: string[] (regex), rodar?: fn }
  * Devolve { reprova, alertas, relato, suites, testes, mutacoes, semContagem } (os quatro últimos
  * contam o que rodou e provou: VERDE sem nenhum é impossível).
  */
@@ -310,17 +322,14 @@ export async function avaliar(opts) {
     relato.push(`desvio: ${[limpoTxt(d.req, 60), arqs].filter(Boolean).join(' ')} (${limpoTxt(d.causa, 20)})`);
   }
 
-  // 5. Suítes, em paralelo. Verde = rc 0 + teste contado (ou marcador declarado); nada menos.
+  // 5. Suítes: as paralelas juntas, depois as serial, depois a do mod. Verde = rc 0 + teste contado (ou marcador declarado); nada menos.
   const { suites, erros: errosSuites } = normalizarSuites(opts.suites ?? cfg.gates?.suites ?? [], red.size > 0);
   errosSuites.forEach((e) => falhar(e));
   if (!suites.length && !errosSuites.length) falhar('nenhuma suíte declarada (--suite, --suite-sem-contagem ou gates.suites): nada foi executado');
   // GM-15 T34 (emenda 7 r.7, review r1 MAJOR-2): a suíte do mod (`mod-test.sh`, 37 s isolada e >= 120 s ao lado dos gates, medido) roda DEPOIS das demais, nunca junto: a disputa de CPU
-  // era o que estourava o teto. As outras seguem em paralelo entre si; o resultado volta na ordem declarada.
-  const eMod = (x) => /mod-test\.sh/.test(x.cmd);
-  const exec = (x) => rodar(x.nome, x.cmd, x.cwd ? resolve(wt, x.cwd) : wt);
-  const rs = new Array(suites.length);
-  await Promise.all(suites.map(async (x, i) => { if (!eMod(x)) rs[i] = await exec(x); }));
-  for (const [i, x] of suites.entries()) if (eMod(x)) rs[i] = await exec(x);
+  // era o que estourava o teto. GM-21 T5 (REQ-SUI-1): `serial: true` (e o `teste_afetado` do plano) roda sozinha depois das paralelas, na ordem declarada, antes da do mod.
+  // As outras seguem em paralelo entre si; o resultado volta na ordem declarada. A medição A4 usa a mesma função.
+  const rs = await rodarEmOrdem(suites, (x) => rodar(x.nome, x.cmd, x.cwd ? resolve(wt, x.cwd) : wt));
   for (const [i, s] of rs.entries()) {
     const seg = (s.ms / 1000).toFixed(1);
     const { nomes, declaradas, node } = falhas(s.out);
@@ -427,7 +436,7 @@ async function medirBase({ red, suites, base, git, rodar, ok, falhar, alerta }) 
       alerta(`diretório temporário vazio restante: ${dir}`);
       return;
     }
-    const rs = await Promise.all(suites.map((s) => rodar(`${s.nome} @base`, s.cmd, s.cwd ? resolve(dir, s.cwd) : dir)));
+    const rs = await rodarEmOrdem(suites, (s) => rodar(`${s.nome} @base`, s.cmd, s.cwd ? resolve(dir, s.cwd) : dir));
     const naBase = new Set(rs.flatMap((r) => falhas(r.out).nomes));
     for (const n of red) {
       naBase.has(n) ? ok(`RED "${n}" medido na base (A4)`) : falhar(`RED "${n}" não falha na base ${base} (A4): alegação de falha pré-existente sem medição`);

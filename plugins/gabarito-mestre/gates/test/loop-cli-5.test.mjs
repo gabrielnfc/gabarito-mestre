@@ -2,7 +2,8 @@
 // O corpo e o de bfa322ad por faixa; ver REQ-SEG-1 da spec da GM-19.
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, writeFileSync, readFileSync, existsSync, symlinkSync, rmSync, readdirSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, writeFileSync, readFileSync, existsSync, symlinkSync, rmSync, readdirSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -1590,5 +1591,32 @@ describe('GM-21 T3: plano executável conferido antes do abrir e do proxima (REQ
     const a = amb.cli(['abrir', 'T1']);
     assert.equal(a.j.erro, 'plano_nao_executavel', a.out);
     assert.deepEqual(ladoDe(amb), { branches: '', worktrees: [] });
+  });
+});
+
+// GM-21 T5 (REQ-SUI-1, P9): o `loop.mjs integrar` real (sem `opcoes.avaliar` injetado) leva o `teste_afetado` do plano por `suitesDaTask` até o `avaliar`.
+describe('GM-21 T5: teste_afetado em série pelo integrar real', () => {
+  test('integrar-teste-afetado-em-serie: o teste_afetado roda depois da suíte da config e sozinho (barreira por marcador, sem relógio)', () => {
+    const d = mkdtempSync(join(tmpdir(), 'gm21-t5-'));
+    const f = join(d, 'bar.sh');
+    writeFileSync(f, [
+      'nome=$1; d=$2',
+      'k="$d/$(basename "$PWD")"; mkdir -p "$k"',
+      'echo "ini:$nome" >> "$k/ordem"; touch "$k/ini-$nome"',
+      'ocupado() { for i in "$k"/ini-*; do o=${i##*/ini-}; if [ "$o" != "$nome" ] && [ ! -e "$k/fim-$o" ]; then echo "sobrepos:$nome:$o" >> "$k/viol"; fi; done; }',
+      'ocupado; sleep 0.3; ocupado',
+      'touch "$k/fim-$nome"; echo "fim:$nome" >> "$k/ordem"',
+      'echo "ℹ tests 1"; echo "ℹ pass 1"; echo "ℹ fail 0"; [ ! -e "$k/viol" ]',
+      '',
+    ].join('\n'));
+    const plano = planoDe([{ id: 'T1', deps: [], arquivos: ['src/t1.txt'], teste_afetado: `bash ${f} ta ${d}` }]);
+    const amb = ambiente({ plano, config: { ...CONFIG_PADRAO, gates: { suites: [`bash ${f} suite ${d}`] } } });
+    amb.aprovar('T1');
+    const r = amb.cli(['integrar', 'T1']);
+    assert.equal(r.rc, 0, r.out + r.err);
+    assert.equal(r.j.merge, true);
+    const [w] = readdirSync(d).filter((x) => x !== 'bar.sh');
+    assert.equal(existsSync(join(d, w, 'viol')), false, 'a suíte e o teste_afetado não se sobrepuseram');
+    assert.deepEqual(readFileSync(join(d, w, 'ordem'), 'utf8').trim().split('\n'), ['ini:suite', 'fim:suite', 'ini:ta', 'fim:ta']);
   });
 });

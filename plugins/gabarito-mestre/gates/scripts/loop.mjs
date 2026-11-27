@@ -958,7 +958,7 @@ function suitesDaTask(wt, t) {
   try {
     const cfg = JSON.parse(readFileSync(join(wt, 'harness.config.json'), 'utf8'));
     const base = cfg?.gates?.suites;
-    return Array.isArray(base) ? [...base, { nome: 'teste_afetado', cmd: t.teste_afetado }] : undefined;
+    return Array.isArray(base) ? [...base, { nome: 'teste_afetado', cmd: t.teste_afetado, serial: true }] : undefined;
   } catch {
     return undefined; // o gate lê o mesmo arquivo e reprova com a causa
   }

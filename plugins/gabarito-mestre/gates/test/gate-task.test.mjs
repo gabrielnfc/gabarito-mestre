@@ -10,7 +10,7 @@ import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { avaliar, falhas, contagem, desviosDaTask } from '../scripts/gate-task.mjs';
+import { avaliar, falhas, contagem, desviosDaTask, normalizarSuites } from '../scripts/gate-task.mjs';
 import { append } from '../dist/diario.js';
 
 const CLI = join(dirname(fileURLToPath(import.meta.url)), '../scripts/gate-task.mjs');
@@ -381,6 +381,103 @@ describe('gate-task', () => {
     assert.ok(log.indexOf('ini:hooks') < log.indexOf('fim:gates'), `as outras seguem em paralelo: ${log.join(' ')}`);
     const t = texto(r);
     assert.ok(t.indexOf('mod verde') < t.indexOf('gates verde') && t.indexOf('gates verde') < t.indexOf('hooks verde'), 'a ordem do relato é a declarada');
+  });
+
+  // GM-21 T5 (REQ-SUI-1, item 11): barreira por marcador, sem relógio. Cada suíte é o MESMO script fora da worktree: grava `ini-<nome>` num dir próprio da worktree em que roda
+  // (o da base na A4 é outro). `par` espera até 10 s pelo `ini-<outro>` (prova de paralelismo); `excl` registra violação se achar `ini-*` de outra sem o `fim-*` dela, no início e
+  // depois de 0,3 s (prova de exclusão). Violação vai a `viol` (a A4 só lê nomes, não rc) e o rc vira 1.
+  const barreira = () => {
+    const d = mkdtempSync(join(tmpdir(), 'gate-bar-'));
+    const f = join(d, 'bar.sh');
+    writeFileSync(f, [
+      'nome=$1; modo=$2; d=$3; outro=$4; verm=$5',
+      'k="$d/$(basename "$PWD")"; mkdir -p "$k"',
+      'echo "ini:$nome" >> "$k/ordem"; touch "$k/ini-$nome"',
+      'ocupado() { for i in "$k"/ini-*; do o=${i##*/ini-}; if [ "$o" != "$nome" ] && [ ! -e "$k/fim-$o" ]; then echo "sobrepos:$nome:$o" >> "$k/viol"; fi; done; }',
+      'if [ "$modo" = par ]; then n=0; while [ ! -e "$k/ini-$outro" ] && [ $n -lt 100 ]; do sleep 0.1; n=$((n+1)); done; [ -e "$k/ini-$outro" ] || echo "sem-par:$nome" >> "$k/viol"; fi',
+      'if [ "$modo" = excl ]; then ocupado; sleep 0.3; ocupado; fi',
+      'touch "$k/fim-$nome"; echo "fim:$nome" >> "$k/ordem"',
+      'if [ "$verm" = red ]; then echo "✖ esperado (1ms)"; echo "ℹ tests 1"; echo "ℹ pass 0"; echo "ℹ fail 1"; exit 1; fi',
+      'echo "ℹ tests 1"; echo "ℹ pass 1"; echo "ℹ fail 0"; [ ! -e "$k/viol" ]',
+      '',
+    ].join('\n'));
+    const cmd = (nome, modo, outro = '-', verm = '-') => `bash ${f} ${nome} ${modo} ${d} ${outro} ${verm}`;
+    const ler = (wt, arq) => { try { return readFileSync(join(d, wt, arq), 'utf8').trim().split('\n').filter(Boolean); } catch { return []; } };
+    const dirs = () => { try { return execFileSync('ls', [d], { encoding: 'utf8' }).split('\n').filter((x) => x && x !== 'bar.sh'); } catch { return []; } };
+    return { cmd, ler, dirs, d };
+  };
+
+  test('paralelas-seguem-paralelas (GM-21 T5): 2 suítes sem serial se encontram (cada uma espera a outra) e passam', async () => {
+    const { dir, base } = repo();
+    commit(dir, 'src/b.txt', 'b\n');
+    const b = barreira();
+    const r = await avaliar({ wt: dir, base, suites: [{ nome: 'p1', cmd: b.cmd('p1', 'par', 'p2') }, { nome: 'p2', cmd: b.cmd('p2', 'par', 'p1') }] });
+    assert.equal(r.reprova, 0, texto(r));
+    assert.deepEqual(b.dirs().flatMap((w) => b.ler(w, 'viol')), []);
+  });
+
+  test('teste-afetado-depois (GM-21 T5): o teste_afetado (serial) roda sozinho e depois das 2 paralelas, que se encontram', async () => {
+    const { dir, base } = repo();
+    commit(dir, 'src/b.txt', 'b\n');
+    const b = barreira();
+    const r = await avaliar({ wt: dir, base, suites: [{ nome: 'teste_afetado', cmd: b.cmd('ta', 'excl'), serial: true }, { nome: 'p1', cmd: b.cmd('p1', 'par', 'p2') }, { nome: 'p2', cmd: b.cmd('p2', 'par', 'p1') }] });
+    assert.equal(r.reprova, 0, texto(r));
+    const w = b.dirs()[0];
+    assert.deepEqual(b.ler(w, 'viol'), []);
+    const o = b.ler(w, 'ordem');
+    assert.ok(o.indexOf('ini:ta') > o.indexOf('fim:p1') && o.indexOf('ini:ta') > o.indexOf('fim:p2'), o.join(' '));
+    assert.ok(texto(r).indexOf('teste_afetado verde') < texto(r).indexOf('p1 verde'), 'o relato segue a ordem declarada');
+  });
+
+  test('serial-nao-sobrepoe (GM-21 T5): 2 suítes serial rodam sozinhas, uma de cada vez, na ordem declarada, depois das paralelas', async () => {
+    const { dir, base } = repo();
+    commit(dir, 'src/b.txt', 'b\n');
+    const b = barreira();
+    const r = await avaliar({ wt: dir, base, suites: [
+      { nome: 's1', cmd: b.cmd('s1', 'excl'), serial: true }, { nome: 'p1', cmd: b.cmd('p1', 'par', 'p2') },
+      { nome: 's2', cmd: b.cmd('s2', 'excl'), serial: true }, { nome: 'p2', cmd: b.cmd('p2', 'par', 'p1') }] });
+    assert.equal(r.reprova, 0, texto(r));
+    const w = b.dirs()[0];
+    assert.deepEqual(b.ler(w, 'viol'), []);
+    const o = b.ler(w, 'ordem');
+    assert.deepEqual(o.filter((x) => /^ini:s/.test(x)), ['ini:s1', 'ini:s2']);
+    assert.ok(o.indexOf('ini:s1') > o.indexOf('fim:p1') && o.indexOf('ini:s1') > o.indexOf('fim:p2'), o.join(' '));
+    assert.ok(o.indexOf('ini:s2') > o.indexOf('fim:s1'), o.join(' '));
+  });
+
+  test('a4-mesma-ordem (GM-21 T5): na medição --red da base, as paralelas se encontram e a serial roda sozinha e depois', async () => {
+    const { dir, base } = repo();
+    commit(dir, 'src/b.txt', 'b\n');
+    const b = barreira();
+    const r = await avaliar({ wt: dir, base, red: ['esperado'], suites: [
+      { nome: 's1', cmd: b.cmd('s1', 'excl', '-', 'red'), serial: true }, { nome: 'p1', cmd: b.cmd('p1', 'par', 'p2', 'red') }, { nome: 'p2', cmd: b.cmd('p2', 'par', 'p1', 'red') }] });
+    assert.match(texto(r), /RED "esperado" medido na base/, texto(r));
+    const bases = b.dirs().filter((w) => w.startsWith('gate-base-'));
+    assert.equal(bases.length, 1, b.dirs().join(','));
+    assert.deepEqual(b.ler(bases[0], 'viol'), []);
+    const o = b.ler(bases[0], 'ordem');
+    assert.ok(o.indexOf('ini:s1') > o.indexOf('fim:p1') && o.indexOf('ini:s1') > o.indexOf('fim:p2'), `na base: ${o.join(' ')}`);
+  });
+
+  test('mod-test-segue-depois (GM-21 T5): a suíte do mod continua depois das paralelas e agora também depois da serial', async () => {
+    const { dir, base } = repo();
+    commit(dir, 'src/b.txt', 'b\n');
+    const log = [];
+    const rodar = async (nome) => {
+      log.push(`ini:${nome}`);
+      await new Promise((r) => setTimeout(r, nome === 'gates' ? 40 : 5));
+      log.push(`fim:${nome}`);
+      return { nome, rc: 0, out: 'ℹ tests 1\nℹ pass 1\nℹ fail 0\n', ms: 1 };
+    };
+    const r = await avaliar({ wt: dir, base, rodar, suites: [{ nome: 'mod', cmd: 'bash scripts/test/mod-test.sh' }, { nome: 'ser', cmd: 'x', serial: true }, { nome: 'gates', cmd: 'npm test' }] });
+    assert.equal(r.reprova, 0, texto(r));
+    assert.ok(log.indexOf('ini:ser') > log.indexOf('fim:gates'), log.join(' '));
+    assert.ok(log.indexOf('ini:mod') > log.indexOf('fim:ser'), `o mod espera a serial: ${log.join(' ')}`);
+  });
+
+  test('serial-so-vale-true (GM-21 T5): normalizarSuites lê serial === true e só ele', () => {
+    const { suites } = normalizarSuites([{ cmd: 'a', serial: true }, { cmd: 'b', serial: 'true' }, { cmd: 'c' }, 'd']);
+    assert.deepEqual(suites.map((s) => s.serial), [true, false, false, false]);
   });
 
   test('gate-teste-ja-falha-sem-mutacao (E19): morte falsa não conta', async () => {
