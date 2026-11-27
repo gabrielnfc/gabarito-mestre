@@ -183,3 +183,4 @@ Item sai daqui quando entra num plano ou a decisão de descarte é registrada. I
 | Fora de escopo da GM-21: tipo de mutação com hook de banco (a [2.4.0] só orienta em `reference/gates.md`) | spec GM-21 (D-G57, DT14) — dono: Gabriel | 2º consumidor com o mesmo caso |
 | Fora de escopo da GM-21: JSON de resultado (`--outputFile`) e "RED conhecido" para vitest/jest | spec GM-21 (DT6) — dono: Gabriel | suíte vitest com RED declarado |
 | Fora de escopo da GM-21: amostra mínima no fallback da entrega (calibrado no replay da GM-14) | spec GM-21 (DT11) — dono: Gabriel | erro do fallback medido |
+| MINOR T11 r1: o comentário de `gates/src/depende.ts:63` ("de rascunho ou não") ficou velho: o código já exclui o rascunho | GM-21 T11 review r1 (MINOR-5) — dono: Gabriel | próxima mudança em `depende.ts` |
