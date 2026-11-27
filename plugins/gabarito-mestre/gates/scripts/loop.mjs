@@ -759,6 +759,14 @@ function jaAberta(c, task, branch, v) {
   return { task, branch, base, worktree: caminho, tmpdir: tmp, env: { TMPDIR: tmp }, banco: v.na ? 'n/a' : nomeBanco(c.entrega, task), ja_aberta: true };
 }
 
+/** A config que a worktree vai ter: a do commit base (HEAD), não a do working tree. Ausente ou ilegível no commit ⇒ `{}` (o conferir recusa pela falta de gates.suites). */
+function configDoCommit(raiz) {
+  try {
+    const cfg = JSON.parse(git(raiz, 'show', 'HEAD:harness.config.json'));
+    return cfg !== null && typeof cfg === 'object' && !Array.isArray(cfg) ? cfg : {};
+  } catch { return {}; }
+}
+
 function abrir(c, plano, task) {
   tarefa(plano, task);
   const { cfg } = lerConfig(c.raiz);
@@ -782,7 +790,7 @@ function abrir(c, plano, task) {
     throw new Falha('worktree_existe', `já existe ${relative(c.raiz, join(pasta, task))} (ou colide por caixa); abrir não toca no que existe`);
   }
   // GM-21 T3 (REQ-MIG-1): o plano é executável antes de criar qualquer coisa (worktree, branch, banco).
-  const conf = conferirExecutavel({ raiz: c.raiz, plano, eventos: lerDiarioEstrito(c.dirEntrega), cfg, tasks: [task] });
+  const conf = conferirExecutavel({ raiz: c.raiz, plano, eventos: lerDiarioEstrito(c.dirEntrega), cfg: configDoCommit(c.raiz), cfgLocal: cfg ?? {}, tasks: [task] });
   if (!conf.ok) {
     throw new Falha('plano_nao_executavel', `o plano não é executável: ${conf.problemas.map(linhaDoProblema).join('; ')}; nada foi criado`, { problemas: conf.problemas });
   }
@@ -1467,7 +1475,7 @@ function ofertaDeLiberacao(c, plano, eventos, task, cfgLote, aviso) {
 /** `despachar` só com as tasks cujo plano é executável; sem nenhuma, `esperar plano_nao_executavel`. Os problemas (e os da config, 1 vez) vão para `aviso`. */
 function tirarNaoExecutaveis(c, plano, eventos, cfg, acao, aviso) {
   if (acao.tipo !== 'despachar') return acao;
-  const conf = conferirExecutavel({ raiz: c.raiz, plano, eventos, cfg, tasks: acao.itens.map((i) => i.task) });
+  const conf = conferirExecutavel({ raiz: c.raiz, plano, eventos, cfg: configDoCommit(c.raiz), cfgLocal: cfg ?? {}, tasks: acao.itens.map((i) => i.task) });
   const itens = acao.itens.filter((i) => (conf.porTask[i.task] ?? []).length === 0);
   if (itens.length === acao.itens.length) return acao;
   const vistos = new Set();

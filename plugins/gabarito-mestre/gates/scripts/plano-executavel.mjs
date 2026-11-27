@@ -76,20 +76,25 @@ function problemasDeTesteAfetado(raiz, t) {
 
 /**
  * `{ ok, problemas, porTask }`. `problemas`: `{task|null, campo, codigo, motivo}`; `task: null` é da config. `porTask[id]` = problemas da task + os da config
- * (só as tasks conferidas: não integradas nem fora; `tasks` restringe a conferência a esses ids). Escopo = o do gate (`escopoDaTask` + `escopo`, `loop.mjs integrar`).
+ * `cfg` é a config que a worktree vai ter (a do commit base); `cfgLocal`, a do working tree, só serve para a dica de commitar. (só as tasks conferidas: não integradas nem fora; `tasks` restringe a conferência a esses ids). Escopo = o do gate (`escopoDaTask` + `escopo`, `loop.mjs integrar`).
  */
-export function conferirExecutavel({ raiz, plano, eventos, cfg, tasks }) {
+export function conferirExecutavel({ raiz, plano, eventos, cfg, cfgLocal, tasks }) {
   const ord = ordenar(eventos ?? []);
   const est = ord.ok ? estadosPorTask(plano.tasks.map((t) => t.id), ord.eventos, true) : { ok: false };
   const conferidas = plano.tasks.filter((t) => (tasks === undefined || tasks.includes(t.id))
     && !(est.ok && NAO_CONFERIDAS.has(est.estados.get(t.id)?.estado)));
   const emendas = projetarEmendas(eventos ?? []);
   const daConfig = problemasDeSuites(cfg);
+  // A worktree nasce do commit: suítes válidas só no working tree não valem; a recusa diz para commitar.
+  if (daConfig.length > 0 && cfgLocal !== undefined && problemasDeSuites(cfgLocal).length === 0) {
+    for (const d of daConfig) d.motivo = `gates.suites está no working tree mas não no commit: a worktree da task nasce do commit; commite harness.config.json e repita (${d.motivo})`;
+  }
   const problemas = [...daConfig];
   const porTask = {};
   for (const t of conferidas) {
     const esc = escopo(raiz, escopoDaTask(plano, emendas, t.id));
-    const dentro = (a) => esc.some((e) => (e.endsWith('/') ? a.startsWith(e) : a === e));
+    // Entrada que não existe na raiz (pasta que a task ainda vai criar) casa exato OU por prefixo `entrada/`: o gate roda na worktree, onde ela já existe.
+    const dentro = (a) => esc.some((e) => (e.endsWith('/') ? a.startsWith(e) : a === e || a.startsWith(`${e}/`)));
     const proprios = [
       ...(t.mutacoes !== undefined ? problemasDeMutacoes(raiz, t, dentro) : []),
       ...(t.teste_afetado !== undefined ? problemasDeTesteAfetado(raiz, t) : []),

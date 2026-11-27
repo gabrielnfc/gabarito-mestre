@@ -1497,6 +1497,34 @@ describe('GM-21 T3: plano executável conferido antes do abrir e do proxima (REQ
     }
   });
 
+  test('abrir-suites-nao-commitadas: a worktree nasce do commit; gates.suites só no working tree ⇒ recusa mandando commitar; commitada ⇒ abre (r1 MAJOR-1)', () => {
+    const suites = { gates: { suites: ["echo '# pass 1'"] } };
+    const amb = comTask({}, { loop: { slots: 2 } });
+    writeFileSync(join(amb.dir, 'harness.config.json'), JSON.stringify({ loop: { slots: 2 }, ...suites }));
+    const r = amb.cli(['abrir', 'T1']);
+    recusou(amb, r, null, 'gates.suites');
+    assert.match(r.j.mensagem, /commit/i, r.j.mensagem);
+    const p = amb.cli(['proxima', '--vivos', '0']);
+    assert.deepEqual(p.j.acao, { tipo: 'esperar', motivo: 'plano_nao_executavel' });
+    assert.match(JSON.stringify(p.j.aviso), /commit/i);
+    g(amb.dir, 'add', 'harness.config.json');
+    g(amb.dir, 'commit', '-q', '-m', 'chore: suites');
+    const ok = amb.cli(['abrir', 'T1']);
+    assert.equal(ok.rc, 0, ok.out + ok.err);
+  });
+
+  test('abrir-diretorio-novo-no-escopo: arquivos aponta para pasta que a task ainda vai criar; mutação dentro dela não recusa; irmão com mesmo prefixo recusa (r1 MAJOR-2)', () => {
+    const amb = comTask({ arquivos: ['src/novo'], mutacoes: 'mut.json' });
+    writeFileSync(join(amb.dir, 'mut.json'), JSON.stringify([{ ...MUT[0], arquivo: 'src/novo/a.js' }]));
+    const p = amb.cli(['proxima', '--vivos', '0']);
+    assert.equal(p.j.acao.tipo, 'despachar', p.out);
+    assert.deepEqual(p.j.acao.itens.map((i) => i.task), ['T1']);
+    assert.equal(amb.cli(['abrir', 'T1']).rc, 0);
+    const irmao = comTask({ arquivos: ['src/novo'], mutacoes: 'mut.json' });
+    writeFileSync(join(irmao.dir, 'mut.json'), JSON.stringify([{ ...MUT[0], arquivo: 'src/novoX.js' }]));
+    recusou(irmao, irmao.cli(['abrir', 'T1']), 'T1', 'mutacoes');
+  });
+
   test('abrir-plano-valido-igual: o formato da GM-16 (mutacoes em JSON com cwd, teste_afetado em comando) abre como antes', () => {
     const amb = comTask({ mutacoes: 'mut.json', teste_afetado: 'npx vitest run src/t1.test.ts' });
     writeFileSync(join(amb.dir, 'mut.json'), JSON.stringify([{ ...MUT[0], cwd: '.' }]));
@@ -1583,6 +1611,8 @@ describe('GM-21 T3: plano executável conferido antes do abrir e do proxima (REQ
   test('proxima-config-ausente-conta-como-sem-suites (emenda 8, DT4): sem harness.config.json o proxima tira a task, avisa gates.suites e espera; o abrir recusa', () => {
     const amb = comTask({});
     spawnSync('rm', [join(amb.dir, 'harness.config.json')]);
+    g(amb.dir, 'add', '-A'); // a worktree nasce do commit: a ausência só vale commitada (r1 MAJOR-1)
+    g(amb.dir, 'commit', '-q', '-m', 'chore: sem config');
     const p = amb.cli(['proxima', '--vivos', '0']);
     assert.equal(p.rc, 0, p.out + p.err);
     assert.deepEqual(p.j.acao, { tipo: 'esperar', motivo: 'plano_nao_executavel' });

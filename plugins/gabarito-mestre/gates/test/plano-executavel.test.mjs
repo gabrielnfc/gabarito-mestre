@@ -152,6 +152,18 @@ describe('conferirExecutavel (pura sobre o disco)', () => {
     assert.deepEqual(escopo(raiz, ['src', 'doc/x.md', 'novo']), ['src/', 'doc/x.md', 'novo']);
   });
 
+  test('entrada-inexistente-casa-por-prefixo (r1 MAJOR-2): pasta que a task ainda vai criar casa por prefixo; arquivo exato e irmão com mesmo prefixo não', () => {
+    const raiz = raizNova();
+    const p = plano({ arquivos: ['src/novo', 'doc/y.md'], mutacoes: 'm.json' });
+    writeFileSync(join(raiz, 'm.json'), JSON.stringify([{ ...MUT_OK[0], arquivo: 'src/novo/a.js' }, { ...MUT_OK[0], nome: 'm2', arquivo: 'src/novo' }, { ...MUT_OK[0], nome: 'm3', arquivo: 'doc/y.md' }]));
+    assert.deepEqual(conferirExecutavel({ raiz, plano: p, eventos: [], cfg: CFG }).problemas, []);
+    for (const a of ['src/novoX.js', 'doc/y.md/z']) {
+      writeFileSync(join(raiz, 'm.json'), JSON.stringify([{ ...MUT_OK[0], arquivo: a }]));
+      const r = conferirExecutavel({ raiz, plano: p, eventos: [], cfg: CFG });
+      assert.equal(r.problemas[0]?.codigo === 'mutacoes_escopo', a === 'src/novoX.js', a);
+    }
+  });
+
   test('conferir-ignora-integrada-e-fora: só as tasks não integradas nem fora são conferidas', () => {
     const raiz = raizNova();
     const p = { entrega: 'GM-10', tasks: ['T1', 'T2', 'T3', 'T4'].map((id) => ({ id, deps: [], arquivos: ['src/a.txt'], mutacoes: 'texto livre' })) };
