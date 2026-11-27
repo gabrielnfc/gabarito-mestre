@@ -1,0 +1,236 @@
+{
+  "entrega": "GM-21",
+  "spec": "docs/superpowers/specs/2026-11-26-gm21-relato-consumidor-design.md",
+  "tasks": [
+    {
+      "id": "T1",
+      "titulo": "Encerramento e publicada",
+      "deps": [],
+      "arquivos": [
+        "plugins/gabarito-mestre/gates/src/trilha.ts",
+        "plugins/gabarito-mestre/gates/dist/trilha.js",
+        "plugins/gabarito-mestre/gates/src/guarda.ts",
+        "plugins/gabarito-mestre/gates/dist/guarda.js",
+        "plugins/gabarito-mestre/gates/scripts/painel-medir.mjs",
+        "plugins/gabarito-mestre/gates/scripts/painel.mjs",
+        "plugins/gabarito-mestre/gates/test/trilha.test.ts",
+        "plugins/gabarito-mestre/gates/test/encerramento.test.ts",
+        "plugins/gabarito-mestre/gates/test/painel-medir.test.mjs",
+        "plugins/gabarito-mestre/gates/test/entrega-encerrada-cli.test.mjs",
+        "plugins/gabarito-mestre/gates/test/loop-cli-5.test.mjs",
+        "plugins/gabarito-mestre/gates/test/fixtures/gh-encerramento/gh"
+      ],
+      "reqs": [
+        "REQ-ENC-1",
+        "REQ-ENC-2"
+      ]
+    },
+    {
+      "id": "T2",
+      "titulo": "Onboarding e doctor: suítes",
+      "deps": [],
+      "arquivos": [
+        "plugins/gabarito-mestre/gates/scripts/onboarding.mjs",
+        "plugins/gabarito-mestre/gates/scripts/harness-doctor.mjs",
+        "plugins/gabarito-mestre/gates/test/onboarding.test.mjs",
+        "plugins/gabarito-mestre/gates/test/harness-doctor-loop.test.mjs"
+      ],
+      "reqs": [
+        "REQ-MIG-2"
+      ]
+    },
+    {
+      "id": "T4",
+      "titulo": "Contagem de vitest e jest",
+      "deps": [],
+      "arquivos": [
+        "plugins/gabarito-mestre/gates/scripts/gate-task.mjs",
+        "plugins/gabarito-mestre/gates/test/gate-task.test.mjs"
+      ],
+      "reqs": [
+        "REQ-CNT-1"
+      ]
+    },
+    {
+      "id": "T3",
+      "titulo": "Plano executável antes do abrir",
+      "deps": [
+        "T1",
+        "T4"
+      ],
+      "arquivos": [
+        "plugins/gabarito-mestre/gates/scripts/plano-executavel.mjs",
+        "plugins/gabarito-mestre/gates/scripts/loop.mjs",
+        "plugins/gabarito-mestre/gates/scripts/gate-task.mjs",
+        "plugins/gabarito-mestre/gates/test/plano-executavel.test.mjs",
+        "plugins/gabarito-mestre/gates/test/loop-cli-5.test.mjs",
+        "plugins/gabarito-mestre/reference/fluxo.md",
+        "plugins/gabarito-mestre/skills/gabarito-loop/SKILL.md",
+        "plugins/gabarito-mestre/scripts/test/texto.test.sh"
+      ],
+      "reqs": [
+        "REQ-MIG-1",
+        "REQ-MIG-3"
+      ]
+    },
+    {
+      "id": "T5",
+      "titulo": "Suítes em série e teste_afetado",
+      "deps": [
+        "T3",
+        "T4"
+      ],
+      "arquivos": [
+        "plugins/gabarito-mestre/gates/scripts/gate-task.mjs",
+        "plugins/gabarito-mestre/gates/scripts/loop.mjs",
+        "plugins/gabarito-mestre/gates/test/gate-task.test.mjs",
+        "plugins/gabarito-mestre/gates/test/loop-cli-5.test.mjs"
+      ],
+      "reqs": [
+        "REQ-SUI-1"
+      ]
+    },
+    {
+      "id": "T12",
+      "titulo": "Alias do orquestrador",
+      "deps": [
+        "T2",
+        "T3"
+      ],
+      "arquivos": [
+        "plugins/gabarito-mestre/gates/lib/config.mjs",
+        "plugins/gabarito-mestre/gates/scripts/onboarding.mjs",
+        "plugins/gabarito-mestre/gates/scripts/harness-doctor.mjs",
+        "plugins/gabarito-mestre/gates/test/onboarding.test.mjs",
+        "plugins/gabarito-mestre/gates/test/harness-doctor-loop.test.mjs",
+        "plugins/gabarito-mestre/gates/test/lib.test.mjs"
+      ],
+      "reqs": [
+        "REQ-ORQ-1",
+        "REQ-MIG-2"
+      ]
+    },
+    {
+      "id": "T9",
+      "titulo": "Título da entrega pelo card",
+      "deps": [
+        "T1"
+      ],
+      "arquivos": [
+        "plugins/gabarito-mestre/gates/scripts/painel.mjs",
+        "plugins/gabarito-mestre/gates/test/painel-cli.test.mjs"
+      ],
+      "reqs": [
+        "REQ-TIT-1"
+      ]
+    },
+    {
+      "id": "T10",
+      "titulo": "Doc da mutação de SQL",
+      "deps": [
+        "T3"
+      ],
+      "arquivos": [
+        "plugins/gabarito-mestre/reference/gates.md",
+        "plugins/gabarito-mestre/scripts/test/texto.test.sh"
+      ],
+      "reqs": [
+        "REQ-MUT-1"
+      ]
+    },
+    {
+      "id": "T6",
+      "titulo": "Herdar tasks (task.herdada)",
+      "deps": [
+        "T2",
+        "T12"
+      ],
+      "arquivos": [
+        "plugins/gabarito-mestre/gates/src/tipos.ts",
+        "plugins/gabarito-mestre/gates/src/formas.ts",
+        "plugins/gabarito-mestre/gates/dist/formas.js",
+        "plugins/gabarito-mestre/gates/scripts/onboarding-herdar.mjs",
+        "plugins/gabarito-mestre/gates/scripts/onboarding.mjs",
+        "plugins/gabarito-mestre/gates/test/formas.test.ts",
+        "plugins/gabarito-mestre/gates/test/loop.test.ts",
+        "plugins/gabarito-mestre/gates/test/onboarding-herdar.test.mjs",
+        "plugins/gabarito-mestre/skills/gabarito-instalar/SKILL.md"
+      ],
+      "reqs": [
+        "REQ-HER-1",
+        "REQ-HER-2"
+      ]
+    },
+    {
+      "id": "T7",
+      "titulo": "Painel: herdadas e previsão",
+      "deps": [
+        "T6"
+      ],
+      "arquivos": [
+        "plugins/gabarito-mestre/gates/src/projeto.ts",
+        "plugins/gabarito-mestre/gates/dist/projeto.js",
+        "plugins/gabarito-mestre/gates/src/painel-esquadrao.ts",
+        "plugins/gabarito-mestre/gates/dist/painel-esquadrao.js",
+        "plugins/gabarito-mestre/gates/test/projeto.test.ts",
+        "plugins/gabarito-mestre/gates/test/painel-projeto.test.ts"
+      ],
+      "reqs": [
+        "REQ-HER-3",
+        "REQ-PRV-1"
+      ]
+    },
+    {
+      "id": "T8",
+      "titulo": "DEPENDE sem rascunho nem autonomia",
+      "deps": [
+        "T1",
+        "T6"
+      ],
+      "arquivos": [
+        "plugins/gabarito-mestre/gates/scripts/painel-medir.mjs",
+        "plugins/gabarito-mestre/gates/src/formas.ts",
+        "plugins/gabarito-mestre/gates/dist/formas.js",
+        "plugins/gabarito-mestre/gates/src/depende.ts",
+        "plugins/gabarito-mestre/gates/dist/depende.js",
+        "plugins/gabarito-mestre/gates/src/painel.ts",
+        "plugins/gabarito-mestre/gates/dist/painel.js",
+        "plugins/gabarito-mestre/gates/test/depende.test.ts",
+        "plugins/gabarito-mestre/gates/test/painel-medir.test.mjs",
+        "plugins/gabarito-mestre/gates/test/formas.test.ts",
+        "plugins/gabarito-mestre/gates/test/fixtures/gh-encerramento/gh"
+      ],
+      "reqs": [
+        "REQ-DEP-1"
+      ]
+    },
+    {
+      "id": "T11",
+      "titulo": "Versão 2.4.0 e CHANGELOG",
+      "deps": [
+        "T1",
+        "T2",
+        "T3",
+        "T4",
+        "T5",
+        "T6",
+        "T7",
+        "T8",
+        "T9",
+        "T10",
+        "T12"
+      ],
+      "arquivos": [
+        "plugins/gabarito-mestre/.claude-plugin/plugin.json",
+        "plugins/gabarito-mestre/gates/package.json",
+        "plugins/gabarito-mestre/gates/test/package.test.mjs",
+        "plugins/gabarito-mestre/scripts/test/texto.test.sh",
+        "CHANGELOG.md",
+        "docs/backlog.md"
+      ],
+      "reqs": [
+        "REQ-VRS-1"
+      ]
+    }
+  ]
+}
