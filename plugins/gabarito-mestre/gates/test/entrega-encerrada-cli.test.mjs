@@ -67,6 +67,9 @@ function diarioGm14(d) {
     const e = JSON.parse(l);
     w(d, 'GM-14', e.sessao, e.tipo, e.dados, e.ts, e.agente);
   }
+  // GM-21 DT1: a GM-14 real fechou sem a T8 (o dono a cortou, `memória gm14-corte`); o fixture não tem o evento. Com plano aberto o PR não encerra mais, então o corte entra aqui
+  // (T8 está aprovada, não integrada: `fora.cortada` é válido). Sem este evento é o caso `painel-plano-aberto-segue-identificado`.
+  w(d, 'GM-14', 'loop', 'task.fora', { task: 'T8', como: 'cortada', motivo: 'cortada pelo dono no fechamento da GM-14', origem: 'dono' }, '2026-11-15T12:15:00.000Z', 'orquestrador');
 }
 
 const H = 'a'.repeat(64);
@@ -388,4 +391,55 @@ test('virada-segue-depois-da-encerrada: painel.mjs estado/texto mantêm "levar n
   const e = estado(d);
   assert.deepEqual(e.depende.map((i) => i.motivo), lote, 'o DEPENDE do painel lista o mesmo lote');
   assert.ok(texto(d, 100).some((x) => /para main/.test(x)), 'o texto do painel mostra o lembrete');
+});
+
+// ── GM-21 T1 (REQ-ENC-1, emenda 1): plano aberto não tira a entrega do painel nem a encerra ──────────────────────────────────────────────────
+// MUTAÇÕES: ME1-d (a fase PR de `trilhaDe` ignora o plano) e ME1-g (`entregaPublicada` volta a `plano: {tasks: []}`) derrubam este caso e `publicada-nao-com-plano-aberto`.
+const PLANO7 = { entrega: 'PBI-7', tasks: ['T1', 'T2'].map((id) => ({ id, deps: [], arquivos: [`src/${id}.txt`], reqs: ['REQ-A-1'], titulo: `Task ${id}` })) };
+const PR10_7 = { number: 10, state: 'MERGED', baseRefName: 'main', headRefName: 'docs/PBI-7-plano', title: 'docs(PBI-7): plano', mergedAt: '2026-11-20T12:00:00Z' };
+const PR11_7 = { number: 11, state: 'OPEN', baseRefName: 'main', headRefName: 'feat/PBI-7-loop', title: 'feat(PBI-7): loop', mergedAt: null };
+function pbi7(branch) {
+  const d = repo(branch);
+  mkdirSync(dirDe(d, 'PBI-7'), { recursive: true });
+  writeFileSync(join(dirDe(d, 'PBI-7'), 'plano.json'), JSON.stringify(PLANO7));
+  const t = (min) => new Date(Date.parse('2026-11-19T10:00:00.000Z') - min * 60_000).toISOString();
+  w(d, 'PBI-7', 'loop', 'task.iniciada', { task: 'T1', papel: 'implementador' }, t(4));
+  w(d, 'PBI-7', 'loop', 'task.concluida', { task: 'T1' }, t(3));
+  w(d, 'PBI-7', 'loop', 'task.iniciada', { task: 'T1', papel: 'revisor' }, t(2));
+  w(d, 'PBI-7', 'loop', 'review.veredito', { task: 'T1', veredito: 'APROVADO', rodada: 1, major: 0, blocker: 0 }, t(1));
+  w(d, 'PBI-7', 'loop', 'task.integrada', { task: 'T1' }, t(0));
+  return d;
+}
+const medirPbi7 = (d, prs) => {
+  const r = painel(d, ['medir'], { extraEnv: { GH_PRS_EXTRA: JSON.stringify(prs) } });
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  const j = JSON.parse(r.stdout);
+  assert.equal(j.ok, true, r.stdout);
+  return j;
+};
+
+test('painel-plano-aberto-segue-identificado (P9, emenda 1): só o PR do plano (#10) mergeado, T2 aberta ⇒ o estado segue na PBI-7 (PRONTO 1 de 2, próxima T2), sem sair para "entregue"; com o #11 aberto é o mesmo', () => {
+  for (const branch of ['feat/PBI-7-loop', 'docs/PBI-7-plano']) {
+    const d = pbi7(branch);
+    const m = medirPbi7(d, [PR10_7]);
+    assert.equal(ler(dirDe(d, 'PBI-7')).filter((e) => e.tipo === 'entrega.encerrada').length, 0, `${branch}: nada encerrado`);
+    assert.deepEqual(ler(dirDe(d, 'PBI-7')).filter((e) => e.tipo === 'fato.medido' && e.dados.chave === 'pr').map((e) => e.dados.valor.numero), [10], 'o PR #10 segue gravado');
+    assert.equal(m.avisos?.length, 1, `${branch}: o aviso de plano aberto sai no medir`);
+    assert.match(m.avisos[0], /^PR #10 mergeado não encerra a PBI-7: tasks abertas T2; se a entrega acabou, \/gabarito-mestre:encerrar PBI-7 10$/);
+    const e = estado(d);
+    assert.equal(e.entregue ?? null, null, `${branch}: a entrega não virou "entregue"`);
+    assert.equal(e.id, 'PBI-7', `${branch}: o plano não é descartado`);
+    assert.equal(e.modo, 'entrega');
+    assert.equal(e.trilha.identificada, true, branch);
+    assert.equal(e.trilha.progresso, '1 de 2 tasks integradas');
+    assert.deepEqual([e.plano.feitas, e.plano.total], [1, 2], `${branch}: PRONTO 1 de 2`);
+    assert.deepEqual(e.plano.tasks.map((t) => [t.id, t.estado]), [['T1', 'integrada'], ['T2', 'pendente']], `${branch}: a próxima é a T2`);
+    // com o PR do loop aberto (#11) o estado é o mesmo (regressão)
+    const m2 = medirPbi7(d, [PR10_7, PR11_7]);
+    assert.equal(m2.avisos, undefined, 'a mesma sessão não repete o aviso');
+    const e2 = estado(d);
+    assert.equal(e2.entregue ?? null, null);
+    assert.equal(e2.id, 'PBI-7');
+    assert.deepEqual([e2.plano.feitas, e2.plano.total], [1, 2]);
+  }
 });

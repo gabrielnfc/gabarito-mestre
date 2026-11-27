@@ -25,7 +25,8 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, readSync, renameSync,
 import { isatty } from 'node:tty';
 import { join } from 'node:path';
 import { append, dirEntrega, lerEstrito, padraoDeRecusa } from '../dist/diario.js';
-import { encerramentoDe, idDaBranch, podeEncerrar } from '../dist/trilha.js';
+import { encerramentoDe, idDaBranch, podeEncerrar, tasksAbertas } from '../dist/trilha.js';
+import { validarPlano } from '../dist/plano.js';
 import { ehViradaDePreVersao, preVersoesDe, temOnboarding, versaoAlvo } from '../dist/guarda.js';
 import { idPadraoDe, lerBaseDaEntrega } from '../lib/config.mjs';
 import { lerConfigEntrega, resolverBaseEntrega } from '../dist/entrega.js';
@@ -34,6 +35,16 @@ import { contexto } from './loop.mjs';
 const ID_FORA_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 const CAMPOS_PR = 'number,state,baseRefName,headRefName,title,mergedAt,mergeCommit';
 const SHA_GIT_RE = /^[0-9a-f]{40,64}$/;
+
+/** GM-21 DT1: as tasks do `plano.json` VÁLIDO de `dir` (`{tasks: [id…]}`); ausente, ilegível ou inválido ⇒ `null` (a regra de hoje). Nunca lança. */
+function planoDaEntrega(dir) {
+  try {
+    const v = validarPlano(JSON.parse(readFileSync(join(dir, 'plano.json'), 'utf8')));
+    return v.ok ? { tasks: v.plano.tasks.map((t) => t.id) } : null;
+  } catch {
+    return null;
+  }
+}
 
 /** Item da lista do `gh` ⇒ PR normalizado ou `null` (forma inválida). `base`/`mergeado_em` só existem quando o `gh` os devolve. */
 function prDoGh(p, baseEntrega) {
@@ -266,7 +277,8 @@ export function medir(cwd, opcoes = {}) {
   const gravados = [];
   const falhas = [];
   const avisosBase = [];
-  const fim = () => ({ ok: falhas.length === 0, gravados, falhas, ...(avisosBase.length > 0 ? { avisos: avisosBase } : {}) });
+  const avisosPlano = [];
+  const fim = () => ({ ok: falhas.length === 0, gravados, falhas, ...(avisosBase.length + avisosPlano.length > 0 ? { avisos: [...avisosBase, ...avisosPlano] } : {}) });
   const rodar = opcoes.rodar ?? rodarPadrao;
   const timeoutMs = opcoes.timeoutMs ?? TIMEOUT_MS;
   const agora = opcoes.agora ?? Date.now;
@@ -391,7 +403,11 @@ export function medir(cwd, opcoes = {}) {
         const pv = preVersoesDe(p.titulo, p.branch)[0];
         if (pv !== undefined && pv.length <= 64) valor.pre_versao = pv; // a guarda lê daqui (a MESMA ehViradaDePreVersao)
         deGh.push({ chave: 'pr', fonte: 'gh', valor, alvo });
-        if (p.base === baseEntrega && p.mergeado_em !== null && !ehViradaDePreVersao(p, versaoAlvo(raiz, alvo.dir))) encerrar.push({ alvo, pr: p });
+        if (p.base === baseEntrega && p.mergeado_em !== null && !ehViradaDePreVersao(p, versaoAlvo(raiz, alvo.dir))) {
+          // GM-21 DT1 (backlog m3): o aviso de "plano aberto" é amarrado à 1ª gravação do fato `pr` mergeado nesta sessão (o `gravar` só grava o que mudou): sem evento novo
+          const jaMergeado = ultimoValor(alvo.eventos, sessao, 'pr', valor)?.estado === p.estado; // `p` aqui já é um PR com `mergeado_em` (candidato a encerrar)
+          encerrar.push({ alvo, pr: p, novoNaSessao: !jaMergeado });
+        }
       }
     }
     if (falhaGh === null) {
@@ -447,11 +463,19 @@ export function medir(cwd, opcoes = {}) {
       if (id !== null) alvos[0].eventos = eventos;
       // encerramento: o 1º PR (por `mergeado_em`) que `podeEncerrar`, sobre o diário RELIDO do disco (os eventos em memória não têm `seq` real, e outra sessão
       // pode ter gravado agora); depois de gravado, os demais já não encerram.
-      for (const { alvo, pr } of encerrar.sort((x, y) => Date.parse(x.pr.mergeado_em) - Date.parse(y.pr.mergeado_em))) {
+      for (const { alvo, pr, novoNaSessao } of encerrar.sort((x, y) => Date.parse(x.pr.mergeado_em) - Date.parse(y.pr.mergeado_em))) {
         if (!alvo.dir.endsWith(alvo.id)) continue;
         const lido = lerEstrito(alvo.dir);
         if (!lido.ok) { falhas.push(`diario_corrompido: ${lido.motivo}`); break; }
-        if (!podeEncerrar(lido.eventos, alvo.id, pr, baseEntrega)) continue; // a regra única, com a base da entrega (REQ-CRD-2)
+        // GM-21 DT1: a regra única também olha o plano da entrega (`plano.json` válido de `alvo.dir`; ausente ou inválido ⇒ sem plano, a regra de hoje)
+        const plano = planoDaEntrega(alvo.dir);
+        if (!podeEncerrar(lido.eventos, alvo.id, pr, baseEntrega, plano)) {
+          // o PR só não encerra por causa do plano aberto (sem o plano encerraria): avisa, 1 vez por PR e sessão (na 1ª gravação do fato `pr` mergeado), só no resultado do `medir`
+          if (plano !== null && novoNaSessao && podeEncerrar(lido.eventos, alvo.id, pr, baseEntrega)) {
+            avisosPlano.push(`PR #${pr.numero} mergeado não encerra a ${alvo.id}: tasks abertas ${tasksAbertas(plano.tasks, lido.eventos).join(', ')}; se a entrega acabou, /gabarito-mestre:encerrar ${alvo.id} ${pr.numero}`.slice(0, 300));
+          }
+          continue;
+        } // a regra única, com a base da entrega (REQ-CRD-2)
         const dados = { entrega: alvo.id, pr: pr.numero, via: pr.via, mergeado_em: pr.mergeado_em, ...(pr.sha ? { sha: pr.sha } : {}) };
         gravar(alvo.dir, lido.eventos, [{ tipo: 'entrega.encerrada', dados, valor: dados }]);
       }

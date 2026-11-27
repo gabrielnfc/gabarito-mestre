@@ -167,16 +167,51 @@ export function encerramentoDe(eventos          , id        )               {
 
                                                                                                                                                           
 
+/** Margem de relógio entre a máquina e o GitHub para comparar o `mergeado_em` do PR com a última integração (GM-21 DT2). */
+const MARGEM_RELOGIO_MS = 5 * 60 * 1000;
+
+/**
+ * GM-21 T1 (REQ-ENC-1, DT1, a regra ÚNICA de "plano aberto"; `podeEncerrar` e a fase PR de `trilhaDe` a usam): as tasks de `tasks` que não estão integradas
+ * nem fora (`adiada`/`cortada`), pela mesma `estadosPorTask` de `integradas`. Task em `invalidas` (reabertura de origem inválida) conta como aberta.
+ * Diário que não ordena ou não projeta ⇒ `[]` (lado seguro: a regra de hoje). Evento de task fora do plano é ignorado, como na trilha.
+ */
+export function tasksAbertas(tasks          , eventos          )           {
+  const ids = lista        (tasks).filter((t) => typeof t === 'string');
+  if (ids.length === 0 || !Array.isArray(eventos)) return [];
+  const ord = ordenar(eventos);
+  if (!ord.ok) return [];
+  const r = estadosPorTask(ids, ord.eventos, true);
+  if (!r.ok) return [];
+  return ids.filter((id) => {
+    if (r.invalidas.has(id)) return true;
+    const est = r.estados.get(id)?.estado;
+    return est !== 'integrada' && est !== 'adiada' && est !== 'cortada';
+  });
+}
+
+/** `true` se `tasksAbertas` não é vazia. */
+export function planoAberto(tasks          , eventos          )          {
+  return tasksAbertas(tasks, eventos).length > 0;
+}
+
 /**
  * GM-15 T3 (REQ-ENT-1 a, b, c): este PR pode encerrar a entrega `id`? PR com a `base` da entrega (GM-20 REQ-CRD-2: parâmetro, `main` por omissão; fato sem `base` nunca encerra), mergeado, head casando
  * o ID (`via: 'head'`) ou título casando (`via: 'titulo'`), que ainda não encerrou; depois de `entrega.reaberta`, só com `mergeado_em` posterior a `em`.
+ * GM-21 T1: (DT1) com `plano` (as tasks do `plano.json`) e alguma aberta (`planoAberto`), nenhum PR encerra, por nenhuma `via`; sem `plano` (ou `null`), a regra de hoje.
+ * (DT2) entrega com ao menos 1 `task.integrada`: só encerra o PR com `mergeado_em` >= o `ts` da última integração menos 5 min (margem de relógio).
  */
-export function podeEncerrar(eventos          , id        , pr          , base = 'main')          {
+export function podeEncerrar(eventos          , id        , pr          , base = 'main', plano                             = null)          {
   if (pr === null || typeof pr !== 'object' || pr.estado !== 'mergeado' || pr.base !== base || !Number.isInteger(pr.numero)) return false;
   if (pr.via === 'head') { if (idDaBranch(pr.branch ?? null, escapar(id)) !== id) return false; }
   else if (pr.via !== 'titulo') return false;
   const enc = encerramentoDe(eventos, id);
   if (enc.encerrada || enc.prsQueEncerraram.includes(pr.numero)) return false;
+  if (plano !== null && typeof plano === 'object' && planoAberto(plano.tasks, eventos)) return false;
+  const integracoes = Array.isArray(eventos) ? eventos.filter((e) => e?.tipo === 'task.integrada').map((e) => ms(e.ts)) : [];
+  if (integracoes.length > 0) {
+    const ultima = Math.max(...integracoes); // `ts` ilegível ⇒ NaN ⇒ não afirma (não encerra)
+    if (!(ms(pr.mergeado_em) >= ultima - MARGEM_RELOGIO_MS)) return false;
+  }
   return enc.reabertaEm === null || ms(pr.mergeado_em) > ms(enc.reabertaEm);
 }
 
@@ -282,7 +317,8 @@ export function trilhaDe(fatos             , eventos          )         {
   // Fase PR: fonte falhou ⇒ `?`; senão último (maior número) mergeado e nenhum aberto.
   let celPr        ;
   if (f.gh === 'falhou' || corrompido || (pr.total === 0 && semFonte)) celPr = { fato: naoConferi(IDX.pr), propaga: true };
-  else celPr = { fato: pr.ultimo !== null && pr.ultimo.estado === 'mergeado' && pr.aberto === null, propaga: false };
+  // GM-21 DT1 (emenda 1): a regra única de "publicada" é esta fase; com task aberta no plano, o PR mergeado não a cumpre (a entrega segue identificada).
+  else celPr = { fato: pr.ultimo !== null && pr.ultimo.estado === 'mergeado' && pr.aberto === null && !(plano !== null && planoAberto(plano.tasks, evs)), propaga: false };
 
   if (ligada === null && !(segundo && celPr.fato !== true)) return naoIdentificada(f, evs, candidato);
   const entrega = candidato;

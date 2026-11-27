@@ -37,11 +37,11 @@ function evs(lista: Ev[]): Evento[] {
 }
 
 /** Grava o diário real: um arquivo por sessão, com a cadeia de hash que `lerEstrito` confere; `plano.json` presente (2º fato da regra antiga). */
-function diario(lista: Ev[]): string {
+function diario(lista: Ev[], plano: unknown = {}): string {
   const raiz = mkdtempSync(join(tmpdir(), 'enc-'));
   const dir = join(raiz, '.harness', 'entregas', ID);
   mkdirSync(dir, { recursive: true });
-  writeFileSync(join(dir, 'plano.json'), '{}');
+  writeFileSync(join(dir, 'plano.json'), JSON.stringify(plano));
   const porSessao = new Map<string, Evento[]>();
   for (const e of evs(lista)) porSessao.set(e.sessao, [...(porSessao.get(e.sessao) ?? []), e]);
   for (const [sessao, es] of porSessao) {
@@ -219,4 +219,95 @@ test('medir-nao-encerra-sobre-dono: podeEncerrar nunca por cima de encerrada do 
 test('entregue-mostra-versao-do-dono: o painel lê a versão da encerrada do dono', () => {
   const es = evs([doDono(16, T(5), T(6), { versao: '2.0.0' }, 'GM-13')]);
   assert.deepEqual(entregueDe(es, 'GM-13'), { id: 'GM-13', versao: '2.0.0' });
+});
+
+// ── GM-21 T1 (REQ-ENC-1, REQ-ENC-2; DT1 e DT2) ──────────────────────────────────────────────────────────────────────────────────────────────
+// MUTAÇÕES: ME1-a podeEncerrar ignora o plano ⇒ encerra-nao-com-plano-aberto-titulo/head · ME1-b `fora` conta como aberta ⇒ encerra-com-task-fora ·
+// ME1-c plano só na via titulo ⇒ encerra-nao-com-plano-aberto-head · ME1-d/g (trilhaDe ignora o plano; entregaPublicada com tasks []) ⇒ publicada-nao-com-plano-aberto ·
+// ME2-a 1ª integração ⇒ encerra-so-pr-posterior · ME2-b sem margem ⇒ encerra-margem-de-relogio · ME2-c margem de 1 h ⇒ encerra-margem-de-relogio
+const CICLO = (task: string, ts: string[]): Ev[] => [
+  { tipo: 'task.iniciada', ts: ts[0], dados: { task, papel: 'implementador' } },
+  { tipo: 'task.concluida', ts: ts[1], dados: { task } },
+  { tipo: 'task.iniciada', ts: ts[2], dados: { task, papel: 'revisor' } },
+  { tipo: 'review.veredito', ts: ts[3], dados: { task, veredito: 'APROVADO', rodada: 1, major: 0, blocker: 0 } },
+  { tipo: 'task.integrada', ts: ts[4], dados: { task } },
+];
+const integrada = (task: string, min: number): Ev[] => CICLO(task, [0, 1, 2, 3, 4].map((i) => T(min + i)));
+const PLANO_T1_T2 = { tasks: ['T1', 'T2'] };
+const PLANO_JSON = { entrega: ID, tasks: ['T1', 'T2'].map((id) => ({ id, deps: [], arquivos: [`src/${id}.txt`], reqs: ['REQ-A-1'], titulo: id })) };
+
+test('encerra-nao-com-plano-aberto-titulo (ME1-a): plano com T2 aberta ⇒ PR por título não encerra; sem o 5º argumento, a regra de hoje', () => {
+  const es = evs(integrada('T1', 0));
+  const pr = mergeado(10, T(30), { via: 'titulo', branch: 'docs/GM-10-plano' });
+  assert.equal(podeEncerrar(es, ID, pr, 'main', PLANO_T1_T2), false);
+  assert.equal(podeEncerrar(es, ID, pr, 'main'), true, 'sem plano: regra de hoje');
+  assert.equal(podeEncerrar(es, ID, pr, 'main', null), true, 'plano null: regra de hoje');
+});
+
+test('encerra-nao-com-plano-aberto-head (ME1-c): o mesmo por head, e com a base next', () => {
+  const es = evs(integrada('T1', 0));
+  assert.equal(podeEncerrar(es, ID, mergeado(10, T(30), { branch: `docs/${ID}-plano` }), 'main', PLANO_T1_T2), false);
+  assert.equal(podeEncerrar(es, ID, mergeado(10, T(30), { base: 'next', branch: `docs/${ID}-plano` }), 'next', PLANO_T1_T2), false);
+  assert.equal(podeEncerrar(es, ID, mergeado(10, T(30), { base: 'next', branch: `docs/${ID}-plano` }), 'next'), true);
+});
+
+test('encerra-com-task-fora (ME1-b): T2 cortada (ou adiada) e T1 integrada ⇒ o PR posterior encerra', () => {
+  const pr = mergeado(10, T(30));
+  for (const como of ['cortada', 'adiada']) {
+    const es = evs([...integrada('T1', 0), { tipo: 'task.fora', ts: T(10), dados: { task: 'T2', como } }]);
+    assert.equal(podeEncerrar(es, ID, pr, 'main', PLANO_T1_T2), true, como);
+  }
+});
+
+test('encerra-sem-plano-igual: plano sem task e sem evento de task ⇒ a regra de hoje', () => {
+  assert.equal(podeEncerrar([], ID, mergeado(10, T(30)), 'main', { tasks: [] }), true);
+  assert.equal(podeEncerrar([], ID, mergeado(10, T(30)), 'main', PLANO_T1_T2), false, 'controle: com tasks pendentes não encerra');
+});
+
+test('encerra-so-pr-posterior (ME2-a, DT2): com integração, o PR anterior à última não encerra; o posterior sim', () => {
+  const es = evs([...integrada('T1', 0), ...integrada('T2', 60 * 24 * 19)]);
+  assert.equal(podeEncerrar(es, ID, mergeado(10, T(60 * 24 * 2)), 'main', PLANO_T1_T2), false, 'PR do plano antigo, anterior à T2');
+  assert.equal(podeEncerrar(es, ID, mergeado(38, T(60 * 24 * 20)), 'main', PLANO_T1_T2), true);
+  assert.equal(podeEncerrar(es, ID, mergeado(10, T(60 * 24 * 2))), false, 'a DT2 não depende do plano');
+});
+
+test('encerra-margem-de-relogio (ME2-b, ME2-c): 4 min antes da última integração encerra; 6 min antes não', () => {
+  const es = evs(integrada('T1', 100)); // última integração em T(104)
+  assert.equal(podeEncerrar(es, ID, mergeado(10, T(100)), 'main'), true, '4 min antes');
+  assert.equal(podeEncerrar(es, ID, mergeado(10, T(98)), 'main'), false, '6 min antes');
+  assert.equal(podeEncerrar(es, ID, mergeado(10, T(104)), 'main'), true, 'no instante');
+  assert.equal(podeEncerrar(es, ID, mergeado(10, T(99)), 'main'), true, 'exatamente 5 min antes: a margem é fechada');
+});
+
+test('encerra-sem-integracao-igual (DT2 não se aplica): entrega sem task.integrada encerra por PR antigo como hoje', () => {
+  assert.equal(podeEncerrar(evs([prFato(7, 'mergeado', {})]), ID, mergeado(10, T(0))), true);
+});
+
+test('publicada-nao-com-plano-aberto (ME1-d, ME1-g): PR mergeado, plano.json com T2 aberta, sem entrega.encerrada ⇒ não publicada em nenhuma sessão', () => {
+  const merge = prFato(10, 'mergeado', { base: 'main', via: 'titulo', branch: 'docs/GM-10-plano' }, T(40));
+  const raiz = diario([...integrada('T1', 0), merge], PLANO_JSON);
+  assert.equal(entregaPublicada(raiz, ID, SESSAO_QUALQUER), false);
+  assert.equal(entregaPublicada(raiz, ID, 's2'), false);
+  // regressão: T2 cortada ⇒ plano fechado ⇒ publicada (a regra de hoje)
+  const fechado = diario([...integrada('T1', 0), { tipo: 'task.fora', ts: T(10), dados: { task: 'T2', como: 'cortada' } }, merge], PLANO_JSON);
+  assert.equal(entregaPublicada(fechado, ID, SESSAO_QUALQUER), true);
+  // plano.json ilegível ou inválido ⇒ tasks [] ⇒ a regra de hoje (publicada)
+  assert.equal(entregaPublicada(diario([merge], {}), ID, SESSAO_QUALQUER), true, 'plano inválido');
+  assert.equal(entregaPublicada(diario([...integrada('T1', 0), merge], { entrega: ID, tasks: [] }), ID, SESSAO_QUALQUER), true, 'plano sem task: não aberto');
+  // vizinho: com PR #11 aberto depois, continua não publicada
+  assert.equal(entregaPublicada(diario([...integrada('T1', 0), merge, prFato(11, 'aberto', { base: 'main', via: 'head' }, T(50))], PLANO_JSON), ID, SESSAO_QUALQUER), false);
+});
+
+test('publicada-encerrada-dono-igual (ME1-e): entrega.encerrada do dono com T2 aberta ⇒ publicada (o encerramento manda)', () => {
+  const dono: Ev = { tipo: 'entrega.encerrada', ts: T(45), dados: { entrega: ID, pr: 10, via: 'dono', mergeado_em: T(40) } };
+  const merge = prFato(10, 'mergeado', { base: 'main', via: 'titulo', branch: 'docs/GM-10-plano' }, T(40));
+  const raiz = diario([...integrada('T1', 0), merge, dono], PLANO_JSON);
+  assert.equal(entregaPublicada(raiz, ID, SESSAO_QUALQUER), true);
+  assert.equal(entregaPublicada(raiz, ID, 's2'), true);
+});
+
+test('publicada-diario-que-nao-projeta (backlog m2): ciclo de task impossível + PR mergeado ⇒ a regra de hoje (publicada)', () => {
+  const merge = prFato(10, 'mergeado', { base: 'main', via: 'titulo', branch: 'docs/GM-10-plano' }, T(40));
+  const raiz = diario([{ tipo: 'task.integrada', ts: T(1), dados: { task: 'T1' } }, merge], PLANO_JSON);
+  assert.equal(entregaPublicada(raiz, ID, SESSAO_QUALQUER), true);
 });

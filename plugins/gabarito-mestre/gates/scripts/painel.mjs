@@ -766,6 +766,7 @@ export function estadoDoPainel(cwd, opts = {}) {
     // nada de PRONTO "N de N integradas" de uma entrega não identificada; a trilha segue vendo o plano em `fatos`)
     // T47: o plano descartado segue sendo o que casa os eventos de task do diário e os vivos (FIEL-3 a): sem ele, T1 não está no plano e o diário vira
     // `diario_invalido`. Ele só não aparece em PRONTO/modo/id/fase (a regra de "publicada" é a de `trilhaDe`, a única).
+    // GM-21 DT1: com task aberta no plano, a fase PR de `trilhaDe` não é cumprida pelo PR mergeado: a entrega segue identificada e o plano NÃO é descartado aqui.
     const planoDoDiario = plano;
     const descartado = plano !== null && opts.entrega === undefined && eventos !== null && trilhaDe(fatos, eventos).identificada !== true;
     if (descartado) plano = null;

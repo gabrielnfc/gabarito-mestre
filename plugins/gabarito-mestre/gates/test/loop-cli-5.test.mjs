@@ -309,7 +309,10 @@ describe('GM-14 T34: pouso é regra do produto (FIEL-14 a, b, c, e, f)', () => {
 
 describe('entrega publicada: nada de sessao.*, guarda.*, task.* nem loop.parar (T48)', () => {
   const PR = (numero, estado) => ['fato.medido', { chave: 'pr', fonte: 'gh', valor: { numero, estado, branch: 'enabler/GM-10-loop' } }];
-  const publicar = (amb) => amb.semear([PR(7, 'mergeado')]);
+  // GM-21 DT1: "publicada" = PR mergeado E plano sem task aberta; os testes desta suíte (T48) são sobre as CONSEQUÊNCIAS de publicada, então o plano que simulam é o fechado (`tasks: []`).
+  // O critério com task aberta tem os casos próprios (`publicada-nao-com-plano-aberto`, `regra-unica`).
+  const planoFechado = (amb) => writeFileSync(join(amb.entregas, 'plano.json'), JSON.stringify(planoDe([])));
+  const publicar = (amb) => { planoFechado(amb); amb.semear([PR(7, 'mergeado')]); };
   const PLUGIN_RAIZ = join(AQUI, '..', '..');
   const configOnboarding = { ...CONFIG_PADRAO, fluxo: { resolvidoEm: '2026-11-13T00:00:00Z' } };
   const semId = (amb) => join(amb.dir, '.harness', 'entregas', '_sem-id');
@@ -371,6 +374,31 @@ describe('entrega publicada: nada de sessao.*, guarda.*, task.* nem loop.parar (
     const r = amb.cli(['pousar', '--sessao', 'S1']);
     assert.equal(r.j?.erro, 'entrega_publicada', r.out + r.err);
     assert.equal(amb.eventos().length, antes);
+  });
+
+  test('publicada-nao-com-plano-aberto (GM-21 T1, REQ-ENC-1, P9): PR do plano mergeado e T2 aberta ⇒ iniciar T2 não recusa com entrega_publicada e grava; plano fechado (T2 cortada) ⇒ recusa', () => {
+    const amb = ambiente({ plano: planoDe([{ id: 'T1', deps: [], arquivos: ['src/t1.txt'] }, { id: 'T2', deps: [], arquivos: ['src/t2.txt'] }]) });
+    // T1 integrada pelo ciclo real do loop; T2 só aberta (worktree), o PR do plano (#10, via titulo, base main) já mergeado depois da integração
+    assert.equal(amb.cli(['abrir', 'T1']).rc, 0);
+    assert.equal(amb.cli(['iniciar', 'T1', 'implementador']).rc, 0);
+    amb.commitNaWt('T1', 'src/t1.txt');
+    assert.equal(amb.cli(['concluir', 'T1']).rc, 0);
+    assert.equal(amb.cli(['iniciar', 'T1', 'revisor']).rc, 0);
+    assert.equal(amb.cli(['veredito', 'T1', 'APROVADO', '1', '0', '0']).rc, 0);
+    assert.equal(amb.cli(['integrar', 'T1']).rc, 0);
+    assert.equal(amb.cli(['abrir', 'T2']).rc, 0);
+    const pr10 = ['fato.medido', { chave: 'pr', fonte: 'gh', valor: { numero: 10, estado: 'mergeado', branch: 'docs/GM-10-plano', base: 'main', via: 'titulo' } }];
+    amb.semear([pr10]);
+    // o diário relido: nenhum entrega.encerrada e a regra única (a da trilha) não dá a entrega por publicada
+    assert.equal(amb.tipos().includes('entrega.encerrada'), false);
+    const r = amb.cli(['iniciar', 'T2', 'implementador']);
+    assert.equal(r.rc, 0, r.out + r.err);
+    assert.notEqual(r.j?.erro, 'entrega_publicada');
+    assert.ok(amb.tipos().filter((t) => t === 'task.iniciada').length >= 2, 'a task.iniciada de T2 foi gravada');
+    // controle (troca de valor): com T2 cortada o mesmo PR publica e o loop recusa
+    const amb2 = ambiente({ plano: planoDe([{ id: 'T1', deps: [], arquivos: ['src/t1.txt'] }, { id: 'T2', deps: [], arquivos: ['src/t2.txt'] }]) });
+    amb2.semear([['task.fora', { task: 'T1', como: 'cortada', motivo: 'fora do corte', origem: 'dono' }], ['task.fora', { task: 'T2', como: 'cortada', motivo: 'fora do corte', origem: 'dono' }], pr10]);
+    assert.equal(amb2.cli(['parar', 'nao_conseguiu']).j?.erro, 'entrega_publicada');
   });
 
   test('identificada-continua-gravando (vizinho): sem PR medido, ou com PR aberto depois do mergeado, parar, iniciar e pousar gravam', () => {
@@ -440,8 +468,10 @@ describe('entrega publicada: nada de sessao.*, guarda.*, task.* nem loop.parar (
     assert.equal(amb.cli(['abrir', 'T1']).rc, 0);
     assert.equal(amb.cli(['iniciar', 'T1', 'implementador']).rc, 0);
     amb.commitNaWt('T1', 'src/t1.txt');
+    const planoAberto = readFileSync(join(amb.entregas, 'plano.json'), 'utf8');
     publicar(amb);
     assert.equal(amb.cli(['concluir', 'T1']).j?.erro, 'entrega_publicada', 'controle: sem ligação, publicada');
+    writeFileSync(join(amb.entregas, 'plano.json'), planoAberto); // o dono religa a sessão: o loop volta a ver as tasks (a ligação é o que o destrava)
     ligarPeloDono(amb, 'SDONO');
     const r1 = amb.cli(['concluir', 'T1']);
     assert.equal(r1.rc, 0, r1.out + r1.err);
@@ -452,7 +482,8 @@ describe('entrega publicada: nada de sessao.*, guarda.*, task.* nem loop.parar (
     assert.equal(amb.cli(['parar', 'nao_conseguiu']).rc, 0);
     assert.equal(amb.cli(['parar', 'nao_conseguiu', '--sessao', 'SDONO']).rc, 0);
     assert.ok(amb.tipos().includes('task.integrada'));
-    // vizinho perigoso: sessão EXPLÍCITA que o dono não ligou continua recusada (o filtro que libera não fura a guarda)
+    // vizinho perigoso: sessão EXPLÍCITA que o dono não ligou continua recusada (o filtro que libera não fura a guarda); T2 e T3 saem do plano para ele voltar a ser fechado
+    planoFechado(amb);
     assert.equal(amb.cli(['parar', 'nao_conseguiu', '--sessao', 'OUTRA']).j?.erro, 'entrega_publicada');
     // vizinho perigoso: a resposta do dono liga OUTRA entrega ⇒ esta segue publicada
     const amb2 = ambiente();
@@ -495,6 +526,7 @@ describe('entrega publicada: nada de sessao.*, guarda.*, task.* nem loop.parar (
 
   test('ligada-ts-empatado (MINOR-2 r1): resposta do dono com o MESMO ts do merge não é posterior ⇒ recusa', () => {
     const amb = ambiente();
+    planoFechado(amb);
     ligarPeloDono(amb, 'S1');
     medirPR(amb, 'S2', 7, 'mergeado', '2026-11-13T10:00:01.000Z');
     amb.fechar();
@@ -546,12 +578,13 @@ describe('entrega publicada: nada de sessao.*, guarda.*, task.* nem loop.parar (
       ['fechado', [PR(7, 'fechado')], true, false],
     ];
     for (const [nome, prs, plano, esperado] of casos) {
-      const amb = ambiente({ plano: plano ? PLANO_PADRAO : null });
+      const amb = ambiente({ plano: plano ? planoDe([]) : null });
       if (prs.length > 0) amb.semear(prs);
       assert.equal(entregaPublicada(amb.dir, 'GM-10', null), esperado, nome);
     }
     // o diário que liga a sessão por `dono.resposta` tira a entrega de "publicada" (REQ-TRI-1), como na trilha
     const amb = ambiente();
+    planoFechado(amb);
     amb.semear([PR(7, 'mergeado')]);
     assert.equal(entregaPublicada(amb.dir, 'GM-10', 'S1'), true);
     assert.equal(entregaPublicada(amb.dir, 'GM-99', 'S1'), false, 'entrega sem diário não é publicada');

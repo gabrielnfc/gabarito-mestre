@@ -19,6 +19,7 @@ import { fileURLToPath } from 'node:url';
 import { precisaContexto } from './classificar-alvo.js';
 import { decidir,                     } from './decidir.js';
 import { append, dirEntrega, lerEstrito } from './diario.js';
+import { validarPlano } from './plano.js';
 import { consultasAbertas, diarioEmOrdem, promptSombra } from './sombra.js';
 import { encerramentoDe, trilhaDe } from './trilha.js';
                                                                                                          
@@ -225,6 +226,19 @@ export function ehViradaDePreVersao(pr                                          
   return !(typeof alvo === 'string' && versoes.includes(alvo.toLowerCase()));
 }
 
+/**
+ * GM-21 DT1 (emenda 1): os ids das tasks do `plano.json` VÁLIDO da entrega (`validarPlano`), para a fase PR de `trilhaDe` (a regra única de "publicada") saber
+ * se o plano está aberto. Ausente, ilegível ou inválido ⇒ `[]` (a regra de hoje). Nunca lança.
+ */
+function tasksDoPlano(dir        )           {
+  try {
+    const v = validarPlano(JSON.parse(readFileSync(join(dir, 'plano.json'), 'utf8')));
+    return v.ok ? v.plano.tasks.map((t) => t.id) : [];
+  } catch {
+    return [];
+  }
+}
+
 /** A versão-alvo da entrega: `Versão: X.Y.Z[-pre]` no cabeçalho da spec que o `plano.json` aponta (`spec`, relativo à raiz). Qualquer falha ⇒ `null` (alvo desconhecido). */
 export function versaoAlvo(raiz        , dirAlvo        )                {
   try {
@@ -278,7 +292,7 @@ export function entregaPublicada(raiz        , entrega               , sessao   
     try { ledger = lstatSync(join(raiz, ledgerDirDe(raiz), `${entrega}.md`)).isFile(); } catch { /* sem ledger */ }
     const temPlano = existsSync(join(dir, 'plano.json')) || medido('plano').length > 0;
     // O ID entra como a própria branch e como o padrão (escapado): a identificação não depende da branch atual nem da config.
-    const base = { branch: entrega, idPadrao: entrega.replace(/[.*+?^${}()|[\]\\-]/g, '\\$&'), specs, plano: temPlano ? { tasks: []             } : null, ledger, ultimas: [] };
+    const base = { branch: entrega, idPadrao: entrega.replace(/[.*+?^${}()|[\]\\-]/g, '\\$&'), specs, plano: temPlano ? { tasks: tasksDoPlano(dir) } : null, ledger, ultimas: [] };
     const qualquer = sessao === SESSAO_QUALQUER;
     // "Qualquer sessão" vale só para a ligação POSTERIOR ao último PR mergeado da entrega: resposta anterior à publicação atual não destrava,
     // e uma republicação (PR novo mergeado) exige nova resposta do dono. ts ilegível não é "posterior" (recusa).
